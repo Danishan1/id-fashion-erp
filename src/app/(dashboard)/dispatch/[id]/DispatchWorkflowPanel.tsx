@@ -122,6 +122,7 @@ const STATUS_STYLES: Record<string, string> = {
   DELIVERED: "bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-400",
   ON_HOLD: "bg-orange-100 text-orange-700 dark:bg-orange-500/10 dark:text-orange-400",
   CANCELLED: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
+  REVERSED: "bg-rose-100 text-rose-700 dark:bg-rose-500/10 dark:text-rose-400",
 };
 
 async function parseErrorMessage(res: Response, fallback: string) {
@@ -158,6 +159,8 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
   const [isBusy, setIsBusy] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [showDeliverConfirm, setShowDeliverConfirm] = useState(false);
+  const [showReverseModal, setShowReverseModal] = useState(false);
+  const [reversalReason, setReversalReason] = useState("");
   const [receivedByName, setReceivedByName] = useState("");
   // Barcode Management & Scanning System, Phase 1 (2026-09-29) — scanning
   // every carton before "Mark Packed" is optional, not mandatory: leaving
@@ -167,6 +170,9 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
   // cross-check (every real carton scanned exactly once) applies.
   const [scannedCartonIds, setScannedCartonIds] = useState<string[]>([]);
   const [cartonScanMessage, setCartonScanMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const [activeCartonIndex, setActiveCartonIndex] = useState(0);
+  const [garmentScanInput, setGarmentScanInput] = useState("");
+  const [garmentScanMessage, setGarmentScanMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
   const editable = dispatch.status === "DRAFT" || dispatch.status === "PACKED";
 
@@ -272,6 +278,69 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
         i === cartonIndex ? { items: c.items.map((line, j) => (j === lineIndex ? { ...line, ...patch } : line)) } : c
       )
     );
+
+  const handleGarmentScan = async (code: string) => {
+    const trimmed = code.trim();
+    if (!trimmed) return;
+    setGarmentScanMessage(null);
+    try {
+      const res = await fetch(`/api/v1/product-units?code=${encodeURIComponent(trimmed)}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setGarmentScanMessage({ ok: false, text: body?.error?.message ?? `Barcode "${trimmed}" not recognized.` });
+        return;
+      }
+      const json = await res.json();
+      const unit = json.data;
+      if (!unit) {
+        setGarmentScanMessage({ ok: false, text: `Garment "${trimmed}" not found.` });
+        return;
+      }
+
+      // Check if unit matches one of this dispatch's items
+      const matchingDispatchItem = dispatch.items.find((i) => i.productId === unit.productId);
+      if (!matchingDispatchItem) {
+        setGarmentScanMessage({
+          ok: false,
+          text: `Garment "${trimmed}" (${unit.product?.styleName || "Style"}) does not belong to this dispatch.`,
+        });
+        return;
+      }
+
+      // Automatically add/increment line in the active carton
+      setCartons((prev) => {
+        const next = [...prev];
+        if (next.length === 0) {
+          next.push({ items: [] });
+        }
+        const targetCartonIdx = Math.min(activeCartonIndex, next.length - 1);
+        const carton = next[targetCartonIdx];
+        const existingLineIdx = carton.items.findIndex(
+          (item) => item.dispatchItemId === matchingDispatchItem.id && item.productVariantId === unit.productVariantId
+        );
+
+        if (existingLineIdx >= 0) {
+          const currentQty = Number(carton.items[existingLineIdx].quantity) || 0;
+          carton.items[existingLineIdx].quantity = String(currentQty + 1);
+        } else {
+          carton.items.push({
+            dispatchItemId: matchingDispatchItem.id,
+            productVariantId: unit.productVariantId,
+            quantity: "1",
+          });
+        }
+        return next;
+      });
+
+      setGarmentScanMessage({
+        ok: true,
+        text: `✓ Added "${unit.product?.styleCode}" (${unit.productVariant?.color?.name} / ${unit.productVariant?.size?.name}) to Carton ${activeCartonIndex + 1}`,
+      });
+      setGarmentScanInput("");
+    } catch {
+      setGarmentScanMessage({ ok: false, text: "Failed to connect to scan service." });
+    }
+  };
 
   const saveCartons = async () => {
     setIsBusy(true);
@@ -637,10 +706,82 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
         <h2 className="mb-2 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Cartons</h2>
         {editable ? (
           <div className="space-y-3">
+            {/* Live Garment Piece Scanner (Scan into active carton) */}
+            <div className="rounded-lg border border-indigo-200 bg-indigo-50/50 p-3.5 dark:border-indigo-900/50 dark:bg-indigo-950/20">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <span className="text-xs font-semibold uppercase tracking-wider text-indigo-700 dark:text-indigo-400">
+                    Scan Garment Barcode into Carton (Barcode Gun / Reader)
+                  </span>
+                  <p className="mt-0.5 text-xs text-zinc-500">
+                    Scan any garment tag (FG-XXXXXXXX) to automatically add it to the selected carton. Manual entry is also available below.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium text-zinc-600 dark:text-zinc-300">Target Carton:</span>
+                  <select
+                    value={activeCartonIndex}
+                    onChange={(e) => setActiveCartonIndex(Number(e.target.value))}
+                    className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-900"
+                  >
+                    {cartons.map((_, idx) => (
+                      <option key={idx} value={idx}>
+                        Carton #{idx + 1}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="mt-2.5 flex items-center gap-2">
+                <input
+                  type="text"
+                  value={garmentScanInput}
+                  onChange={(e) => setGarmentScanInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      handleGarmentScan(garmentScanInput);
+                    }
+                  }}
+                  placeholder="Scan or enter garment barcode (e.g. FG-00000001) and hit Enter…"
+                  className="flex-1 rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+                />
+                <button
+                  type="button"
+                  onClick={() => handleGarmentScan(garmentScanInput)}
+                  className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500"
+                >
+                  Add Piece
+                </button>
+              </div>
+
+              {garmentScanMessage && (
+                <p className={`mt-2 text-xs font-medium ${garmentScanMessage.ok ? "text-emerald-700 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
+                  {garmentScanMessage.text}
+                </p>
+              )}
+            </div>
+
             {cartons.map((carton, cartonIndex) => (
-              <div key={cartonIndex} className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
+              <div
+                key={cartonIndex}
+                className={`rounded-lg border p-3 ${
+                  activeCartonIndex === cartonIndex
+                    ? "border-indigo-400 bg-indigo-50/20 dark:border-indigo-600/40"
+                    : "border-zinc-200 dark:border-zinc-800"
+                }`}
+                onClick={() => setActiveCartonIndex(cartonIndex)}
+              >
                 <div className="mb-2 flex items-center justify-between">
-                  <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Carton {cartonIndex + 1}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Carton {cartonIndex + 1}</p>
+                    {activeCartonIndex === cartonIndex && (
+                      <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-semibold text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300">
+                        Active Scan Target
+                      </span>
+                    )}
+                  </div>
                   <button type="button" onClick={() => removeCarton(cartonIndex)} className="text-xs text-red-600 hover:text-red-500">
                     Remove Carton
                   </button>
@@ -757,12 +898,22 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
             {dispatch.cartons.map((carton) => (
               <div key={carton.id} className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
                 <div className="mb-2 flex items-center justify-between">
-                  <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                    Carton {carton.cartonNumber} — {carton.totalQuantity} pcs
-                    {scannedCartonIds.includes(carton.id) && (
-                      <span className="ml-2 text-xs font-normal text-green-700 dark:text-green-400">✓ Scanned</span>
-                    )}
-                  </p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                      Carton {carton.cartonNumber} — {carton.totalQuantity} pcs
+                      {scannedCartonIds.includes(carton.id) && (
+                        <span className="ml-2 text-xs font-normal text-green-700 dark:text-green-400">✓ Scanned</span>
+                      )}
+                    </p>
+                    <a
+                      href={`/api/v1/barcodes/${dispatch.dispatchNumber}-C${carton.cartonNumber}/label.pdf`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 rounded border border-zinc-200 px-1.5 py-0.5 text-[11px] font-medium text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                    >
+                      Print Label (PDF)
+                    </a>
+                  </div>
                   <Barcode value={`${dispatch.dispatchNumber}-C${carton.cartonNumber}`} height={40} />
                 </div>
                 <ul className="text-sm text-zinc-600 dark:text-zinc-300">
@@ -825,8 +976,18 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
           </>
         )}
         {dispatch.status === "DISPATCHED" && (
-          <button onClick={() => setShowDeliverConfirm(true)} disabled={isBusy} className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60">
-            Mark Delivered
+          <>
+            <button onClick={() => setShowDeliverConfirm(true)} disabled={isBusy} className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60">
+              Mark Delivered
+            </button>
+            <button onClick={() => setShowReverseModal(true)} disabled={isBusy} className="rounded-md border border-red-300 px-4 py-2 text-sm text-red-700 hover:bg-red-50 disabled:opacity-60 dark:border-red-800 dark:text-red-400">
+              Reverse Dispatch
+            </button>
+          </>
+        )}
+        {dispatch.status === "DELIVERED" && (
+          <button onClick={() => setShowReverseModal(true)} disabled={isBusy} className="rounded-md border border-red-300 px-4 py-2 text-sm text-red-700 hover:bg-red-50 disabled:opacity-60 dark:border-red-800 dark:text-red-400">
+            Reverse / Return
           </button>
         )}
         {dispatch.status === "ON_HOLD" && (
@@ -924,6 +1085,43 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
               className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
             >
               Mark Delivered
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal open={showReverseModal} onClose={() => setShowReverseModal(false)} title="Reverse Dispatch">
+        <div className="space-y-4">
+          <p className="text-sm text-zinc-600 dark:text-zinc-300">
+            Reversing this dispatch will return all goods to Finished Goods inventory, decrement the sales order fulfillment quantity, and mark this dispatch as REVERSED.
+          </p>
+          <FormField label="Reversal Reason" htmlFor="reversalReason" required>
+            <input
+              id="reversalReason"
+              value={reversalReason}
+              onChange={(e) => setReversalReason(e.target.value)}
+              placeholder="e.g. Carrier handover cancelled / Transit damage / Customer return"
+              className={textInputClass()}
+            />
+          </FormField>
+          <div className="flex justify-end gap-3">
+            <button
+              type="button"
+              onClick={() => setShowReverseModal(false)}
+              className="rounded-md border border-zinc-300 px-4 py-2 text-sm text-zinc-700 dark:border-zinc-700 dark:text-zinc-200"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={isBusy || !reversalReason.trim()}
+              onClick={async () => {
+                const ok = await runAction(`/api/v1/dispatches/${dispatch.id}/reverse`, { reason: reversalReason.trim() });
+                if (ok) setShowReverseModal(false);
+              }}
+              className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-500 disabled:opacity-60"
+            >
+              Confirm Reversal
             </button>
           </div>
         </div>

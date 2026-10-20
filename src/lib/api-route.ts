@@ -70,6 +70,32 @@ export async function requireSession() {
 }
 
 /**
+ * For routes that return global reference data (e.g., /api/v1/currencies) that
+ * both customer tenant users AND platform operators need to access.
+ */
+export async function requireAnySession() {
+  initRequestContext();
+  const session = await auth();
+  if (!session?.user) {
+    throw new BusinessRuleError("PERMISSION_DENIED", "Sign in required.");
+  }
+  if (session.user.userType === "PLATFORM") {
+    const platformUser = await prisma.platformUser.findUnique({
+      where: { id: session.user.id },
+      select: { status: true, passwordChangedAt: true },
+    });
+    if (!platformUser || platformUser.status !== "ACTIVE") {
+      throw new BusinessRuleError("PERMISSION_DENIED", "Your account is no longer active. Please sign in again.");
+    }
+    if (platformUser.passwordChangedAt && session.user.sessionIssuedAt * 1000 < platformUser.passwordChangedAt.getTime()) {
+      throw new BusinessRuleError("PERMISSION_DENIED", "Your password was changed. Please sign in again.");
+    }
+    return session;
+  }
+  return requireSession();
+}
+
+/**
  * For /api/v1/platform/** routes only (PLAT-002). Requires a platform-operator
  * session and re-checks the platform_users row live (status, password change,
  * and — when `roles` is given — the role), never trusting the JWT alone.

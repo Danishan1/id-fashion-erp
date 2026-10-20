@@ -94,7 +94,8 @@ function buildProviderInstance(row: AIProviderRow): ImageGenerationProvider {
       return createOpenAiImageProvider({ apiKey, model: row.model });
     case "GEMINI":
       if (!apiKey) throw new BusinessRuleError("AI_SERVICE_ERROR", `AI provider "${row.name}" has no API key configured.`);
-      return createGeminiImageProvider({ apiKey, model: row.model });
+      // Admin-configured "Request timeout" (Administration → AI Configuration); invalid values fall back to the default.
+      return createGeminiImageProvider({ apiKey, model: row.model, timeoutMs: row.requestTimeoutMs });
     case "CLOUDFLARE":
       // Cloudflare Workers AI needs two credential parts (account id + API
       // token); the admin schema has no dedicated "account id" field (not

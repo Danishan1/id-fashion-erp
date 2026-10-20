@@ -6,17 +6,23 @@ vi.mock("@/core/numbering/DocumentNumberingService", () => ({ generateDocumentNu
 vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { assert: vi.fn(), getAllowedBranchIds: vi.fn() } }));
 vi.mock("@/core/db/client", () => {
   const salesOrderUpdateMany = vi.fn();
+  const dispatchFindMany = vi.fn().mockResolvedValue([]);
   return {
     prisma: {
       salesOrder: { updateMany: salesOrderUpdateMany },
-      // confirmSalesOrder() wraps its guarded status flip + snapshot backfill
-      // in one transaction — the mock `tx` reuses the exact same
-      // salesOrder.updateMany mock so tests can configure its resolved value
-      // once via the imported `prisma` object either way.
-      $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn({ salesOrder: { updateMany: salesOrderUpdateMany } })),
+      dispatch: { findMany: dispatchFindMany },
+      $transaction: vi.fn(async (fn: (tx: unknown) => unknown) =>
+        fn({
+          salesOrder: { updateMany: salesOrderUpdateMany },
+          dispatch: { findMany: dispatchFindMany },
+        })
+      ),
     },
   };
 });
+vi.mock("@/modules/finished-goods-inventory/finished-goods-reservation.service", () => ({
+  releaseActiveReservationsForSalesOrderInTx: vi.fn().mockResolvedValue(0),
+}));
 vi.mock("@/modules/customers/customer.repository", () => ({
   CustomerRepository: { findByIdWithBuyers: vi.fn() },
 }));
@@ -68,6 +74,7 @@ const { SampleRequestRepository } = await import("@/modules/sampling/sample.repo
 const { SalesInvoiceRepository } = await import("@/modules/accounts/sales-invoice.repository");
 const { DispatchRepository } = await import("@/modules/dispatch/dispatch.repository");
 const { getSalesOrderItemProductionSummary } = await import("@/modules/production/production-progress.service");
+const { releaseActiveReservationsForSalesOrderInTx } = await import("@/modules/finished-goods-inventory/finished-goods-reservation.service");
 const { CompanyRepository, SalesOrderRepository } = await import("./sales-order.repository");
 const { buildReconciledItemPlan, snapshotUnsnapshottedLinesInTx } = await import("./sales-order-bom.service");
 const {
@@ -98,6 +105,8 @@ beforeEach(() => {
   vi.mocked(ProductRepository.findStyleById).mockReset().mockResolvedValue({ id: "style-1", itemType: "STYLE", isActive: true, styleName: "Kurta" } as never);
   vi.mocked(CompanyRepository.findBaseCurrencyCode).mockReset().mockResolvedValue({ baseCurrencyCode: "INR" } as never);
   vi.mocked(prisma.salesOrder.updateMany).mockReset().mockResolvedValue({ count: 1 } as never);
+  vi.mocked(prisma.dispatch.findMany).mockReset().mockResolvedValue([] as never);
+  vi.mocked(releaseActiveReservationsForSalesOrderInTx).mockReset().mockResolvedValue(0 as never);
   vi.mocked(SalesOrderRepository.createHeader).mockReset().mockResolvedValue({ id: "so-1" } as never);
   vi.mocked(SalesOrderRepository.findByIdWithDetails).mockReset();
   vi.mocked(SalesOrderRepository.findAnyById).mockReset();
@@ -335,10 +344,42 @@ describe("transitionSalesOrderStatus", () => {
   });
 
   it("rejects when a concurrent update already moved the order out of the expected prior status", async () => {
-    vi.mocked(SalesOrderRepository.findAnyById).mockResolvedValue({ id: "so-1", status: "CONFIRMED" } as never);
-    vi.mocked(SalesOrderRepository.updateStatusConditional).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(SalesOrderRepository.findAnyById).mockResolvedValue({ id: "so-1", orderNumber: "SO-001", status: "CONFIRMED" } as never);
+    vi.mocked(prisma.salesOrder.updateMany).mockResolvedValue({ count: 0 } as never);
 
     await expect(transitionSalesOrderStatus(actor, "so-1", "CANCELLED")).rejects.toThrow(BusinessRuleError);
+  });
+
+  it("atomically cancels the sales order and releases active finished goods reservations", async () => {
+    vi.mocked(SalesOrderRepository.findAnyById)
+      .mockResolvedValueOnce({ id: "so-1", orderNumber: "SO-001", status: "CONFIRMED" } as never)
+      .mockResolvedValueOnce({ id: "so-1", orderNumber: "SO-001", status: "CANCELLED" } as never);
+    vi.mocked(prisma.dispatch.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.salesOrder.updateMany).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(releaseActiveReservationsForSalesOrderInTx).mockResolvedValue(2 as never);
+
+    const result = await transitionSalesOrderStatus(actor, "so-1", "CANCELLED");
+
+    expect(result.status).toBe("CANCELLED");
+    expect(prisma.salesOrder.updateMany).toHaveBeenCalledWith({
+      where: { id: "so-1", status: "CONFIRMED" },
+      data: { status: "CANCELLED" },
+    });
+    expect(releaseActiveReservationsForSalesOrderInTx).toHaveBeenCalledWith(expect.anything(), "so-1");
+  });
+
+  it("blocks cancellation when open dispatches exist in DRAFT, PACKED, or ON_HOLD status", async () => {
+    vi.mocked(SalesOrderRepository.findAnyById).mockResolvedValue({ id: "so-1", orderNumber: "SO-001", status: "CONFIRMED" } as never);
+    vi.mocked(prisma.dispatch.findMany).mockResolvedValue([
+      { id: "dsp-1", dispatchNumber: "DSP-0001", status: "PACKED" },
+    ] as never);
+
+    await expect(transitionSalesOrderStatus(actor, "so-1", "CANCELLED")).rejects.toMatchObject({
+      code: "REFERENCED_RECORD_IN_USE",
+      details: { salesOrderId: "so-1", openDispatchNumbers: ["DSP-0001"] },
+    });
+    expect(prisma.salesOrder.updateMany).not.toHaveBeenCalled();
+    expect(releaseActiveReservationsForSalesOrderInTx).not.toHaveBeenCalled();
   });
 });
 

@@ -90,8 +90,41 @@ function BarcodeLabelBody({ descriptor }: { descriptor: LabelDescriptor }) {
   );
 }
 
+function MultiBarcodeLabelBody({ descriptors }: { descriptors: LabelDescriptor[] }) {
+  return (
+    <Document>
+      {descriptors.map((descriptor, index) => (
+        <Page key={index} size={[LABEL_WIDTH_PT, LABEL_HEIGHT_PT]} style={styles.page}>
+          <Text style={styles.companyName}>{descriptor.companyName}</Text>
+          <Text style={styles.title}>{descriptor.title}</Text>
+
+          {descriptor.fields.map((f, i) => (
+            <View key={i} style={styles.fieldRow}>
+              <Text style={styles.fieldLabel}>{f.label}</Text>
+              <Text style={styles.fieldValue}>{f.value}</Text>
+            </View>
+          ))}
+
+          <View style={styles.barcodeBlock}>
+            <LabelBarcode value={descriptor.code} />
+          </View>
+
+          <Text style={styles.generatedAt} fixed>
+            Generated {descriptor.generatedAt}
+          </Text>
+        </Page>
+      ))}
+    </Document>
+  );
+}
+
 export async function renderBarcodeLabelPdf(descriptor: LabelDescriptor): Promise<Buffer> {
   const buffer = await renderToBuffer(<BarcodeLabelBody descriptor={descriptor} />);
+  return Buffer.from(buffer);
+}
+
+export async function renderMultiBarcodeLabelPdf(descriptors: LabelDescriptor[]): Promise<Buffer> {
+  const buffer = await renderToBuffer(<MultiBarcodeLabelBody descriptors={descriptors} />);
   return Buffer.from(buffer);
 }
 

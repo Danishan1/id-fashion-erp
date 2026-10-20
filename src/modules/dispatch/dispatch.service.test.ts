@@ -88,6 +88,7 @@ const {
   resumeDispatchFromHold,
   listDispatches,
   getDispatchById,
+  reverseDispatch,
 } = await import("./dispatch.service");
 
 const actor = { companyId: "co-1", userId: "user-1", branchId: null };
@@ -102,8 +103,8 @@ function orderItem(id: string, regularDispatchedQuantity: number, orderedQuantit
   };
 }
 
-function makeFakeTx(overrides: { updateManyCount?: number; dispatchUpdateManyCount?: number } = {}) {
-  const { updateManyCount = 1, dispatchUpdateManyCount = 1 } = overrides;
+function makeFakeTx(overrides: { updateManyCount?: number; dispatchUpdateManyCount?: number; activeInvoices?: unknown[] } = {}) {
+  const { updateManyCount = 1, dispatchUpdateManyCount = 1, activeInvoices = [] } = overrides;
   return {
     salesOrderItem: {
       findUniqueOrThrow: vi.fn().mockResolvedValue({ regularDispatchedQuantity: 0, breakdown: [{ orderedQuantity: 100 }] }),
@@ -111,6 +112,7 @@ function makeFakeTx(overrides: { updateManyCount?: number; dispatchUpdateManyCou
       findMany: vi.fn().mockResolvedValue([{ regularDispatchedQuantity: 100, breakdown: [{ orderedQuantity: 100 }] }]),
     },
     salesOrder: { update: vi.fn().mockResolvedValue({}) },
+    salesInvoice: { findMany: vi.fn().mockResolvedValue(activeInvoices) },
     dispatch: { updateMany: vi.fn().mockResolvedValue({ count: dispatchUpdateManyCount }) },
   };
 }
@@ -1249,6 +1251,29 @@ describe("confirmDispatch — FGI-040/041 multi-location picking & variant-level
         ],
       },
     ],
+    cartons: [
+      {
+        id: "carton-1",
+        cartonNumber: 1,
+        totalQuantity: 30,
+        items: [
+          {
+            id: "ci-1",
+            dispatchItem: { id: "di-4", productId: "prod-variant-style" },
+            productVariantId: "var-A",
+            productVariant: { color: { name: "Red" }, size: { name: "M" } },
+            quantity: 20,
+          },
+          {
+            id: "ci-2",
+            dispatchItem: { id: "di-4", productId: "prod-variant-style" },
+            productVariantId: "var-B",
+            productVariant: { color: { name: "Blue" }, size: { name: "L" } },
+            quantity: 10,
+          },
+        ],
+      },
+    ],
   };
 
   beforeEach(() => {
@@ -1374,6 +1399,20 @@ describe("confirmDispatch — FGI-040/041 multi-location picking & variant-level
           pickLines: [{ ...variantBearingDispatch.items[0].pickLines[0], warehouseLocationId: "loc-C", quantity: 20 }],
         },
       ],
+      cartons: [
+        {
+          id: "c-4a",
+          cartonNumber: 1,
+          totalQuantity: 20,
+          items: [{ dispatchItem: { id: "di-4a", productId: "prod-variant-style" }, productVariantId: "var-A", quantity: 20 }],
+        },
+        {
+          id: "c-4b",
+          cartonNumber: 2,
+          totalQuantity: 20,
+          items: [{ dispatchItem: { id: "di-4b", productId: "prod-variant-style" }, productVariantId: "var-A", quantity: 20 }],
+        },
+      ],
     };
     vi.mocked(getFinishedGoodsAvailableQuantity).mockResolvedValue(35); // 20 + 20 = 40 picked > 35 available
     vi.mocked(DispatchRepository.findByIdWithDetails).mockResolvedValueOnce(twoItemsSameVariant as never);
@@ -1383,4 +1422,363 @@ describe("confirmDispatch — FGI-040/041 multi-location picking & variant-level
       details: expect.objectContaining({ productVariantId: "var-A", available: 35, requested: 40 }),
     });
   });
+
+  it("rejects confirm when packed carton quantity does not match picked quantity for a variant", async () => {
+    const mismatchDispatch = {
+      ...variantBearingDispatch,
+      cartons: [
+        {
+          id: "carton-1",
+          cartonNumber: 1,
+          totalQuantity: 30,
+          items: [
+            {
+              id: "ci-1",
+              dispatchItem: { id: "di-4", productId: "prod-variant-style" },
+              productVariantId: "var-A",
+              productVariant: { color: { name: "Red" }, size: { name: "M" } },
+              quantity: 25, // 25 packed vs 20 picked
+            },
+            {
+              id: "ci-2",
+              dispatchItem: { id: "di-4", productId: "prod-variant-style" },
+              productVariantId: "var-B",
+              productVariant: { color: { name: "Blue" }, size: { name: "L" } },
+              quantity: 5, // 5 packed vs 10 picked
+            },
+          ],
+        },
+      ],
+    };
+    vi.mocked(DispatchRepository.findByIdWithDetails).mockResolvedValueOnce(mismatchDispatch as never);
+
+    await expect(confirmDispatch(actor, "disp-4")).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      details: expect.objectContaining({ dispatchItemId: "di-4", productVariantId: "var-A", packed: 25, picked: 20 }),
+    });
+  });
+
+  it("rejects confirm when a packed carton item does not specify a variant for a variant-bearing style", async () => {
+    const nullVariantDispatch = {
+      ...variantBearingDispatch,
+      cartons: [
+        {
+          id: "carton-1",
+          cartonNumber: 1,
+          totalQuantity: 30,
+          items: [
+            {
+              id: "ci-1",
+              dispatchItem: { id: "di-4", productId: "prod-variant-style" },
+              productVariantId: null,
+              quantity: 30,
+            },
+          ],
+        },
+      ],
+    };
+    vi.mocked(DispatchRepository.findByIdWithDetails).mockResolvedValueOnce(nullVariantDispatch as never);
+
+    await expect(confirmDispatch(actor, "disp-4")).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      details: { dispatchItemId: "di-4" },
+    });
+  });
+
+  it("rejects setCartons when a carton item does not specify a variant for a style with active variants", async () => {
+    vi.mocked(DispatchRepository.findByIdWithDetails).mockResolvedValue({
+      id: "disp-4",
+      status: "DRAFT",
+      items: [{ id: "di-4", productId: "prod-variant-style", dispatchedQuantity: 30, product: { styleName: "Printed Kurti" } }],
+      cartons: [],
+    } as never);
+
+    await expect(
+      setCartons(actor, "disp-4", {
+        cartons: [{ items: [{ dispatchItemId: "di-4", productVariantId: null, quantity: 30 }] }],
+      } as never)
+    ).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      details: { dispatchItemId: "di-4" },
+    });
+  });
+
+  it("rejects markPacked when a carton item does not specify a variant for a style with active variants", async () => {
+    vi.mocked(DispatchRepository.findByIdWithDetails).mockResolvedValue({
+      id: "disp-4",
+      status: "DRAFT",
+      items: [{ id: "di-4", productId: "prod-variant-style", dispatchedQuantity: 30, product: { styleName: "Printed Kurti" } }],
+      cartons: [
+        {
+          id: "c-1",
+          cartonNumber: 1,
+          totalQuantity: 30,
+          items: [{ dispatchItem: { id: "di-4", productId: "prod-variant-style" }, productVariantId: null, quantity: 30 }],
+        },
+      ],
+    } as never);
+
+    await expect(markPacked(actor, "disp-4")).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      details: { cartonId: "c-1", dispatchItemId: "di-4" },
+    });
+  });
+
+  it("succeeds confirm when carton items and pick lines are split across multiple cartons and locations but match in aggregate per variant", async () => {
+    // 2 cartons, 2 pick locations:
+    // Carton 1: var-A: 12, var-B: 3
+    // Carton 2: var-A: 8, var-B: 7
+    // Total packed: var-A = 20, var-B = 10
+    // Location loc-A: var-A: 15
+    // Location loc-B: var-A: 5, var-B: 10
+    // Total picked: var-A = 20, var-B = 10
+    const multiSplitDispatch = {
+      ...variantBearingDispatch,
+      items: [
+        {
+          ...variantBearingDispatch.items[0],
+          pickLines: [
+            { productVariantId: "var-A", warehouseLocationId: "loc-A", quantity: 15, productVariant: { color: { name: "Red" }, size: { name: "M" } } },
+            { productVariantId: "var-A", warehouseLocationId: "loc-B", quantity: 5, productVariant: { color: { name: "Red" }, size: { name: "M" } } },
+            { productVariantId: "var-B", warehouseLocationId: "loc-B", quantity: 10, productVariant: { color: { name: "Blue" }, size: { name: "L" } } },
+          ],
+        },
+      ],
+      cartons: [
+        {
+          id: "carton-1",
+          cartonNumber: 1,
+          totalQuantity: 15,
+          items: [
+            { dispatchItem: { id: "di-4", productId: "prod-variant-style" }, productVariantId: "var-A", quantity: 12 },
+            { dispatchItem: { id: "di-4", productId: "prod-variant-style" }, productVariantId: "var-B", quantity: 3 },
+          ],
+        },
+        {
+          id: "carton-2",
+          cartonNumber: 2,
+          totalQuantity: 15,
+          items: [
+            { dispatchItem: { id: "di-4", productId: "prod-variant-style" }, productVariantId: "var-A", quantity: 8 },
+            { dispatchItem: { id: "di-4", productId: "prod-variant-style" }, productVariantId: "var-B", quantity: 7 },
+          ],
+        },
+      ],
+    };
+    vi.mocked(DispatchRepository.findByIdWithDetails)
+      .mockResolvedValueOnce(multiSplitDispatch as never)
+      .mockResolvedValueOnce({ id: "disp-4", status: "DISPATCHED" } as never);
+    const fakeTx = makeFakeTx();
+    vi.mocked(prisma.$transaction).mockImplementation((cb: unknown) => (cb as (tx: unknown) => Promise<unknown>)(fakeTx));
+
+    await expect(confirmDispatch(actor, "disp-4")).resolves.toBeDefined();
+    expect(recordInventoryTransaction).toHaveBeenCalledTimes(3);
+  });
 });
+
+describe("reverseDispatch — post-confirmation stock restoration, accumulator decrement, status rollback", () => {
+  const confirmedFlatDispatch = {
+    id: "disp-rev-1",
+    dispatchNumber: "DSP-2026-0001",
+    status: "DISPATCHED",
+    salesOrderId: "so-rev-1",
+    warehouseId: "wh-rev-1",
+    requestedByUserId: "user-1",
+    dispatchedAt: new Date("2026-10-15"),
+    items: [
+      {
+        id: "di-rev-1",
+        productId: "prod-flat",
+        dispatchedQuantity: 50,
+        regularDispatchQuantity: 50,
+        extraDispatchQuantity: 0,
+        product: { styleName: "Basic Tee", styleCode: "BT01" },
+        salesOrderItem: { id: "soi-rev-1", salesOrderLineId: "sol-1" },
+        pickLines: [],
+      },
+    ],
+  };
+
+  const confirmedVariantDispatch = {
+    id: "disp-rev-2",
+    dispatchNumber: "DSP-2026-0002",
+    status: "DISPATCHED",
+    salesOrderId: "so-rev-2",
+    warehouseId: "wh-rev-1",
+    requestedByUserId: "user-1",
+    dispatchedAt: new Date("2026-10-15"),
+    items: [
+      {
+        id: "di-rev-2",
+        productId: "prod-var",
+        dispatchedQuantity: 30,
+        regularDispatchQuantity: 30,
+        extraDispatchQuantity: 0,
+        product: { styleName: "Polo Shirt", styleCode: "PS01" },
+        salesOrderItem: { id: "soi-rev-2", salesOrderLineId: "sol-2" },
+        pickLines: [
+          { productVariantId: "var-M", warehouseLocationId: "loc-1", quantity: 20 },
+          { productVariantId: "var-L", warehouseLocationId: "loc-2", quantity: 10 },
+        ],
+      },
+    ],
+  };
+
+  it("asserts permission 'dispatch' -> 'cancel'", async () => {
+    vi.mocked(DispatchRepository.findByIdWithDetails)
+      .mockResolvedValueOnce(confirmedFlatDispatch as never)
+      .mockResolvedValueOnce({ id: "disp-rev-1", status: "REVERSED" } as never);
+    vi.mocked(ProductVariantRepository.findManyActiveByProductId).mockResolvedValue([]);
+    const fakeTx = makeFakeTx();
+    fakeTx.salesOrderItem.findMany.mockResolvedValue([{ regularDispatchedQuantity: 0, breakdown: [{ orderedQuantity: 50 }] }]);
+    vi.mocked(prisma.$transaction).mockImplementation((cb: unknown) => (cb as (tx: unknown) => Promise<unknown>)(fakeTx));
+
+    await reverseDispatch(actor, "disp-rev-1", { reason: "Carrier cancelled" });
+
+    expect(PermissionService.assert).toHaveBeenCalledWith("user-1", "dispatch", "cancel", { createdBy: "user-1" });
+  });
+
+  it("rejects reversal if dispatch is not in DISPATCHED or DELIVERED status (e.g. DRAFT)", async () => {
+    vi.mocked(DispatchRepository.findByIdWithDetails).mockResolvedValueOnce({
+      ...confirmedFlatDispatch,
+      status: "DRAFT",
+    } as never);
+
+    await expect(reverseDispatch(actor, "disp-rev-1", { reason: "Testing" })).rejects.toMatchObject({
+      code: "INVALID_STATE_TRANSITION",
+    });
+  });
+
+  it("rejects reversal if reason is missing or empty", async () => {
+    vi.mocked(DispatchRepository.findByIdWithDetails).mockResolvedValueOnce(confirmedFlatDispatch as never);
+
+    await expect(reverseDispatch(actor, "disp-rev-1", { reason: "   " })).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+    });
+  });
+
+  it("blocks reversal if active (POSTED/PAID) sales invoice exists on this order", async () => {
+    vi.mocked(DispatchRepository.findByIdWithDetails).mockResolvedValueOnce(confirmedFlatDispatch as never);
+    vi.mocked(ProductVariantRepository.findManyActiveByProductId).mockResolvedValue([]);
+    const fakeTx = makeFakeTx({ activeInvoices: [{ invoiceNumber: "INV-2026-001" }] });
+    vi.mocked(prisma.$transaction).mockImplementation((cb: unknown) => (cb as (tx: unknown) => Promise<unknown>)(fakeTx));
+
+    await expect(reverseDispatch(actor, "disp-rev-1", { reason: "Customer return" })).rejects.toMatchObject({
+      code: "ACTIVE_INVOICE_EXISTS",
+    });
+  });
+
+  it("reverses a zero-variant dispatch: posts positive DISPATCH_REVERSAL to restore inventory, decrements SO accumulators, and rolls SO status to CONFIRMED", async () => {
+    vi.mocked(DispatchRepository.findByIdWithDetails)
+      .mockResolvedValueOnce(confirmedFlatDispatch as never)
+      .mockResolvedValueOnce({ id: "disp-rev-1", status: "REVERSED" } as never);
+    vi.mocked(ProductVariantRepository.findManyActiveByProductId).mockResolvedValue([]);
+    const fakeTx = makeFakeTx();
+    fakeTx.salesOrderItem.findMany.mockResolvedValue([{ regularDispatchedQuantity: 0, breakdown: [{ orderedQuantity: 50 }] }]);
+    vi.mocked(prisma.$transaction).mockImplementation((cb: unknown) => (cb as (tx: unknown) => Promise<unknown>)(fakeTx));
+
+    const result = await reverseDispatch(actor, "disp-rev-1", { reason: "Truck breakdown before dispatch" });
+
+    expect(fakeTx.salesOrderItem.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "soi-rev-1",
+        regularDispatchedQuantity: { gte: 50 },
+        dispatchedQuantity: { gte: 50 },
+      },
+      data: {
+        regularDispatchedQuantity: { decrement: 50 },
+        dispatchedQuantity: { decrement: 50 },
+      },
+    });
+
+    expect(recordInventoryTransaction).toHaveBeenCalledWith(fakeTx, actor, {
+      productId: "prod-flat",
+      warehouseId: "wh-rev-1",
+      transactionType: "DISPATCH_REVERSAL",
+      quantity: 50,
+      referenceModule: "DISPATCH",
+      referenceRecordId: "di-rev-1",
+      notes: "Reversal of dispatch DSP-2026-0001: Truck breakdown before dispatch",
+    });
+
+    expect(fakeTx.salesOrder.update).toHaveBeenCalledWith({
+      where: { id: "so-rev-1" },
+      data: { status: "CONFIRMED" },
+    });
+
+    expect(fakeTx.dispatch.updateMany).toHaveBeenCalledWith({
+      where: { id: "disp-rev-1", status: "DISPATCHED" },
+      data: { status: "REVERSED" },
+    });
+
+    expect(result.status).toBe("REVERSED");
+  });
+
+  it("reverses a variant-bearing dispatch: posts DISPATCH_REVERSAL per pick line restoring variant & location stock, rolls SO status to PARTIALLY_DISPATCHED", async () => {
+    vi.mocked(DispatchRepository.findByIdWithDetails)
+      .mockResolvedValueOnce(confirmedVariantDispatch as never)
+      .mockResolvedValueOnce({ id: "disp-rev-2", status: "REVERSED" } as never);
+    vi.mocked(ProductVariantRepository.findManyActiveByProductId).mockResolvedValue([{ id: "var-M" }, { id: "var-L" }] as never);
+    const fakeTx = makeFakeTx();
+    // Another order item still has 20 pcs dispatched
+    fakeTx.salesOrderItem.findMany.mockResolvedValue([
+      { regularDispatchedQuantity: 0, breakdown: [{ orderedQuantity: 30 }] },
+      { regularDispatchedQuantity: 20, breakdown: [{ orderedQuantity: 40 }] },
+    ]);
+    vi.mocked(prisma.$transaction).mockImplementation((cb: unknown) => (cb as (tx: unknown) => Promise<unknown>)(fakeTx));
+
+    await reverseDispatch(actor, "disp-rev-2", { reason: "Failed delivery - RTO" });
+
+    expect(recordInventoryTransaction).toHaveBeenCalledTimes(2);
+    expect(recordInventoryTransaction).toHaveBeenNthCalledWith(1, fakeTx, actor, {
+      productId: "prod-var",
+      warehouseId: "wh-rev-1",
+      transactionType: "DISPATCH_REVERSAL",
+      quantity: 20,
+      referenceModule: "DISPATCH",
+      referenceRecordId: "di-rev-2",
+      productVariantId: "var-M",
+      warehouseLocationId: "loc-1",
+      stockStatus: "SALEABLE",
+      notes: "Reversal of dispatch DSP-2026-0002: Failed delivery - RTO",
+    });
+
+    expect(recordInventoryTransaction).toHaveBeenNthCalledWith(2, fakeTx, actor, {
+      productId: "prod-var",
+      warehouseId: "wh-rev-1",
+      transactionType: "DISPATCH_REVERSAL",
+      quantity: 10,
+      referenceModule: "DISPATCH",
+      referenceRecordId: "di-rev-2",
+      productVariantId: "var-L",
+      warehouseLocationId: "loc-2",
+      stockStatus: "SALEABLE",
+      notes: "Reversal of dispatch DSP-2026-0002: Failed delivery - RTO",
+    });
+
+    expect(fakeTx.salesOrder.update).toHaveBeenCalledWith({
+      where: { id: "so-rev-2" },
+      data: { status: "PARTIALLY_DISPATCHED" },
+    });
+  });
+
+  it("can also reverse a DELIVERED dispatch (customer return)", async () => {
+    const deliveredDispatch = { ...confirmedFlatDispatch, status: "DELIVERED" };
+    vi.mocked(DispatchRepository.findByIdWithDetails)
+      .mockResolvedValueOnce(deliveredDispatch as never)
+      .mockResolvedValueOnce({ id: "disp-rev-1", status: "REVERSED" } as never);
+    vi.mocked(ProductVariantRepository.findManyActiveByProductId).mockResolvedValue([]);
+    const fakeTx = makeFakeTx();
+    fakeTx.salesOrderItem.findMany.mockResolvedValue([{ regularDispatchedQuantity: 0, breakdown: [{ orderedQuantity: 50 }] }]);
+    vi.mocked(prisma.$transaction).mockImplementation((cb: unknown) => (cb as (tx: unknown) => Promise<unknown>)(fakeTx));
+
+    const result = await reverseDispatch(actor, "disp-rev-1", { reason: "Customer return due to incorrect fabric" });
+
+    expect(fakeTx.dispatch.updateMany).toHaveBeenCalledWith({
+      where: { id: "disp-rev-1", status: "DELIVERED" },
+      data: { status: "REVERSED" },
+    });
+    expect(result.status).toBe("REVERSED");
+  });
+});
+

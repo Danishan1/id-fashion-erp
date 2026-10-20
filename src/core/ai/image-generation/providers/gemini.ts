@@ -1,6 +1,6 @@
 import { GoogleGenAI, ApiError, FinishReason } from "@google/genai";
 import type { Content, GenerateContentResponse } from "@google/genai";
-import { getGeminiImageConfig, type GeminiImageConfig } from "../config";
+import { getGeminiImageConfig, resolveGeminiTimeoutMs, type GeminiImageConfig } from "../config";
 import { ImageGenerationServiceError, type GenerateImagesResult, type ImageGenerationProvider } from "../types";
 
 /**
@@ -19,10 +19,8 @@ import { ImageGenerationServiceError, type GenerateImagesResult, type ImageGener
  * those processes) — select it via IMAGE_GENERATION_PROVIDER=gemini.
  */
 
-const REQUEST_TIMEOUT_MS = 120_000; // image generation genuinely takes longer than a text completion
-
-function client(apiKey: string): GoogleGenAI {
-  return new GoogleGenAI({ apiKey, httpOptions: { timeout: REQUEST_TIMEOUT_MS } });
+function client(apiKey: string, timeoutMs?: number): GoogleGenAI {
+  return new GoogleGenAI({ apiKey, httpOptions: { timeout: resolveGeminiTimeoutMs(timeoutMs) } });
 }
 
 const SAFETY_FINISH_REASONS = new Set<string>([
@@ -98,7 +96,7 @@ function extractSingleImage(response: GenerateContentResponse): GenerateImagesRe
 
 /** `config` is optional for the same backward-compatibility reason as createOpenAiImageProvider — see its own comment. */
 export function createGeminiImageProvider(config: GeminiImageConfig = getGeminiImageConfig()): ImageGenerationProvider {
-  const ai = client(config.apiKey);
+  const ai = client(config.apiKey, config.timeoutMs);
 
   /** One generateContent call producing exactly one image. Requested images are generated sequentially, not via Promise.all — Gemini's free tier has a low requests-per-minute ceiling, and this provider exists specifically to be usable on that tier, so bursting `count` concurrent calls would defeat the point. */
   async function generateOnce(
@@ -232,7 +230,7 @@ export function createGeminiImageProvider(config: GeminiImageConfig = getGeminiI
  */
 export async function testGeminiConnection(config: GeminiImageConfig): Promise<{ modelAvailable: boolean }> {
   try {
-    const ai = client(config.apiKey);
+    const ai = client(config.apiKey, config.timeoutMs);
     const pager = await ai.models.list({ config: { pageSize: 200 } });
     let modelAvailable = false;
     for await (const model of pager) {

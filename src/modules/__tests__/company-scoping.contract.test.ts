@@ -28,6 +28,7 @@ const ALLOWLIST: Record<string, string> = {
   updateSubscriptionPlan: "Platform plan catalog (Platform SaaS PLAT-022): plans are platform-wide, shared by every tenant, with no companyId column.",
   updateCoupon: "Platform coupon catalog (Platform SaaS PLAT-026): coupons are platform-wide, with no companyId column.",
   updatePlatformTicket: "Platform support inbox (Platform SaaS PLAT-030): platform staff handle tickets of every company; only requirePlatformSession() gates it.",
+  updatePlatformStaff: "Platform staff management (Platform SaaS Phase 1): platform operators are global and have no companyId column.",
   updateUnit: "UnitOfMeasure has no companyId column — it is a deliberately global, non-tenant-scoped master.",
 };
 

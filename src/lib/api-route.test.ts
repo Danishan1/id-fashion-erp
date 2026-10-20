@@ -13,7 +13,7 @@ vi.mock("@/core/db/client", () => ({
   prisma: { user: { findUnique: userFindUniqueMock }, platformUser: { findUnique: platformUserFindUniqueMock } },
 }));
 
-const { requireSession, requirePlatformSession } = await import("./api-route");
+const { requireSession, requirePlatformSession, requireAnySession } = await import("./api-route");
 
 function session(
   overrides: { id?: string; companyId?: string; sessionIssuedAt?: number; userType?: "TENANT" | "PLATFORM" } = {}
@@ -165,5 +165,30 @@ describe("requireSession — support sessions (Phase 2)", () => {
     authMock.mockResolvedValue(supportSession());
     liveMock.mockResolvedValue({ id: "sess-1", proxyUserId: "someone-else", companyId: "co-1" });
     await expect(requireSession()).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+  });
+});
+
+describe("requireAnySession", () => {
+  it("allows active tenant user sessions", async () => {
+    authMock.mockResolvedValue(session({ id: "user-1", companyId: "co-1", userType: "TENANT" }));
+    userFindUniqueMock.mockResolvedValue(activeTenantUser);
+    await expect(requireAnySession()).resolves.toBeDefined();
+  });
+
+  it("allows active platform operator sessions", async () => {
+    authMock.mockResolvedValue(session({ id: "platform-1", companyId: "", userType: "PLATFORM" }));
+    platformUserFindUniqueMock.mockResolvedValue(activePlatformUser);
+    await expect(requireAnySession()).resolves.toBeDefined();
+  });
+
+  it("refuses unauthenticated calls", async () => {
+    authMock.mockResolvedValue(null);
+    await expect(requireAnySession()).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+  });
+
+  it("refuses suspended platform users", async () => {
+    authMock.mockResolvedValue(session({ id: "platform-1", companyId: "", userType: "PLATFORM" }));
+    platformUserFindUniqueMock.mockResolvedValue({ ...activePlatformUser, status: "SUSPENDED" });
+    await expect(requireAnySession()).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
   });
 });

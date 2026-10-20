@@ -13,15 +13,31 @@ export default async function DispatchDetailPage({ params }: { params: Promise<{
 
   return (
     <div className="space-y-6">
-      <div>
-        <Breadcrumb
-          items={[
-            { label: "Dashboard", href: "/dashboard" },
-            { label: "Dispatch", href: "/dispatch" },
-            { label: dispatch.dispatchNumber },
-          ]}
-        />
-        <h1 className="mt-2 text-lg font-semibold text-zinc-900 dark:text-zinc-50">{dispatch.dispatchNumber}</h1>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <Breadcrumb
+            items={[
+              { label: "Dashboard", href: "/dashboard" },
+              { label: "Dispatch", href: "/dispatch" },
+              { label: dispatch.dispatchNumber },
+            ]}
+          />
+          <h1 className="mt-2 text-lg font-semibold text-zinc-900 dark:text-zinc-50">{dispatch.dispatchNumber}</h1>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <a
+            href={`/api/v1/dispatches/${id}/pdf`}
+            className="whitespace-nowrap rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+          >
+            Delivery Challan PDF
+          </a>
+          <a
+            href={`/api/v1/dispatches/${id}/pdf?type=packing-list`}
+            className="whitespace-nowrap rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+          >
+            Packing List PDF
+          </a>
+        </div>
       </div>
 
       <DispatchWorkflowPanel key={id} dispatch={JSON.parse(JSON.stringify(dispatch))} />

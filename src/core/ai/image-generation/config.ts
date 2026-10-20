@@ -46,6 +46,28 @@ export function getOpenAiImageConfig(): OpenAiImageConfig {
 export interface GeminiImageConfig {
   apiKey: string;
   model: string;
+  /** Per-request timeout. Omitted/invalid → GEMINI_DEFAULT_TIMEOUT_MS. */
+  timeoutMs?: number;
+}
+
+/**
+ * Same default as AIProvider.requestTimeoutMs (schema + admin form), so the
+ * env-configured provider and an admin-configured one behave the same.
+ * Real image edits have taken ~80 s, so this must not be much lower.
+ */
+export const GEMINI_DEFAULT_TIMEOUT_MS = 120_000;
+
+/** Same lower bound as the admin form's validation (ai-provider.schema.ts). */
+const MIN_TIMEOUT_MS = 1_000;
+
+/**
+ * A usable timeout from an env/admin value, or the default. Parsed strictly:
+ * "60s" is rejected rather than read as 60 ms (parseInt would accept it),
+ * and anything below 1 s is treated as a mistake.
+ */
+export function resolveGeminiTimeoutMs(value: number | string | null | undefined): number {
+  const ms = typeof value === "string" ? (value.trim() === "" ? Number.NaN : Number(value)) : value;
+  return typeof ms === "number" && Number.isFinite(ms) && ms >= MIN_TIMEOUT_MS ? Math.round(ms) : GEMINI_DEFAULT_TIMEOUT_MS;
 }
 
 /** A second provider, added for free/low-cost testing once the configured OpenAI account's credits were exhausted (see AI Garment Flow Process 3/4/6 notes) — Gemini's free tier is genuinely usable for functional testing, not just a trial credit. */
@@ -62,6 +84,7 @@ export function getGeminiImageConfig(): GeminiImageConfig {
     // multi-image input/editing support — the one capability this provider needs for
     // generateVariation()/applyFabric(), not just plain text-to-image.
     model: process.env.GEMINI_IMAGE_MODEL || "gemini-2.5-flash-image",
+    timeoutMs: resolveGeminiTimeoutMs(process.env.GEMINI_IMAGE_TIMEOUT_MS),
   };
 }
 

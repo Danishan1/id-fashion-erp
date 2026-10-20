@@ -84,16 +84,23 @@ export function SubscriptionPanel({
   initialData,
   plans,
   canManageBilling,
+  companyName,
+  legalName,
+  taxRegistrationNo,
   onChanged,
 }: {
   companyId: string;
   initialData: SubscriptionData;
   plans: PlanOption[];
   canManageBilling: boolean;
+  companyName?: string;
+  legalName?: string | null;
+  taxRegistrationNo?: string | null;
   onChanged: () => void;
 }) {
   const [data, setData] = useState(initialData);
   const [dialog, setDialog] = useState<"payment" | "plan" | "period" | null>(null);
+  const [selectedReceiptPayment, setSelectedReceiptPayment] = useState<SubscriptionData["payments"][number] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -283,13 +290,14 @@ export function SubscriptionPanel({
                 <th className="py-1 pr-4 font-medium">Method / reference</th>
                 <th className="py-1 pr-4 font-medium">Plan</th>
                 <th className="py-1 pr-4 font-medium">Covers</th>
-                <th className="py-1 font-medium">Recorded by</th>
+                <th className="py-1 pr-4 font-medium">Recorded by</th>
+                <th className="py-1 font-medium text-right">Invoice</th>
               </tr>
             </thead>
             <tbody>
               {data.payments.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="py-3 text-zinc-500">
+                  <td colSpan={7} className="py-3 text-zinc-500">
                     No payments recorded yet.
                   </td>
                 </tr>
@@ -317,7 +325,16 @@ export function SubscriptionPanel({
                   <td className="py-1.5 pr-4">
                     {fmtDate(p.periodStart)} – {fmtDate(p.periodEnd)}
                   </td>
-                  <td className="py-1.5">{p.recordedBy.fullName}</td>
+                  <td className="py-1.5 pr-4">{p.recordedBy.fullName}</td>
+                  <td className="py-1.5 text-right whitespace-nowrap">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedReceiptPayment(p)}
+                      className="rounded border border-zinc-200 px-2 py-0.5 text-xs font-medium text-indigo-600 hover:bg-indigo-50 dark:border-zinc-700 dark:text-indigo-400 dark:hover:bg-indigo-950/50"
+                    >
+                      Receipt
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -591,6 +608,150 @@ export function SubscriptionPanel({
             </button>
           </div>
         </div>
+      </Modal>
+
+      {/* Tax Invoice & Payment Receipt Modal */}
+      <Modal
+        open={!!selectedReceiptPayment}
+        onClose={() => setSelectedReceiptPayment(null)}
+        title="SaaS Tax Invoice / Payment Receipt"
+        maxWidthClass="max-w-2xl"
+      >
+        {selectedReceiptPayment && (
+          <div className="space-y-4 text-xs">
+            {/* Printable Receipt Box */}
+            <div id="saas-receipt-print" className="rounded-lg border border-zinc-200 bg-white p-5 text-zinc-900 shadow-sm dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-50">
+              {/* Header */}
+              <div className="flex flex-wrap items-start justify-between border-b border-zinc-200 pb-4 dark:border-zinc-800">
+                <div>
+                  <div className="text-base font-bold text-indigo-600 dark:text-indigo-400">Fashion ERP SaaS</div>
+                  <div className="text-[11px] text-zinc-500">Cloud Enterprise Software Solutions</div>
+                  <div className="mt-1 text-[11px] text-zinc-600 dark:text-zinc-400">GSTIN: 27AABCI1234F1Z5 · SAC: 998313</div>
+                </div>
+                <div className="text-right">
+                  <span className="inline-block rounded bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                    PAID IN FULL
+                  </span>
+                  <div className="mt-1 font-mono text-xs font-semibold">
+                    INV-SAAS-{selectedReceiptPayment.id.slice(0, 8).toUpperCase()}
+                  </div>
+                  <div className="text-[11px] text-zinc-500">
+                    Date: {fmtDate(selectedReceiptPayment.paidAt)}
+                  </div>
+                </div>
+              </div>
+
+              {/* Billed To / From */}
+              <div className="grid grid-cols-2 gap-4 py-3 border-b border-zinc-100 dark:border-zinc-800 text-[11px]">
+                <div>
+                  <div className="font-semibold text-zinc-500 uppercase tracking-wider text-[10px]">Billed To:</div>
+                  <div className="mt-0.5 font-bold text-zinc-900 dark:text-zinc-100">{companyName ?? "Customer Company"}</div>
+                  {legalName && <div className="text-zinc-600 dark:text-zinc-400">{legalName}</div>}
+                  <div className="text-zinc-500">GST / Tax ID: {taxRegistrationNo ?? "Not provided / Unregistered"}</div>
+                </div>
+                <div>
+                  <div className="font-semibold text-zinc-500 uppercase tracking-wider text-[10px]">Service Period:</div>
+                  <div className="mt-0.5 font-medium text-zinc-800 dark:text-zinc-200">
+                    {fmtDate(selectedReceiptPayment.periodStart)} – {fmtDate(selectedReceiptPayment.periodEnd)}
+                  </div>
+                  <div className="mt-1 text-zinc-500">
+                    Plan: <span className="font-medium text-zinc-800 dark:text-zinc-200">{selectedReceiptPayment.plan.name}</span> ({selectedReceiptPayment.periods} × {selectedReceiptPayment.billingCycle.toLowerCase()})
+                  </div>
+                </div>
+              </div>
+
+              {/* Line Items Table */}
+              <div className="py-3">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="border-b border-zinc-200 text-zinc-500 dark:border-zinc-700">
+                      <th className="py-1.5 font-semibold">Item & Description</th>
+                      <th className="py-1.5 text-right font-semibold">SAC</th>
+                      <th className="py-1.5 text-right font-semibold">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                    <tr>
+                      <td className="py-2">
+                        <div className="font-medium">{selectedReceiptPayment.plan.name} Subscription</div>
+                        <div className="text-[11px] text-zinc-500">
+                          Access to multi-tenant ERP features ({selectedReceiptPayment.billingCycle.toLowerCase()} cycle)
+                        </div>
+                        {selectedReceiptPayment.coupon && (
+                          <div className="text-[11px] text-emerald-600">
+                            Coupon Applied: {selectedReceiptPayment.coupon.code}
+                            {Number(selectedReceiptPayment.discountAmount) > 0 && ` (−₹${Number(selectedReceiptPayment.discountAmount).toLocaleString("en-IN")})`}
+                          </div>
+                        )}
+                      </td>
+                      <td className="py-2 text-right font-mono text-zinc-500">998313</td>
+                      <td className="py-2 text-right font-medium">
+                        ₹{(Number(selectedReceiptPayment.amount) / 1.18).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                    </tr>
+                  </tbody>
+                  <tfoot className="border-t border-zinc-200 text-[11px] dark:border-zinc-700">
+                    <tr>
+                      <td colSpan={2} className="py-1 text-right text-zinc-500">Taxable Subtotal:</td>
+                      <td className="py-1 text-right font-medium">
+                        ₹{(Number(selectedReceiptPayment.amount) / 1.18).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td colSpan={2} className="py-0.5 text-right text-zinc-500">CGST (9%):</td>
+                      <td className="py-0.5 text-right">
+                        ₹{((Number(selectedReceiptPayment.amount) / 1.18) * 0.09).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td colSpan={2} className="py-0.5 text-right text-zinc-500">SGST (9%):</td>
+                      <td className="py-0.5 text-right">
+                        ₹{((Number(selectedReceiptPayment.amount) / 1.18) * 0.09).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                    </tr>
+                    <tr className="border-t border-zinc-200 font-bold text-xs dark:border-zinc-700">
+                      <td colSpan={2} className="py-1.5 text-right text-zinc-900 dark:text-zinc-50">Total Paid:</td>
+                      <td className="py-1.5 text-right text-indigo-600 dark:text-indigo-400">
+                        ₹{Number(selectedReceiptPayment.amount).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+
+              {/* Payment Details Footer */}
+              <div className="mt-2 rounded bg-zinc-50 p-2.5 text-[11px] text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    Payment Method: <span className="font-semibold text-zinc-800 dark:text-zinc-200">{selectedReceiptPayment.method}</span>
+                    {selectedReceiptPayment.reference && <span> (Ref: {selectedReceiptPayment.reference})</span>}
+                  </div>
+                  <div className="text-right">
+                    Recorded By: <span className="font-semibold text-zinc-800 dark:text-zinc-200">{selectedReceiptPayment.recordedBy.fullName}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setSelectedReceiptPayment(null)}
+                className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300"
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="inline-flex items-center gap-1.5 rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500"
+              >
+                <span>🖨️ Print / Save PDF</span>
+              </button>
+            </div>
+          </div>
+        )}
       </Modal>
     </section>
   );

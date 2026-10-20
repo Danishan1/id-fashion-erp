@@ -2,7 +2,7 @@ import { prisma } from "@/core/db/client";
 import { hashPassword } from "@/core/auth/password";
 import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
-import { MODULES, ROLES, ROLE_PERMISSIONS, permissionKey } from "@/config/rbac";
+import { MODULES, ACTIONS, ROLES, ROLE_PERMISSIONS, permissionKey } from "@/config/rbac";
 import type { CreateCompanyInput } from "./platform-company.schema";
 import { startTrialInTx } from "./company-subscription.service";
 
@@ -72,6 +72,17 @@ export async function createCompany(actor: PlatformActorContext, input: CreateCo
       data: { companyId: company.id, code: input.branchCode, name: input.branchName, type: input.branchType },
     });
 
+    // Ensure all canonical permissions from the current RBAC catalog exist in the database
+    // before bootstrapping the company's roles and role_permissions.
+    const expectedPermissionRows = MODULES.flatMap((module) =>
+      ACTIONS.map((action) => ({
+        key: permissionKey(module, action),
+        module,
+        description: `${action} access for ${module}`,
+      }))
+    );
+    await tx.permission.createMany({ data: expectedPermissionRows, skipDuplicates: true });
+
     const allPermissions = await tx.permission.findMany();
     const permissionIdByKey = new Map(allPermissions.map((p) => [p.key, p.id]));
 
@@ -82,12 +93,13 @@ export async function createCompany(actor: PlatformActorContext, input: CreateCo
 
       const modulesForRole = ROLE_PERMISSIONS[roleName];
       const rolePermissionData = Object.entries(modulesForRole).flatMap(([mod, actions]) =>
-        (actions ?? []).map((action) => {
-          const key = permissionKey(mod as (typeof MODULES)[number], action);
-          const permissionId = permissionIdByKey.get(key);
-          if (!permissionId) throw new Error(`Unknown permission key: ${key}`);
-          return { roleId: role.id, permissionId };
-        })
+        (actions ?? [])
+          .map((action) => {
+            const key = permissionKey(mod as (typeof MODULES)[number], action);
+            const permissionId = permissionIdByKey.get(key);
+            return permissionId ? { roleId: role.id, permissionId } : null;
+          })
+          .filter((rp): rp is { roleId: string; permissionId: string } => rp !== null)
       );
       if (rolePermissionData.length > 0) {
         await tx.rolePermission.createMany({ data: rolePermissionData });

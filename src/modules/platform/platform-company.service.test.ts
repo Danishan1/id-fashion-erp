@@ -8,7 +8,7 @@ vi.mock("@/core/auth/password", () => ({ hashPassword: vi.fn(async () => "hashed
 const txMock = {
   company: { create: vi.fn() },
   branch: { create: vi.fn() },
-  permission: { findMany: vi.fn() },
+  permission: { findMany: vi.fn(), createMany: vi.fn() },
   role: { create: vi.fn() },
   rolePermission: { createMany: vi.fn() },
   user: { create: vi.fn() },
@@ -60,6 +60,7 @@ beforeEach(() => {
   txMock.company.create.mockReset().mockResolvedValue({ id: "co-new", name: "Acme Garments" } as never);
   txMock.branch.create.mockReset().mockResolvedValue({ id: "br-new" } as never);
   txMock.permission.findMany.mockReset().mockResolvedValue(ALL_PERMISSIONS as never);
+  txMock.permission.createMany.mockReset();
   txMock.role.create.mockReset().mockImplementation(({ data }: { data: { name: string } }) =>
     Promise.resolve({ id: `role-${data.name}`, name: data.name })
   );

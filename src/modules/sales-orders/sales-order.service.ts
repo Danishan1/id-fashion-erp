@@ -14,6 +14,7 @@ import { getSalesOrderItemProductionSummary } from "@/modules/production/product
 import type { ConfirmSalesOrderInput, SalesOrderInput, UpdateSalesOrderInput } from "./sales-order.schema";
 import { CompanyRepository, SalesOrderRepository } from "./sales-order.repository";
 import { buildReconciledItemPlan, snapshotUnsnapshottedLinesInTx } from "./sales-order-bom.service";
+import { releaseActiveReservationsForSalesOrderInTx } from "@/modules/finished-goods-inventory/finished-goods-reservation.service";
 import { SalesOrderStatus, type Prisma } from "@prisma/client";
 
 interface ActorContext {
@@ -515,17 +516,60 @@ export async function transitionSalesOrderStatus(actor: ActorContext, id: string
     data.statusBeforeHold = before.status;
   }
 
-  // Conditional on status still being `before.status` at write time — closes
-  // the race between the check above and this write (e.g. two concurrent
-  // "Cancel" clicks both reading the same prior status before either commits).
-  const { count } = await SalesOrderRepository.updateStatusConditional(id, before.status, data);
-  if (count === 0) {
-    throw new BusinessRuleError(
-      "INVALID_STATE_TRANSITION",
-      `Cannot move a sales order from "${before.status}" to "${targetStatus}".`,
-      { from: before.status, to: targetStatus }
-    );
+  if (targetStatus === "CANCELLED") {
+    await prisma.$transaction(async (tx) => {
+      // Prevent cancellation when open dispatches exist in DRAFT, PACKED, or ON_HOLD status
+      const openDispatches = await tx.dispatch.findMany({
+        where: {
+          companyId: actor.companyId,
+          salesOrderId: id,
+          status: { in: ["DRAFT", "PACKED", "ON_HOLD"] },
+        },
+        select: { id: true, dispatchNumber: true, status: true },
+      });
+      if (openDispatches.length > 0) {
+        throw new BusinessRuleError(
+          "REFERENCED_RECORD_IN_USE",
+          `Cannot cancel sales order "${before.orderNumber}" because active dispatches (${openDispatches.map((d) => d.dispatchNumber).join(", ")}) are in progress. Cancel or remove those dispatches first.`,
+          {
+            salesOrderId: id,
+            openDispatchNumbers: openDispatches.map((d) => d.dispatchNumber),
+          }
+        );
+      }
+
+      // Conditional on status still being `before.status` at write time — closes
+      // the race between the check above and this write (e.g. two concurrent
+      // "Cancel" clicks both reading the same prior status before either commits).
+      const { count } = await tx.salesOrder.updateMany({
+        where: { id, status: before.status },
+        data,
+      });
+      if (count === 0) {
+        throw new BusinessRuleError(
+          "INVALID_STATE_TRANSITION",
+          `Cannot move a sales order from "${before.status}" to "${targetStatus}".`,
+          { from: before.status, to: targetStatus }
+        );
+      }
+
+      // Release eligible active FinishedGoodsReservation records
+      await releaseActiveReservationsForSalesOrderInTx(tx, id);
+    });
+  } else {
+    // Conditional on status still being `before.status` at write time — closes
+    // the race between the check above and this write (e.g. two concurrent
+    // "Hold" clicks both reading the same prior status before either commits).
+    const { count } = await SalesOrderRepository.updateStatusConditional(id, before.status, data);
+    if (count === 0) {
+      throw new BusinessRuleError(
+        "INVALID_STATE_TRANSITION",
+        `Cannot move a sales order from "${before.status}" to "${targetStatus}".`,
+        { from: before.status, to: targetStatus }
+      );
+    }
   }
+
   const updated = await SalesOrderRepository.findAnyById(actor.companyId, id);
   if (!updated) throw new BusinessRuleError("NOT_FOUND", "Sales order not found.", { id });
 

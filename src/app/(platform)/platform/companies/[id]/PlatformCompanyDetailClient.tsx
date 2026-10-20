@@ -5,7 +5,20 @@ import Link from "next/link";
 import { Modal } from "@/components/ui/Modal";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
+import { EyeIcon, EyeOffIcon } from "@/components/ui/icons";
 import { SubscriptionPanel, type PlanOption, type SubscriptionData } from "./SubscriptionPanel";
+
+export interface CompanyUser {
+  id: string;
+  email: string;
+  fullName: string;
+  phone: string | null;
+  status: "ACTIVE" | "INACTIVE" | "SUSPENDED";
+  lastLoginAt: string | null;
+  passwordChangedAt: string | null;
+  createdAt: string;
+  roles: { roleName: string; branchName: string }[];
+}
 
 interface CompanyDetail {
   company: {
@@ -57,6 +70,7 @@ export function PlatformCompanyDetailClient({
   initialDetail,
   initialSubscription,
   plans,
+  initialUsers,
   canManageBilling,
   canManage,
   canRequestSupport,
@@ -64,15 +78,25 @@ export function PlatformCompanyDetailClient({
   initialDetail: CompanyDetail;
   initialSubscription: SubscriptionData;
   plans: PlanOption[];
+  initialUsers?: CompanyUser[];
   canManageBilling: boolean;
   canManage: boolean;
   canRequestSupport: boolean;
 }) {
   const [detail, setDetail] = useState(initialDetail);
+  const [users, setUsers] = useState<CompanyUser[]>(initialUsers ?? []);
   const [editOpen, setEditOpen] = useState(false);
   const [suspendOpen, setSuspendOpen] = useState(false);
   const [activateOpen, setActivateOpen] = useState(false);
   const [moduleToToggle, setModuleToToggle] = useState<CompanyDetail["modules"][number] | null>(null);
+
+  // User management states
+  const [userToReset, setUserToReset] = useState<CompanyUser | null>(null);
+  const [newPassword, setNewPassword] = useState("");
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [userModalError, setUserModalError] = useState<string | null>(null);
+  const [userModalSuccess, setUserModalSuccess] = useState<string | null>(null);
+  const [userToToggle, setUserToToggle] = useState<{ user: CompanyUser; targetStatus: "ACTIVE" | "SUSPENDED" } | null>(null);
   const [form, setForm] = useState({
     name: detail.company.name,
     legalName: detail.company.legalName ?? "",
@@ -88,6 +112,64 @@ export function PlatformCompanyDetailClient({
   async function reload() {
     const res = await fetch(`/api/v1/platform/companies/${company.id}`, { cache: "no-store" });
     if (res.ok) setDetail((await res.json()).data);
+  }
+
+  async function reloadUsers() {
+    const res = await fetch(`/api/v1/platform/companies/${company.id}/users`, { cache: "no-store" });
+    if (res.ok) {
+      const json = await res.json();
+      setUsers(json.data);
+    }
+  }
+
+  async function handleResetPassword() {
+    if (!userToReset) return;
+    setBusy(true);
+    setUserModalError(null);
+    setUserModalSuccess(null);
+    try {
+      const res = await fetch(`/api/v1/platform/companies/${company.id}/users/${userToReset.id}/reset-password`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ newPassword }),
+      });
+      if (!res.ok) {
+        const json = await res.json().catch(() => null);
+        setUserModalError(json?.error?.message ?? "Failed to reset password.");
+        return;
+      }
+      setUserModalSuccess(`Password reset successfully for ${userToReset.email}`);
+      setTimeout(() => {
+        setUserToReset(null);
+        setNewPassword("");
+        setUserModalSuccess(null);
+      }, 1500);
+      await reloadUsers();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleToggleUserStatus() {
+    if (!userToToggle) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/v1/platform/companies/${company.id}/users/${userToToggle.user.id}/status`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ status: userToToggle.targetStatus }),
+      });
+      if (!res.ok) {
+        const json = await res.json().catch(() => null);
+        setError(json?.error?.message ?? "Failed to update user status.");
+        return;
+      }
+      setUserToToggle(null);
+      await reloadUsers();
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function send(url: string, method: string, body?: object): Promise<boolean> {
@@ -274,11 +356,130 @@ export function PlatformCompanyDetailClient({
         </div>
       </section>
 
+      {/* Company Users & Admin Accounts */}
+      <section className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+        <div className="flex items-center justify-between border-b border-zinc-100 pb-3 dark:border-zinc-800">
+          <div>
+            <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Company Users & Admin Accounts</h2>
+            <p className="mt-0.5 text-xs text-zinc-500">
+              Factory admins, managers, and operators registered under this tenant. Platform operators can reset locked passwords or toggle account access.
+            </p>
+          </div>
+          <span className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-xs font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+            {users.length} {users.length === 1 ? "User" : "Users"}
+          </span>
+        </div>
+
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full text-left text-xs">
+            <thead>
+              <tr className="border-b border-zinc-200 text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
+                <th className="py-2 pr-3 font-medium">User</th>
+                <th className="py-2 px-3 font-medium">Roles & Branch</th>
+                <th className="py-2 px-3 font-medium">Status</th>
+                <th className="py-2 px-3 font-medium">Last Login</th>
+                <th className="py-2 px-3 font-medium">Created</th>
+                <th className="py-2 pl-3 font-medium text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+              {users.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="py-4 text-center text-zinc-400">
+                    No users found for this company.
+                  </td>
+                </tr>
+              ) : (
+                users.map((u) => (
+                  <tr key={u.id} className="hover:bg-zinc-50/50 dark:hover:bg-zinc-800/30">
+                    <td className="py-2.5 pr-3">
+                      <div className="font-medium text-zinc-900 dark:text-zinc-100">{u.fullName}</div>
+                      <div className="text-zinc-500">{u.email}</div>
+                      {u.phone && <div className="text-[11px] text-zinc-400">{u.phone}</div>}
+                    </td>
+                    <td className="py-2.5 px-3">
+                      <div className="flex flex-wrap gap-1">
+                        {u.roles.length === 0 ? (
+                          <span className="text-zinc-400">No roles</span>
+                        ) : (
+                          u.roles.map((r, i) => (
+                            <span
+                              key={i}
+                              className="inline-flex items-center rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"
+                              title={`${r.roleName} (${r.branchName})`}
+                            >
+                              {r.roleName}
+                            </span>
+                          ))
+                        )}
+                      </div>
+                    </td>
+                    <td className="py-2.5 px-3">
+                      <span
+                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                          u.status === "ACTIVE"
+                            ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300"
+                            : "bg-red-100 text-red-800 dark:bg-red-950/70 dark:text-red-300"
+                        }`}
+                      >
+                        {u.status}
+                      </span>
+                    </td>
+                    <td className="py-2.5 px-3 text-zinc-600 dark:text-zinc-400">
+                      {u.lastLoginAt ? fmt(u.lastLoginAt) : <span className="text-zinc-400">Never</span>}
+                    </td>
+                    <td className="py-2.5 px-3 text-zinc-500">{fmt(u.createdAt)}</td>
+                    <td className="py-2.5 pl-3 text-right whitespace-nowrap">
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setUserToReset(u);
+                            setNewPassword("");
+                            setShowNewPassword(false);
+                            setUserModalError(null);
+                            setUserModalSuccess(null);
+                          }}
+                          className="rounded border border-zinc-200 px-2 py-1 text-xs text-indigo-600 hover:bg-indigo-50 dark:border-zinc-700 dark:text-indigo-400 dark:hover:bg-indigo-950/50"
+                        >
+                          Reset Password
+                        </button>
+                        {canManage && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setUserToToggle({
+                                user: u,
+                                targetStatus: u.status === "ACTIVE" ? "SUSPENDED" : "ACTIVE",
+                              })
+                            }
+                            className={`rounded px-2 py-1 text-xs font-medium ${
+                              u.status === "ACTIVE"
+                                ? "text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/50"
+                                : "text-emerald-600 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/50"
+                            }`}
+                          >
+                            {u.status === "ACTIVE" ? "Suspend" : "Activate"}
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
       <SubscriptionPanel
         companyId={company.id}
         initialData={initialSubscription}
         plans={plans}
         canManageBilling={canManageBilling}
+        companyName={company.name}
+        legalName={company.legalName}
+        taxRegistrationNo={company.taxRegistrationNo}
         onChanged={reload}
       />
 
@@ -440,6 +641,97 @@ export function PlatformCompanyDetailClient({
         isBusy={busy}
         onConfirm={toggleModule}
         onCancel={() => setModuleToToggle(null)}
+      />
+
+      {/* Reset Tenant User Password Modal */}
+      <Modal
+        open={!!userToReset}
+        onClose={() => {
+          if (!busy) {
+            setUserToReset(null);
+            setNewPassword("");
+            setUserModalError(null);
+            setUserModalSuccess(null);
+          }
+        }}
+        title={`Reset Password for ${userToReset?.fullName ?? ""}`}
+      >
+        <div className="space-y-4 text-sm">
+          <p className="text-xs text-zinc-500">
+            Account: <span className="font-semibold text-zinc-800 dark:text-zinc-200">{userToReset?.email}</span>. Setting a new password will immediately invalidate any active user session.
+          </p>
+
+          <div>
+            <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300">
+              New Temporary Password <span className="text-red-500">*</span>
+            </label>
+            <div className="relative mt-1">
+              <input
+                type={showNewPassword ? "text" : "password"}
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="At least 8 characters"
+                className="w-full rounded-md border border-zinc-300 px-3 py-1.5 pr-10 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-900"
+              />
+              <button
+                type="button"
+                onClick={() => setShowNewPassword((prev) => !prev)}
+                className="absolute inset-y-0 right-0 flex items-center pr-3 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
+                tabIndex={-1}
+              >
+                {showNewPassword ? <EyeOffIcon /> : <EyeIcon />}
+              </button>
+            </div>
+            <p className="mt-1 text-[11px] text-zinc-400">Must be at least 8 characters. Give this to the user to sign in.</p>
+          </div>
+
+          {userModalError && <p className="text-xs font-medium text-red-600">{userModalError}</p>}
+          {userModalSuccess && <p className="text-xs font-medium text-emerald-600">{userModalSuccess}</p>}
+
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                setUserToReset(null);
+                setNewPassword("");
+                setUserModalError(null);
+                setUserModalSuccess(null);
+              }}
+              className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={busy || newPassword.length < 8}
+              onClick={handleResetPassword}
+              className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+            >
+              {busy ? "Saving..." : "Set New Password"}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Confirm User Suspend/Reactivate Modal */}
+      <ConfirmModal
+        open={!!userToToggle}
+        title={
+          userToToggle?.targetStatus === "SUSPENDED"
+            ? `Suspend ${userToToggle?.user.fullName}?`
+            : `Reactivate ${userToToggle?.user.fullName}?`
+        }
+        message={
+          userToToggle?.targetStatus === "SUSPENDED"
+            ? `This user (${userToToggle?.user.email}) will immediately be unable to sign in or perform actions in this tenant's ERP.`
+            : `This user (${userToToggle?.user.email}) will have their login and access permissions restored immediately.`
+        }
+        confirmLabel={userToToggle?.targetStatus === "SUSPENDED" ? "Suspend User" : "Activate User"}
+        isDangerous={userToToggle?.targetStatus === "SUSPENDED"}
+        isBusy={busy}
+        onConfirm={handleToggleUserStatus}
+        onCancel={() => setUserToToggle(null)}
       />
     </div>
   );

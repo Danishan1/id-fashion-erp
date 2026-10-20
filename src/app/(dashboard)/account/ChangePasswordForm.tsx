@@ -3,11 +3,15 @@
 import { signOut } from "next-auth/react";
 import { useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { EyeIcon, EyeOffIcon } from "@/components/ui/icons";
 
 export function ChangePasswordForm() {
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [showCurrent, setShowCurrent] = useState(false);
+  const [showNew, setShowNew] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -52,39 +56,69 @@ export function ChangePasswordForm() {
     <div className="max-w-md space-y-4">
       <form onSubmit={handleSubmit} className="space-y-4 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
         <FormField label="Current Password" htmlFor="currentPassword" required>
-          <input
-            id="currentPassword"
-            type="password"
-            required
-            autoComplete="current-password"
-            value={currentPassword}
-            onChange={(e) => setCurrentPassword(e.target.value)}
-            className={textInputClass()}
-          />
+          <div className="relative">
+            <input
+              id="currentPassword"
+              type={showCurrent ? "text" : "password"}
+              required
+              autoComplete="current-password"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              className={`${textInputClass()} pr-10`}
+            />
+            <button
+              type="button"
+              onClick={() => setShowCurrent((prev) => !prev)}
+              className="absolute inset-y-0 right-0 flex items-center pr-3 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 focus:outline-none"
+              aria-label={showCurrent ? "Hide current password" : "Show current password"}
+            >
+              {showCurrent ? <EyeOffIcon /> : <EyeIcon />}
+            </button>
+          </div>
         </FormField>
         <FormField label="New Password" htmlFor="newPassword" required>
-          <input
-            id="newPassword"
-            type="password"
-            required
-            minLength={8}
-            autoComplete="new-password"
-            value={newPassword}
-            onChange={(e) => setNewPassword(e.target.value)}
-            className={textInputClass()}
-          />
+          <div className="relative">
+            <input
+              id="newPassword"
+              type={showNew ? "text" : "password"}
+              required
+              minLength={8}
+              autoComplete="new-password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              className={`${textInputClass()} pr-10`}
+            />
+            <button
+              type="button"
+              onClick={() => setShowNew((prev) => !prev)}
+              className="absolute inset-y-0 right-0 flex items-center pr-3 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 focus:outline-none"
+              aria-label={showNew ? "Hide new password" : "Show new password"}
+            >
+              {showNew ? <EyeOffIcon /> : <EyeIcon />}
+            </button>
+          </div>
         </FormField>
         <FormField label="Confirm New Password" htmlFor="confirmPassword" required>
-          <input
-            id="confirmPassword"
-            type="password"
-            required
-            minLength={8}
-            autoComplete="new-password"
-            value={confirmPassword}
-            onChange={(e) => setConfirmPassword(e.target.value)}
-            className={textInputClass()}
-          />
+          <div className="relative">
+            <input
+              id="confirmPassword"
+              type={showConfirm ? "text" : "password"}
+              required
+              minLength={8}
+              autoComplete="new-password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              className={`${textInputClass()} pr-10`}
+            />
+            <button
+              type="button"
+              onClick={() => setShowConfirm((prev) => !prev)}
+              className="absolute inset-y-0 right-0 flex items-center pr-3 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 focus:outline-none"
+              aria-label={showConfirm ? "Hide confirm password" : "Show confirm password"}
+            >
+              {showConfirm ? <EyeOffIcon /> : <EyeIcon />}
+            </button>
+          </div>
         </FormField>
 
         {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}

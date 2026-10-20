@@ -244,6 +244,8 @@ model Company {
 
   styleStageCosts  StyleStageCost[]
   designStageCosts DesignStageCost[]
+  productUnits     ProductUnit[]
+  customerReturns  CustomerReturn[]
 
   @@map("companies")
 }
@@ -1032,6 +1034,8 @@ model User {
   jobOrderAssignmentsRateOverridden          JobOrderAssignment[]                 @relation("JobOrderAssignmentRateOverriddenBy")
   jobWorkReceiptsApproved                    JobWorkReceipt[]                     @relation("JobWorkReceiptApprovedBy")
   jobWorkReceiptsSubmitted                   JobWorkReceipt[]                     @relation("JobWorkReceiptSubmittedBy")
+  customerReturnsReceived                    CustomerReturn[]                     @relation("CustomerReturnReceivedBy")
+  customerReturnItemsInspected               CustomerReturnItem[]                 @relation("CustomerReturnItemInspectedBy")
 
   @@unique([companyId, supportForPlatformUserId])
   @@map("users")
@@ -1207,6 +1211,7 @@ model Customer {
   dispatches        Dispatch[]
   customInvoices    CustomInvoice[]
   aiGarmentProjects AiGarmentProject[]
+  customerReturns   CustomerReturn[]
 
   crmCompany CrmCompany?
 
@@ -1717,6 +1722,7 @@ model Product {
   materialSubstitutionsAsSubstitute MaterialSubstitution[]        @relation("MaterialSubstitutionSubstituteMaterial")
 
   stageCosts StyleStageCost[]
+  productUnits ProductUnit[]
 
   @@unique([companyId, styleCode])
   @@map("products")
@@ -1826,6 +1832,7 @@ model ProductVariant {
   finishedGoodsPutaways       FinishedGoodsPutaway[]
   stockMovementItems          StockMovementItem[]
   finishedGoodsPickLines      FinishedGoodsPickLine[]
+  productUnits                ProductUnit[]
 
   @@unique([productId, colorId, sizeId])
   @@map("product_variants")
@@ -1873,6 +1880,8 @@ model Warehouse {
   jobWorkOrderMaterials JobWorkOrderMaterial[]
 
   jobWorkOrdersFgDestination JobWorkOrder[] @relation("JobWorkOrderFgWarehouse")
+  productUnits               ProductUnit[]
+  customerReturnRestockItems CustomerReturnItem[] @relation("CustomerReturnRestockWarehouse")
 
   @@unique([branchId, code])
   @@map("warehouses")
@@ -3615,6 +3624,8 @@ model SalesOrder {
   materialRequests       MaterialRequest[]
   salesInvoices          SalesInvoice[]
   dispatches             Dispatch[]
+  productUnits           ProductUnit[]
+  customerReturns        CustomerReturn[]
   // Reserved, unused this phase — AiGarmentProject.salesOrderId is a nullable
   // FK not yet written by any code path (no Sales Order linkage exists yet
   // for AI Garment Flow); documented placeholder, same precedent as
@@ -3675,6 +3686,7 @@ model SalesOrderItem {
   productionOrders  ProductionOrder[]
   salesInvoiceItems SalesInvoiceItem[]
   dispatchItems     DispatchItem[]
+  productUnits      ProductUnit[]
 
   @@map("sales_order_items")
 }
@@ -3737,6 +3749,7 @@ model SalesOrderLine {
   items                     SalesOrderItem[]
   overrides                 SalesOrderBomOverride[]
   finishedGoodsReservations FinishedGoodsReservation[]
+  productUnits              ProductUnit[]
 
   @@unique([salesOrderId, lineNumber])
   @@map("sales_order_lines")
@@ -4488,6 +4501,7 @@ model ProductionOrder {
   materialRequests       MaterialRequest[]
   quantityChanges        ProductionOrderQuantityChange[]
   finishedGoodsReceipts  FinishedGoodsReceipt[]
+  productUnits           ProductUnit[]
 
   @@unique([companyId, orderNumber])
   @@index([companyId, status])
@@ -4577,6 +4591,7 @@ model Lot {
   // DispatchItem.sourceLotId's own comment.
   dispatchItems         DispatchItem[]
   finishedGoodsReceipts FinishedGoodsReceipt[]
+  productUnits          ProductUnit[]
 
   @@unique([companyId, lotNumber])
   @@index([productionOrderId])
@@ -5209,6 +5224,9 @@ enum InventoryTransactionType {
   // time (never at Draft/Packed), matching every other module's "post-time,
   // not draft-time" ledger discipline.
   DISPATCH
+  // Finished-Goods stock returned to the warehouse against a reversed Dispatch
+  // — always a positive quantity, posted only at Reverse Dispatch time.
+  DISPATCH_REVERSAL
   // Raw-material lines handed to an external job-work contractor alongside
   // a JobOrder's WIP quantity (see JobWorkOrder) — the WIP quantity itself
   // never posts here, since it has no StockBalance row to decrement (its
@@ -5660,6 +5678,7 @@ enum DispatchStatus {
   DELIVERED
   ON_HOLD
   CANCELLED
+  REVERSED
 }
 
 // Extra Dispatch Quantity (2026-09-30) — a Dispatch line may ship more than
@@ -5782,6 +5801,7 @@ model Dispatch {
   forwarder   Forwarder?     @relation(fields: [forwarderId], references: [id], onDelete: SetNull)
   items       DispatchItem[]
   cartons     Carton[]
+  productUnits ProductUnit[]
 
   @@unique([companyId, branchId, dispatchNumber])
   @@map("dispatches")
@@ -5833,6 +5853,7 @@ model DispatchItem {
   sourceLot      Lot?           @relation(fields: [sourceLotId], references: [id])
   cartonItems    CartonItem[]
   pickLines      FinishedGoodsPickLine[]
+  productUnits   ProductUnit[]
 
   @@index([dispatchId])
   @@index([sourceLotId])
@@ -5881,6 +5902,7 @@ model Carton {
 
   dispatch Dispatch     @relation(fields: [dispatchId], references: [id])
   items    CartonItem[]
+  productUnits ProductUnit[]
 
   @@unique([dispatchId, cartonNumber])
   @@map("cartons")
@@ -5926,6 +5948,7 @@ enum BarcodeEntityType {
   CARTON
   ITEM // raw-material Product
   SKU // ProductVariant
+  PRODUCT_UNIT // Individual garment piece
 }
 
 enum BarcodeStatus {
@@ -5951,6 +5974,158 @@ model Barcode {
   @@index([entityType, entityId])
   @@map("barcodes")
 }
+
+// ─────────────────────────────────────────────────────────────
+// Product Unit Garment Barcode & Traceability System
+// ─────────────────────────────────────────────────────────────
+
+enum ProductUnitStatus {
+  PACKED
+  IN_STOCK
+  ALLOCATED
+  DISPATCHED
+  RETURNED
+  QUARANTINED
+  REWORK
+  SCRAPPED
+}
+
+model ProductUnit {
+  id                 String            @id @default(uuid()) @db.Uuid
+  companyId          String            @map("company_id") @db.Uuid
+  unitCode           String            @map("unit_code")
+  productId          String            @map("product_id") @db.Uuid
+  productVariantId   String            @map("product_variant_id") @db.Uuid
+  productionOrderId  String            @map("production_order_id") @db.Uuid
+  lotId              String            @map("lot_id") @db.Uuid
+
+  salesOrderId       String?           @map("sales_order_id") @db.Uuid
+  salesOrderItemId   String?           @map("sales_order_item_id") @db.Uuid
+  salesOrderLineId   String?           @map("sales_order_line_id") @db.Uuid
+
+  cartonId           String?           @map("carton_id") @db.Uuid
+  dispatchId         String?           @map("dispatch_id") @db.Uuid
+  dispatchItemId     String?           @map("dispatch_item_id") @db.Uuid
+
+  status             ProductUnitStatus @default(PACKED)
+  currentWarehouseId String?           @map("current_warehouse_id") @db.Uuid
+
+  createdAt          DateTime          @default(now()) @map("created_at")
+  updatedAt          DateTime          @updatedAt @map("updated_at")
+
+  company            Company           @relation(fields: [companyId], references: [id])
+  product            Product           @relation(fields: [productId], references: [id])
+  productVariant     ProductVariant    @relation(fields: [productVariantId], references: [id])
+  productionOrder    ProductionOrder   @relation(fields: [productionOrderId], references: [id])
+  lot                Lot               @relation(fields: [lotId], references: [id])
+  salesOrder         SalesOrder?       @relation(fields: [salesOrderId], references: [id])
+  salesOrderItem     SalesOrderItem?   @relation(fields: [salesOrderItemId], references: [id])
+  salesOrderLine     SalesOrderLine?   @relation(fields: [salesOrderLineId], references: [id])
+  carton             Carton?           @relation(fields: [cartonId], references: [id])
+  dispatch           Dispatch?         @relation(fields: [dispatchId], references: [id])
+  dispatchItem       DispatchItem?     @relation(fields: [dispatchItemId], references: [id])
+  warehouse          Warehouse?        @relation(fields: [currentWarehouseId], references: [id])
+
+  events             ProductUnitEvent[]
+  returns            CustomerReturnItem[]
+
+  @@unique([companyId, unitCode])
+  @@index([lotId])
+  @@index([dispatchId])
+  @@index([cartonId])
+  @@index([productVariantId])
+  @@index([status])
+  @@map("product_units")
+}
+
+model ProductUnitEvent {
+  id            String             @id @default(uuid()) @db.Uuid
+  productUnitId String             @map("product_unit_id") @db.Uuid
+  eventType     String             @map("event_type")
+  fromStatus    ProductUnitStatus? @map("from_status")
+  toStatus      ProductUnitStatus  @map("to_status")
+  locationId    String?            @map("location_id") @db.Uuid
+  referenceType String?            @map("reference_type")
+  referenceId   String?            @map("reference_id") @db.Uuid
+  remarks       String?
+  actorUserId   String?            @map("actor_user_id") @db.Uuid
+  createdAt     DateTime           @default(now()) @map("created_at")
+
+  productUnit   ProductUnit        @relation(fields: [productUnitId], references: [id], onDelete: Cascade)
+
+  @@index([productUnitId])
+  @@map("product_unit_events")
+}
+
+enum CustomerReturnStatus {
+  RECEIVED
+  INSPECTED
+  COMPLETED
+  CANCELLED
+}
+
+enum ReturnCondition {
+  GOOD
+  DAMAGED
+  DEFECTIVE
+  WRONG_ITEM
+}
+
+enum ReturnDisposition {
+  RESTOCK
+  REWORK
+  QUARANTINE
+  SCRAP
+}
+
+model CustomerReturn {
+  id           String               @id @default(uuid()) @db.Uuid
+  companyId    String               @map("company_id") @db.Uuid
+  returnNumber String               @map("return_number")
+  salesOrderId String?              @map("sales_order_id") @db.Uuid
+  customerId   String               @map("customer_id") @db.Uuid
+  status       CustomerReturnStatus @default(RECEIVED)
+  receivedAt   DateTime             @default(now()) @map("received_at")
+  receivedById String               @map("received_by_id") @db.Uuid
+  remarks      String?
+  createdAt    DateTime             @default(now()) @map("created_at")
+  updatedAt    DateTime             @updatedAt @map("updated_at")
+
+  company      Company              @relation(fields: [companyId], references: [id])
+  salesOrder   SalesOrder?          @relation(fields: [salesOrderId], references: [id])
+  customer     Customer             @relation(fields: [customerId], references: [id])
+  receivedBy   User                 @relation("CustomerReturnReceivedBy", fields: [receivedById], references: [id])
+  items        CustomerReturnItem[]
+
+  @@unique([companyId, returnNumber])
+  @@index([customerId])
+  @@index([salesOrderId])
+  @@map("customer_returns")
+}
+
+model CustomerReturnItem {
+  id                 String             @id @default(uuid()) @db.Uuid
+  customerReturnId   String             @map("customer_return_id") @db.Uuid
+  productUnitId      String             @map("product_unit_id") @db.Uuid
+  returnReason       String             @map("return_reason")
+  condition          ReturnCondition    @default(GOOD)
+  disposition        ReturnDisposition  @default(RESTOCK)
+  restockWarehouseId String?            @map("restock_warehouse_id") @db.Uuid
+  inspectedAt        DateTime?          @map("inspected_at")
+  inspectedById      String?            @map("inspected_by_id") @db.Uuid
+  remarks            String?
+  createdAt          DateTime           @default(now()) @map("created_at")
+
+  customerReturn     CustomerReturn     @relation(fields: [customerReturnId], references: [id], onDelete: Cascade)
+  productUnit        ProductUnit        @relation(fields: [productUnitId], references: [id])
+  restockWarehouse   Warehouse?         @relation("CustomerReturnRestockWarehouse", fields: [restockWarehouseId], references: [id])
+  inspectedBy        User?              @relation("CustomerReturnItemInspectedBy", fields: [inspectedById], references: [id])
+
+  @@index([customerReturnId])
+  @@index([productUnitId])
+  @@map("customer_return_items")
+}
+
 
 // ─────────────────────────────────────────────────────────────
 // Accounts (Phase 7A — Chart of Accounts, Tax Config, Journal Engine)
@@ -10895,6 +11070,9 @@ enum DocumentType {
   FG_RECEIPT
   // Finished Goods Inventory module (FGI-030) -- FinishedGoodsPutaway numbering.
   FG_PUTAWAY
+  // Product Unit Garment Barcode & Traceability System
+  PRODUCT_UNIT
+  CUSTOMER_RETURN
 }
 
 model DocumentSequence {
