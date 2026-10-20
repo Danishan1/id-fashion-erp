@@ -196,6 +196,30 @@ describe("generateNewDesign", () => {
     expect(designer.generateDesign).not.toHaveBeenCalled();
   });
 
+  it("gives each of 3 designs its own prompt with a different design direction", async () => {
+    vi.mocked(repos.AiDesignerProjectRepository.findAnyById).mockResolvedValue(project() as never);
+    vi.mocked(readFile).mockResolvedValue(Buffer.from("template") as never);
+    const replicate = vi.fn().mockResolvedValue({ images: [{ buffer: Buffer.from("out"), mimeType: "image/png" }] });
+    vi.mocked(runWithFailover).mockImplementation((async (params: { call: (p: unknown) => unknown }) => {
+      const out = (await params.call({ name: "gemini", replicateWithNewMaterial: replicate })) as { images: unknown[] };
+      return { ...out, providerName: "gemini", model: "gemini-image" };
+    }) as never);
+    vi.mocked(repos.AiDesignerImageRepository.findByGenerationId).mockResolvedValue([] as never);
+
+    await svc.generateNewDesign(actor, "proj-1", { imageCount: 3 });
+
+    expect(replicate).toHaveBeenCalledTimes(3);
+    const calls = replicate.mock.calls.map((c) => c[0] as { prompt: string; count: number });
+    expect(calls.every((c) => c.count === 1)).toBe(true);
+    expect(new Set(calls.map((c) => c.prompt)).size).toBe(3);
+    calls.forEach((c, i) => {
+      expect(c.prompt).toContain(`design option ${i + 1} of 3`);
+      expect(c.prompt).toContain("Do NOT copy the silhouette");
+    });
+    const promptRow = vi.mocked(repos.AiDesignerPromptRepository.create).mock.calls[0][0];
+    expect((promptRow.specJson as { designDirections: string[] }).designDirections).toHaveLength(3);
+  });
+
   it("falls back to the classic generation when the garment type has no photo", async () => {
     vi.mocked(repos.AiDesignerProjectRepository.findAnyById).mockResolvedValue(
       project({ garmentTemplateKey: "women-skirt", productCategory: "Skirt" }) as never
@@ -296,12 +320,11 @@ describe("generateNewDesign — every garment gets its own linked sketch", () =>
     }) as never);
     vi.mocked(repos.AiDesignerImageRepository.findByGenerationId).mockImplementation((async () => [...rows]) as never);
 
-    const replicate = vi.fn().mockResolvedValue({
-      images: [
-        { buffer: Buffer.from("garment-A"), mimeType: "image/png" },
-        { buffer: Buffer.from("garment-B"), mimeType: "image/png" },
-      ],
-    });
+    // One call per design option, one image per call: garment-A, garment-B, …
+    let call = 0;
+    const replicate = vi.fn(async () => ({
+      images: [{ buffer: Buffer.from(`garment-${String.fromCharCode(65 + call++)}`), mimeType: "image/png" }],
+    }));
     const generateTechnicalFlat = vi.fn(async (args: { baseImage: { buffer: Buffer } }) => {
       if (opts.failSketchFor && args.baseImage.buffer.toString() === opts.failSketchFor) throw new Error("credits exhausted");
       return { images: [{ buffer: Buffer.from(`sketch-of-${args.baseImage.buffer.toString()}`), mimeType: "image/png" }] };
@@ -320,17 +343,17 @@ describe("generateNewDesign — every garment gets its own linked sketch", () =>
 
     const result = await svc.generateNewDesign(actor, "proj-1", { imageCount: 3 });
 
-    expect(generateTechnicalFlat).toHaveBeenCalledTimes(2);
-    expect(generateTechnicalFlat.mock.calls.map((c) => c[0].baseImage.buffer.toString()).sort()).toEqual(["garment-A", "garment-B"]);
-    expect(result.images).toHaveLength(2);
-    expect(result.sketches).toHaveLength(2);
+    expect(generateTechnicalFlat).toHaveBeenCalledTimes(3);
+    expect(generateTechnicalFlat.mock.calls.map((c) => c[0].baseImage.buffer.toString()).sort()).toEqual(["garment-A", "garment-B", "garment-C"]);
+    expect(result.images).toHaveLength(3);
+    expect(result.sketches).toHaveLength(3);
     expect(result.sketchFailures).toBe(0);
 
     const created = vi.mocked(repos.AiDesignerImageRepository.createMany).mock.calls.flatMap((c) => c[0]);
     const garments = created.filter((r) => r.kind === "GARMENT");
     const sketches = created.filter((r) => r.kind === "SKETCH");
-    expect(garments).toHaveLength(2);
-    expect(sketches).toHaveLength(2);
+    expect(garments).toHaveLength(3);
+    expect(sketches).toHaveLength(3);
     // Each sketch points at a different garment row.
     expect(new Set(sketches.map((s) => s.sketchForImageId))).toEqual(new Set(garments.map((g) => `img-${g.imageAttachmentId}`)));
   });
@@ -342,8 +365,8 @@ describe("generateNewDesign — every garment gets its own linked sketch", () =>
 
     const result = await svc.generateNewDesign(actor, "proj-1", { imageCount: 3 });
 
-    expect(result.images).toHaveLength(2);
-    expect(result.sketches).toHaveLength(1);
+    expect(result.images).toHaveLength(3);
+    expect(result.sketches).toHaveLength(2);
     expect(result.sketchFailures).toBe(1);
     expect(result.sketchError).toMatch(/credits exhausted/);
     expect(repos.AiDesignerGenerationRepository.markFailed).not.toHaveBeenCalled();
