@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 interface ComparisonRow {
   materialId: string;
@@ -20,39 +20,47 @@ interface ComparisonRow {
  * ledger — never re-derived from the plan. A row with Planned "—" is a
  * material that was never part of the plan at all — a Material Substitution
  * issued in place of something else, per the spec's own worked example.
- * Self-fetches on open, matching this app's established "collapsible
- * section, fresh data every time it's opened" convention (e.g. the
- * Merchandising Action Sheet).
+ * Always loaded and shown as soon as the page opens (not a click-to-reveal
+ * panel) — the Hide/Show toggle only hides the already-fetched data, it
+ * never re-fetches.
  */
 export function MaterialPlannedVsIssuedPanel({ productionOrderId }: { productionOrderId: string }) {
-  const [isOpen, setIsOpen] = useState(false);
+  const [isOpen, setIsOpen] = useState(true);
   const [rows, setRows] = useState<ComparisonRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  // Derived, not a separate state variable — never set synchronously inside
+  // the effect below, matching MaterialRequirementPreview.tsx's own
+  // established react-hooks/set-state-in-effect fix pattern.
+  const isLoading = rows === null && error === null;
 
-  const toggle = async () => {
-    const next = !isOpen;
-    setIsOpen(next);
-    if (!next) return;
-
-    setLoading(true);
-    setError(null);
-    const res = await fetch(`/api/v1/production-orders/${productionOrderId}/material-comparison`);
-    setLoading(false);
-    if (!res.ok) {
-      const body = await res.json().catch(() => null);
-      setError(body?.error?.message ?? "Failed to load material comparison.");
-      return;
-    }
-    const body = await res.json();
-    setRows(body.data ?? []);
-  };
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/v1/production-orders/${productionOrderId}/material-comparison`)
+      .then(async (res) => {
+        if (!res.ok) {
+          const body = await res.json().catch(() => null);
+          throw new Error(body?.error?.message ?? "Failed to load material comparison.");
+        }
+        return res.json();
+      })
+      .then((body) => {
+        if (cancelled) return;
+        setRows(body.data ?? []);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : "Failed to load material comparison.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [productionOrderId]);
 
   return (
     <div className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
       <button
         type="button"
-        onClick={toggle}
+        onClick={() => setIsOpen((open) => !open)}
         className="flex w-full items-center justify-between text-left text-sm font-semibold text-zinc-900 dark:text-zinc-50"
       >
         <span>Planned vs Issued Material</span>
@@ -61,12 +69,12 @@ export function MaterialPlannedVsIssuedPanel({ productionOrderId }: { production
 
       {isOpen && (
         <div className="mt-3">
-          {loading && <p className="text-sm text-zinc-500">Loading…</p>}
+          {isLoading && <p className="text-sm text-zinc-500">Loading…</p>}
           {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
-          {!loading && !error && rows && rows.length === 0 && (
+          {!isLoading && !error && rows && rows.length === 0 && (
             <p className="text-sm text-zinc-500">Nothing planned or issued yet.</p>
           )}
-          {!loading && !error && rows && rows.length > 0 && (
+          {!isLoading && !error && rows && rows.length > 0 && (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>

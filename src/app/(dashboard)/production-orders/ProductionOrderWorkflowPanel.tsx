@@ -659,12 +659,6 @@ export function ProductionOrderWorkflowPanel({
         </div>
       )}
 
-      <MaterialRequirementPreview
-        productId={order.productId}
-        quantity={Number(order.plannedQuantity)}
-        salesOrderItemId={order.salesOrderItemId || undefined}
-      />
-
       <MaterialPlannedVsIssuedPanel productionOrderId={productionOrderId} />
 
       <StageTimelinePanel kind="productionOrder" id={productionOrderId} refreshKey={timelineKey} />
