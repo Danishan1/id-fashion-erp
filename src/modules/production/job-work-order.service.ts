@@ -40,6 +40,20 @@ const EPSILON = 0.0001;
  * PermissionService.getAllowedContractorId means an ordinary internal user
  * with no restriction — this is a no-op for every pre-existing caller.
  */
+/**
+ * P1: an internal user needs production.view_all to see job-work orders --
+ * a worker (assigned-only) never does. External contractor logins are
+ * scoped to their own contractor instead and don't come through here.
+ */
+async function assertInternalJobWorkViewer(userId: string) {
+  if (!(await PermissionService.can(userId, "production", "view_all"))) {
+    throw new BusinessRuleError("PERMISSION_DENIED", "You can only see production work assigned to you.", {
+      module: "production",
+      action: "view_all",
+    });
+  }
+}
+
 async function assertJobWorkOrderContractorAccess(actor: { userId: string }, order: { contractorId: string }) {
   const allowedContractorId = await PermissionService.getAllowedContractorId(actor.userId);
   if (allowedContractorId !== null && order.contractorId !== allowedContractorId) {
@@ -139,6 +153,7 @@ export async function listJobWorkOrders(
   // other way around (a client-supplied value must never WIDEN what an
   // external user can see).
   const allowedContractorId = userId ? await PermissionService.getAllowedContractorId(userId) : null;
+  if (userId && !allowedContractorId) await assertInternalJobWorkViewer(userId);
 
   const where: Prisma.JobWorkOrderWhereInput = {
     companyId,
@@ -180,7 +195,10 @@ export async function listPendingJobWorkReceipts(actor: ActorContext) {
 export async function getJobWorkOrderById(companyId: string, id: string, userId?: string) {
   const order = await JobWorkOrderRepository.findAnyById(companyId, id);
   if (!order) throw new BusinessRuleError("NOT_FOUND", "Job-work order not found.", { id });
-  if (userId) await assertJobWorkOrderContractorAccess({ userId }, order);
+  if (userId) {
+    await assertJobWorkOrderContractorAccess({ userId }, order);
+    if (!(await PermissionService.getAllowedContractorId(userId))) await assertInternalJobWorkViewer(userId);
+  }
   const stageTracking = await getJobWorkStageTracking(companyId, order);
   return { ...order, metrics: computeJobWorkOrderMetrics(order), stageTracking };
 }

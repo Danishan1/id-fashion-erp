@@ -5,14 +5,25 @@ import { registerBarcode } from "@/core/barcode/barcode.service";
 import type { Prisma } from "@prisma/client";
 import { PermissionService } from "@/core/rbac/PermissionService";
 import { assertBranchAccess, branchScopeWhere } from "@/lib/branch-access";
+import { assignedLotWhere, getProductionRecordScope } from "@/modules/production/production-scope";
 
 /**
  * A unit's branch is its lot's branch — a branch-restricted user only sees
  * units from lots in their allowed branches (same rule as getLotById).
+ * P1: someone who reaches units only through production.view (a worker, no
+ * view_all, no barcodes/dispatch view) only sees units of lots assigned to them.
  */
 async function unitBranchScope(userId: string): Promise<Prisma.ProductUnitWhereInput> {
   const allowed = await PermissionService.getAllowedBranchIds(userId);
-  return allowed === null ? {} : { lot: branchScopeWhere(allowed) };
+  const lotWhere: Prisma.LotWhereInput = allowed === null ? {} : branchScopeWhere(allowed);
+
+  const [barcodes, dispatch] = await Promise.all([
+    PermissionService.can(userId, "barcodes", "view"),
+    PermissionService.can(userId, "dispatch", "view"),
+  ]);
+  if (!barcodes && !dispatch) Object.assign(lotWhere, assignedLotWhere(await getProductionRecordScope(userId)));
+
+  return Object.keys(lotWhere).length === 0 ? {} : { lot: lotWhere };
 }
 
 const UNIT_LIST_INCLUDE = {

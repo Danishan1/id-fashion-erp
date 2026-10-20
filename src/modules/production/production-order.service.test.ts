@@ -40,9 +40,10 @@ vi.mock("@/core/db/client", () => ({
     materialRequestItem: { findMany: vi.fn() },
     inventoryTransaction: { groupBy: vi.fn() },
     product: { findMany: vi.fn() },
+    user: { findUnique: vi.fn() },
   },
 }));
-vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { getAllowedBranchIds: vi.fn() } }));
+vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { getAllowedBranchIds: vi.fn(), can: vi.fn().mockResolvedValue(true) } }));
 
 const { generateDocumentNumber } = await import("@/core/numbering/DocumentNumberingService");
 const { PermissionService } = await import("@/core/rbac/PermissionService");
@@ -460,6 +461,20 @@ describe("branch access enforcement (2026-09-15)", () => {
   beforeEach(() => {
     vi.mocked(ProductionOrderRepository.findMany).mockReset().mockResolvedValue([]);
     vi.mocked(ProductionOrderRepository.count).mockReset().mockResolvedValue(0);
+  });
+
+  it("listProductionOrders limits an assigned-only worker to orders carrying their own assignment (P1)", async () => {
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(null);
+    vi.mocked(PermissionService.can).mockResolvedValueOnce(false);
+    const { prisma } = await import("@/core/db/client");
+    vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({ employeeId: "emp-1" } as never);
+
+    await listProductionOrders(actor, listQuery);
+
+    const whereArg = vi.mocked(ProductionOrderRepository.findMany).mock.calls[0][0];
+    expect(whereArg).toMatchObject({
+      lots: { some: { jobOrders: { some: { assignments: { some: { employeeId: "emp-1" } } } } } },
+    });
   });
 
   it("listProductionOrders adds no branch filter for an unrestricted user", async () => {

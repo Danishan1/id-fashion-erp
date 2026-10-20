@@ -9,7 +9,7 @@ import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { PermissionService } from "@/core/rbac/PermissionService";
 
 vi.mock("@/core/rbac/PermissionService", () => ({
-  PermissionService: { getAllowedBranchIds: vi.fn().mockResolvedValue(null) },
+  PermissionService: { getAllowedBranchIds: vi.fn().mockResolvedValue(null), can: vi.fn().mockResolvedValue(true) },
 }));
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/barcode/barcode.service", () => ({ registerBarcode: vi.fn() }));

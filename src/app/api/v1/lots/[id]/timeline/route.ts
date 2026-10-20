@@ -12,7 +12,8 @@ interface RouteContext {
 export async function GET(_req: NextRequest, { params }: RouteContext) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "production", "view");
+    // P1: planning/history detail -- needs production.view_all (workers only see their own cards).
+    await PermissionService.assert(session.user.id, "production", "view_all");
 
     const { id } = await params;
     // Same company + branch + stage visibility rules as the lot page itself.

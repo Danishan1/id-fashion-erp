@@ -7,7 +7,7 @@ vi.mock("@/core/numbering/DocumentNumberingService", () => ({ generateDocumentNu
 // exercises the INTERNAL path, so getAllowedContractorId defaults to null
 // (unrestricted/internal) unless a test explicitly overrides it.
 vi.mock("@/core/rbac/PermissionService", () => ({
-  PermissionService: { getAllowedContractorId: vi.fn().mockResolvedValue(null), assert: vi.fn() },
+  PermissionService: { getAllowedContractorId: vi.fn().mockResolvedValue(null), assert: vi.fn(), can: vi.fn().mockResolvedValue(true) },
 }));
 vi.mock("@/core/production-settings/ProductionSettingsService", () => ({
   getProductionSettings: vi.fn().mockResolvedValue({
@@ -110,6 +110,7 @@ const {
   resumeJobWorkOrderFromHold,
   computeJobWorkOrderMetrics,
   listPendingJobWorkReceipts,
+  listJobWorkOrders,
 } = await import("./job-work-order.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
@@ -910,5 +911,15 @@ describe("approveJobWorkReceipt — multi-stage cascade (2026-10-20)", () => {
     vi.mocked(JobWorkReceiptRepository.findAnyById).mockResolvedValue({ ...receipt, approvalStatus: "APPROVED" } as never);
     await expect(approveJobWorkReceipt(actor, "rcpt-1")).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
     expect(cascadeReceivedThroughStagesInTx).not.toHaveBeenCalled();
+  });
+});
+
+describe("job-work visibility (P1)", () => {
+  it("refuses an internal user without production.view_all (a worker)", async () => {
+    vi.mocked(PermissionService.getAllowedContractorId).mockResolvedValueOnce(null);
+    vi.mocked(PermissionService.can).mockResolvedValueOnce(false);
+    await expect(
+      listJobWorkOrders("co-1", { page: 1, pageSize: 20, skip: 0, take: 20, search: "", sortBy: "createdAt", sortOrder: "desc" } as never, "user-1")
+    ).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
   });
 });

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireSession, handleApiError } from "@/lib/api-route";
 import { PermissionService } from "@/core/rbac/PermissionService";
 import { assertLotInScope } from "@/modules/production/production-scope";
+import { getJobOrderById } from "@/modules/production/job-order.service";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { ProductionStageTransactionRepository } from "@/modules/production/production.repository";
 import { getCompanyHeaderLines } from "@/core/documents/company-header";
@@ -25,6 +26,8 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
 
     const { id: lotId, jobOrderId } = await params;
     await assertLotInScope({ companyId: session.user.companyId, userId: session.user.id }, lotId);
+    // A worker may only download the slip for a job order they are assigned to.
+    await getJobOrderById(session.user.companyId, jobOrderId, session.user.id);
     const transaction = await ProductionStageTransactionRepository.findLatestByToJobOrderId(session.user.companyId, lotId, jobOrderId);
     if (!transaction) {
       throw new BusinessRuleError(

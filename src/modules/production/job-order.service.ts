@@ -41,7 +41,7 @@ import type {
   UpdatePendingProgressEntryInput,
 } from "./production.schema";
 import type { ActorContext } from "./production-order.service";
-import { assertProductionBranchScope } from "./production-scope";
+import { assertProductionBranchScope, getProductionRecordScope } from "./production-scope";
 
 const EPSILON = 0.0001;
 
@@ -635,6 +635,21 @@ export async function getJobOrderById(companyId: string, id: string, userId?: st
     const allowedBranchIds = await PermissionService.getAllowedBranchIds(userId);
     if (allowedBranchIds !== null && (!jobOrder.lot.branchId || !allowedBranchIds.has(jobOrder.lot.branchId))) {
       throw new BusinessRuleError("NOT_FOUND", "Job order not found.", { id });
+    }
+
+    // P1: an assigned-only user only sees job orders they're assigned to,
+    // with only their own assignment rows.
+    const recordScope = await getProductionRecordScope(userId);
+    if (recordScope.mode === "ASSIGNED") {
+      const own = jobOrder.assignments.filter((a) => a.employeeId === recordScope.employeeId && a.status !== "CANCELLED");
+      if (!recordScope.employeeId || own.length === 0) {
+        throw new BusinessRuleError("NOT_FOUND", "Job order not found.", { id });
+      }
+      return {
+        ...jobOrder,
+        assignments: own,
+        progressEntries: jobOrder.progressEntries.filter((e) => e.employeeId === recordScope.employeeId),
+      };
     }
   }
 

@@ -10,7 +10,7 @@ import type { CreateLotInput, MergeLotsInput, SplitLotInput } from "./production
 import type { ActorContext } from "./production-order.service";
 import { computeAvailableToCommit, sumAssignmentConsumed } from "./assignment-capacity";
 import { assertLotMaterialReady } from "./lot-readiness.service";
-import { assertProductionBranchScope } from "./production-scope";
+import { assertProductionBranchScope, getProductionRecordScope } from "./production-scope";
 import {
   assertStageAccess,
   findFirstActiveStage,
@@ -53,8 +53,24 @@ export async function getLotById(companyId: string, id: string, userId: string) 
   }
 
   const allowedStageIds = await PermissionService.getAllowedProductionStageIds(userId);
-  const visibleJobOrders =
+  const stageVisible =
     allowedStageIds === null ? lot.jobOrders : lot.jobOrders.filter((jo) => allowedStageIds.has(jo.productionStage.id));
+
+  // P1: an assigned-only user (e.g. a worker) sees only the job-order cards
+  // they're assigned to, and only their own assignment rows -- never other
+  // workers' names or quantities. A lot with none of their work is "not found".
+  const recordScope = await getProductionRecordScope(userId);
+  const ownEmployeeId = recordScope.mode === "ASSIGNED" ? recordScope.employeeId : null;
+  const isOwn = (a: { employeeId: string; status: string }) => a.employeeId === ownEmployeeId && a.status !== "CANCELLED";
+  const visibleJobOrders =
+    recordScope.mode === "ALL"
+      ? stageVisible
+      : stageVisible
+          .filter((jo) => ownEmployeeId !== null && jo.assignments.some(isOwn))
+          .map((jo) => ({ ...jo, assignments: jo.assignments.filter(isOwn) }));
+  if (recordScope.mode === "ASSIGNED" && visibleJobOrders.length === 0) {
+    throw new BusinessRuleError("NOT_FOUND", "Lot not found.", { id });
+  }
 
   // Worker-assignment figures for the Assign Worker / Log Process screens,
   // computed with the exact same helpers the write paths enforce — so a UI

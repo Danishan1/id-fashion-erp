@@ -3,7 +3,9 @@ import { auth } from "@/core/auth/auth";
 import { getProductionOrderById } from "@/modules/production/production-order.service";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Barcode } from "@/components/ui/Barcode";
+import Link from "next/link";
 import { ProductionOrderWorkflowPanel } from "../ProductionOrderWorkflowPanel";
+import { getProductionRecordScope } from "@/modules/production/production-scope";
 
 export default async function ProductionOrderDetailPage({
   params,
@@ -18,6 +20,9 @@ export default async function ProductionOrderDetailPage({
 
   const order = await getProductionOrderById({ companyId: session!.user.companyId, userId: session!.user.id }, id).catch(() => null);
   if (!order) notFound();
+  // P1: a worker (no production.view_all) gets a read-only list of just the
+  // lots carrying their own assignment -- none of the order-level actions.
+  const assignedOnly = (await getProductionRecordScope(session!.user.id)).mode === "ASSIGNED";
 
   return (
     <div className="space-y-6">
@@ -41,12 +46,36 @@ export default async function ProductionOrderDetailPage({
       {/* Decimal/Date fields round-trip through JSON before crossing to the
           Client Component. key={id} forces a remount on client-side
           navigation between two different orders. */}
-      <ProductionOrderWorkflowPanel
-        key={id}
-        productionOrderId={id}
-        initialOrder={JSON.parse(JSON.stringify(order))}
-        openExtraOnLoad={extra === "1"}
-      />
+      {assignedOnly ? (
+        <div className="space-y-3">
+          <p className="rounded-md bg-indigo-50 px-3 py-2 text-sm text-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-300">
+            You are seeing only the lots assigned to you. To record your progress, open{" "}
+            <Link href="/production/my-work" className="font-medium underline">
+              My Work
+            </Link>
+            .
+          </p>
+          <ul className="divide-y divide-zinc-200 rounded-lg border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
+            {order.lots.map((lot) => (
+              <li key={lot.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-sm">
+                <Link href={`/production-orders/${id}/lots/${lot.id}`} className="font-medium text-indigo-600 hover:text-indigo-500">
+                  {lot.lotNumber}
+                </Link>
+                <span className="text-zinc-600 dark:text-zinc-300">
+                  {lot.currentStage?.name ?? "Not started"} · {lot.status.replaceAll("_", " ").toLowerCase()}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : (
+        <ProductionOrderWorkflowPanel
+          key={id}
+          productionOrderId={id}
+          initialOrder={JSON.parse(JSON.stringify(order))}
+          openExtraOnLoad={extra === "1"}
+        />
+      )}
     </div>
   );
 }

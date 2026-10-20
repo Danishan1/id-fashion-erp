@@ -199,10 +199,14 @@ export function LotWorkflowPanel({
   lotId,
   productionOrderId,
   initialLot,
+  assignedOnly = false,
 }: {
   lotId: string;
   productionOrderId: string;
   initialLot: LotDetail;
+  /** P1: the viewer only sees their own assigned work (no production.view_all).
+   * They get a read-only view of their own cards; progress is entered from My Work. */
+  assignedOnly?: boolean;
 }) {
   const [lot, setLot] = useState(initialLot);
   const [error, setError] = useState<string | null>(null);
@@ -291,6 +295,8 @@ export function LotWorkflowPanel({
   const [qcVariantQtyById, setQcVariantQtyById] = useState<Record<string, string>>({});
 
   useEffect(() => {
+    // Lookups for the supervisor actions only — an assigned-only viewer has none.
+    if (assignedOnly) return;
     fetch("/api/v1/production-stages")
       .then((res) => res.json())
       .then((body) => setStages(body.data ?? []));
@@ -315,7 +321,7 @@ export function LotWorkflowPanel({
       .then((res) => res.json())
       .then((body) => setProductionOperations(body.data ?? []))
       .catch(() => {});
-  }, []);
+  }, [assignedOnly]);
 
   // Piece-Rate (2026-09-18) — live preview in the Assign Worker modal;
   // never mutates anything, assignWorker() re-resolves for real.
@@ -688,7 +694,7 @@ export function LotWorkflowPanel({
     setCreatedJobWorkOrderId(body.data.id);
   };
 
-  const canAct = lot.status === "PLANNED" || lot.status === "IN_PROGRESS";
+  const canAct = !assignedOnly && (lot.status === "PLANNED" || lot.status === "IN_PROGRESS");
 
   // ── Derived job-work cost sheet ──
   const jobWorkCoveredStages: JobWorkStageOption[] = (() => {
@@ -842,7 +848,17 @@ export function LotWorkflowPanel({
         </p>
       )}
 
-      {lot.status === "PLANNED" && (
+      {assignedOnly && (
+        <p className="rounded-md bg-indigo-50 px-3 py-2 text-sm text-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-300">
+          You are seeing only the work assigned to you. To record your progress, open{" "}
+          <Link href="/production/my-work" className="font-medium underline">
+            My Work
+          </Link>
+          .
+        </p>
+      )}
+
+      {canAct && lot.status === "PLANNED" && (
         <button
           type="button"
           onClick={() => openModal(() => setShowStart(true))}
@@ -852,7 +868,7 @@ export function LotWorkflowPanel({
         </button>
       )}
 
-      <StageTimelinePanel kind="lot" id={lotId} refreshKey={timelineKey} />
+      {!assignedOnly && <StageTimelinePanel kind="lot" id={lotId} refreshKey={timelineKey} />}
 
       <div className="space-y-4">
         <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Job Orders</h2>
