@@ -81,3 +81,22 @@ describe("decideRouteAccess — support session (Phase 2)", () => {
     expect(decideRouteAccess("/support-ended", false, undefined)).toEqual({ kind: "allow" });
   });
 });
+
+describe("decideRouteAccess -- P2 forced password change", () => {
+  it("lets the user reach only /account", () => {
+    expect(decideRouteAccess("/account", true, "TENANT", true)).toEqual({ kind: "allow" });
+  });
+
+  it("sends every other ERP page to /account", () => {
+    for (const path of ["/dashboard", "/production/my-work", "/admin", "/"]) {
+      expect(decideRouteAccess(path, true, "TENANT", true)).toEqual({
+        kind: "redirect",
+        to: "/account?changePassword=required",
+      });
+    }
+  });
+
+  it("does nothing once the password has been changed", () => {
+    expect(decideRouteAccess("/dashboard", true, "TENANT", false)).toEqual({ kind: "allow" });
+  });
+});

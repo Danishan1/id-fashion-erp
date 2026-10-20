@@ -9,7 +9,8 @@ import { changePasswordSchema } from "@/modules/account/account.schema";
 // already confirmed the caller is a real, active, not-password-stale user.
 export async function POST(req: Request) {
   try {
-    const session = await requireSession();
+    // The one route still open while a temporary password is pending (P2).
+    const session = await requireSession({ allowPendingPasswordChange: true });
     const input = changePasswordSchema.parse(await req.json());
     await changeOwnPassword({ companyId: session.user.companyId, userId: session.user.id }, input);
     return NextResponse.json({ data: { ok: true } });

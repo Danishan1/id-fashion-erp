@@ -3,6 +3,7 @@ import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { hashPassword, verifyPassword } from "@/core/auth/password";
 import { UserAdminRepository } from "@/modules/administration/user-admin.repository";
 import type { ChangePasswordInput } from "./account.schema";
+import { TEMPORARY_EMPLOYEE_PASSWORD } from "@/modules/administration/temporary-password";
 
 export interface ActorContext {
   companyId: string;
@@ -26,9 +27,18 @@ export async function changeOwnPassword(actor: ActorContext, input: ChangePasswo
   if (!currentPasswordValid) {
     throw new BusinessRuleError("VALIDATION_ERROR", "Current password is incorrect.", {});
   }
+  // P2: the new password must really be new -- not the temporary onboarding
+  // password, and not the password they already have.
+  if (input.newPassword === TEMPORARY_EMPLOYEE_PASSWORD) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "Choose your own password -- the temporary password can't be used.", {});
+  }
+  if (input.newPassword === input.currentPassword) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "The new password must be different from your current password.", {});
+  }
 
   const newPasswordHash = await hashPassword(input.newPassword);
-  await UserAdminRepository.updatePasswordHash(actor.userId, newPasswordHash);
+  // Clears mustChangePassword: the user now has a password only they know.
+  await UserAdminRepository.updatePasswordHash(actor.userId, newPasswordHash, false);
 
   await writeAuditLog({
     companyId: actor.companyId,

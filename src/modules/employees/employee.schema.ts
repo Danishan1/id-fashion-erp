@@ -56,6 +56,23 @@ export const employeeSchema = z.object({
 
 export type EmployeeInput = z.infer<typeof employeeSchema>;
 
+/**
+ * P2: the ERP login created together with an employee (or later, for an
+ * existing employee). Email comes from the employee; the password is the
+ * temporary onboarding password, which must be changed at first sign-in.
+ */
+export const employeeLoginSchema = z.object({
+  roleId: z.string().uuid("Choose a role for the login"),
+  branchId: z.string().uuid("Choose a branch for the login"),
+});
+export type EmployeeLoginInput = z.infer<typeof employeeLoginSchema>;
+
+/** Create-only: the employee plus an optional login. */
+export const createEmployeeSchema = employeeSchema.extend({
+  login: employeeLoginSchema.optional(),
+});
+export type CreateEmployeeInput = z.infer<typeof createEmployeeSchema>;
+
 /** Partial variant for PATCH — only fields actually present in the request body are validated/updated. */
 export const employeeUpdateSchema = employeeSchema.partial();
 export type EmployeeUpdateInput = z.infer<typeof employeeUpdateSchema>;

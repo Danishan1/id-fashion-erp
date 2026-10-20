@@ -30,6 +30,7 @@ export const UserAdminRepository = {
   findMany: (companyId: string) =>
     prisma.user.findMany({ where: { companyId, supportForPlatformUserId: null }, select: USER_SELECT, orderBy: { createdAt: "desc" } }),
 
+  /** Emails are stored lower-case (P2) -- callers pass a normalized email. */
   findByEmail: (email: string) => prisma.user.findUnique({ where: { email } }),
 
   findById: (companyId: string, id: string) => prisma.user.findFirst({ where: { id, companyId }, select: USER_SELECT }),
@@ -59,8 +60,14 @@ export const UserAdminRepository = {
    * this function's whole purpose is writing a bcrypt hash, so its own
    * return value must never be capable of leaking one back to a caller.
    */
-  updatePasswordHash: (id: string, passwordHash: string) =>
-    prisma.user.update({ where: { id }, data: { passwordHash, passwordChangedAt: new Date() }, select: { id: true } }),
+  /** `mustChangePassword`: true after an admin reset (a temporary password),
+   * false after the user changes it themselves (P2). */
+  updatePasswordHash: (id: string, passwordHash: string, mustChangePassword = false) =>
+    prisma.user.update({
+      where: { id },
+      data: { passwordHash, passwordChangedAt: new Date(), mustChangePassword },
+      select: { id: true },
+    }),
 
   findByIdWithPasswordHash: (id: string) =>
     prisma.user.findUnique({ where: { id }, select: { id: true, passwordHash: true } }),

@@ -4,7 +4,14 @@ import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { advanceMasterCodeSequence } from "@/core/numbering/DocumentNumberingService";
 import { HrConfigRepository } from "@/modules/hr-config/hr-config.repository";
 import type { ListQuery } from "@/lib/list-query";
-import type { EmployeeInput, EmployeeUpdateInput } from "./employee.schema";
+import type { CreateEmployeeInput, EmployeeInput, EmployeeLoginInput, EmployeeUpdateInput } from "./employee.schema";
+import { prisma } from "@/core/db/client";
+import { PermissionService } from "@/core/rbac/PermissionService";
+import {
+  assertNewLoginAllowed,
+  createEmployeeLoginInTx,
+  suspendLoginForEmployee,
+} from "@/modules/administration/user-admin.service";
 import { EmployeeRepository } from "./employee.repository";
 
 interface ActorContext {
@@ -139,7 +146,35 @@ function toUpdateData(input: EmployeeUpdateInput): Prisma.EmployeeUncheckedUpdat
   return data;
 }
 
-export async function createEmployee(actor: ActorContext, input: EmployeeInput) {
+/**
+ * P2: giving someone an ERP login is an administration action, not just a
+ * masters edit -- it needs administration_users.create on top of the
+ * employee permission, and the same checks as Admin -> Users.
+ */
+async function prepareEmployeeLogin(actor: ActorContext, email: string | undefined | null, login: EmployeeLoginInput) {
+  await PermissionService.assert(actor.userId, "administration_users", "create");
+  if (!email) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "An email address is needed to create a login -- it becomes the username.", {
+      field: "email",
+    });
+  }
+  return assertNewLoginAllowed(actor, { email, branchId: login.branchId, roleId: login.roleId });
+}
+
+async function auditLoginCreated(actor: ActorContext, userId: string, employeeId: string, email: string, login: EmployeeLoginInput) {
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "users",
+    recordId: userId,
+    action: "CREATE",
+    // Never the password -- only that a temporary one was issued.
+    newValues: { email, employeeId, roleId: login.roleId, branchId: login.branchId, temporaryPassword: true, mustChangePassword: true },
+  });
+}
+
+export async function createEmployee(actor: ActorContext, rawInput: CreateEmployeeInput) {
+  const { login, ...input } = rawInput;
   const existing = await EmployeeRepository.findByCode(actor.companyId, input.employeeCode);
   if (existing) {
     throw new BusinessRuleError(
@@ -158,9 +193,30 @@ export async function createEmployee(actor: ActorContext, input: EmployeeInput) 
   }
 
   const workSkills = await normalizeWorkSkills(actor.companyId, input.workSkillStageIds);
+  const loginEmail = login ? await prepareEmployeeLogin(actor, input.email, login) : null;
 
-  const employee = await EmployeeRepository.create({ companyId: actor.companyId, ...toData(input) });
-  if (workSkills && workSkills.length > 0) await EmployeeRepository.replaceWorkSkills(employee.id, workSkills);
+  // One transaction: if the login can't be created, the employee isn't saved either.
+  const { employee, user } = await prisma.$transaction(async (tx) => {
+    const employee = await EmployeeRepository.createInTx(tx, { companyId: actor.companyId, ...toData(input) });
+    if (workSkills && workSkills.length > 0) {
+      await tx.employeeWorkSkill.createMany({
+        data: workSkills.map((productionStageId) => ({ employeeId: employee.id, productionStageId })),
+        skipDuplicates: true,
+      });
+    }
+    const user =
+      login && loginEmail
+        ? await createEmployeeLoginInTx(tx, actor, {
+            email: loginEmail,
+            fullName: employee.fullName,
+            phone: employee.phone,
+            branchId: login.branchId,
+            roleId: login.roleId,
+            employeeId: employee.id,
+          })
+        : null;
+    return { employee, user };
+  });
 
   await advanceMasterCodeSequence(actor.companyId, "EMPLOYEE");
 
@@ -172,8 +228,45 @@ export async function createEmployee(actor: ActorContext, input: EmployeeInput) 
     action: "CREATE",
     newValues: { ...employee, workSkillStageIds: workSkills ?? [] },
   });
+  if (user && login && loginEmail) await auditLoginCreated(actor, user.id, employee.id, loginEmail, login);
 
-  return employee;
+  return { ...employee, loginUserId: user?.id ?? null };
+}
+
+/** P2: the employee's linked login (email/status only -- never the hash). */
+export async function getEmployeeLogin(companyId: string, employeeId: string) {
+  return prisma.user.findFirst({
+    where: { companyId, employeeId },
+    select: { email: true, status: true, mustChangePassword: true },
+  });
+}
+
+/**
+ * P2: a login for an existing employee who doesn't have one. Never creates a
+ * second login -- an employee already linked, or an email already used by
+ * any login, is refused (link it from Admin -> Users instead).
+ */
+export async function createLoginForEmployee(actor: ActorContext, employeeId: string, login: EmployeeLoginInput) {
+  const employee = await getEmployeeById(actor.companyId, employeeId);
+  if (!employee.isActive) {
+    throw new BusinessRuleError("INVALID_STATE_TRANSITION", "Reactivate this employee before creating a login.", {});
+  }
+  if (await EmployeeRepository.findLinkedUserId(employeeId)) {
+    throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", "This employee already has a login.", { employeeId });
+  }
+  const email = await prepareEmployeeLogin(actor, employee.email, login);
+  const user = await prisma.$transaction((tx) =>
+    createEmployeeLoginInTx(tx, actor, {
+      email,
+      fullName: employee.fullName,
+      phone: employee.phone,
+      branchId: login.branchId,
+      roleId: login.roleId,
+      employeeId,
+    })
+  );
+  await auditLoginCreated(actor, user.id, employeeId, email, login);
+  return user;
 }
 
 export async function updateEmployee(actor: ActorContext, id: string, input: EmployeeUpdateInput) {
@@ -202,6 +295,7 @@ export async function updateEmployee(actor: ActorContext, id: string, input: Emp
 
   const updated = await EmployeeRepository.update(id, toUpdateData(input));
   if (workSkills !== undefined) await EmployeeRepository.replaceWorkSkills(id, workSkills);
+  if (before.isActive && updated.isActive === false) await suspendLoginForEmployee(actor, id);
 
   await writeAuditLog({
     companyId: actor.companyId,
@@ -219,6 +313,9 @@ export async function updateEmployee(actor: ActorContext, id: string, input: Emp
 export async function setEmployeeActiveStatus(actor: ActorContext, id: string, isActive: boolean) {
   const before = await getEmployeeById(actor.companyId, id);
   const updated = await EmployeeRepository.update(id, { isActive });
+  // P2 decision 7: deactivating suspends the linked login. Reactivating
+  // deliberately does NOT reopen it -- an admin does that in Users.
+  if (!isActive) await suspendLoginForEmployee(actor, id);
 
   await writeAuditLog({
     companyId: actor.companyId,
@@ -236,6 +333,7 @@ export async function setEmployeeActiveStatus(actor: ActorContext, id: string, i
 export async function deactivateEmployee(actor: ActorContext, id: string) {
   const before = await getEmployeeById(actor.companyId, id);
   const updated = await EmployeeRepository.update(id, { isActive: false, deletedAt: new Date() });
+  await suspendLoginForEmployee(actor, id);
 
   await writeAuditLog({
     companyId: actor.companyId,

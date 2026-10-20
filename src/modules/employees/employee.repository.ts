@@ -27,6 +27,12 @@ export const EmployeeRepository = {
 
   create: (data: Prisma.EmployeeUncheckedCreateInput) => prisma.employee.create({ data }),
 
+  createInTx: (tx: Prisma.TransactionClient, data: Prisma.EmployeeUncheckedCreateInput) => tx.employee.create({ data }),
+
+  /** The login linked to this employee (User.employeeId is unique), if any. */
+  findLinkedUserId: async (employeeId: string) =>
+    (await prisma.user.findUnique({ where: { employeeId }, select: { id: true } }))?.id ?? null,
+
   /** Full replace of an employee's Work Skills — an empty array clears them all. */
   replaceWorkSkills: (employeeId: string, productionStageIds: string[]) =>
     prisma.$transaction([

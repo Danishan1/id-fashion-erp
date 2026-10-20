@@ -32,7 +32,14 @@ export const SUPPORT_SESSION_ENDED_MESSAGE = "This support session has ended, ex
  * line for the rest of this request with a correlation ID and, once known,
  * the acting user/company — see requestContext.ts for why.
  */
-export async function requireSession() {
+export const PASSWORD_CHANGE_REQUIRED_MESSAGE =
+  "You are signed in with a temporary password. Change your password before using the ERP.";
+
+/**
+ * `allowPendingPasswordChange` -- only the change-password route sets this:
+ * while a user still has a temporary password (P2), every other API is refused.
+ */
+export async function requireSession(options: { allowPendingPasswordChange?: boolean } = {}) {
   initRequestContext();
   const session = await auth();
   if (!session?.user) {
@@ -51,7 +58,7 @@ export async function requireSession() {
   }
   const user = await prisma.user.findUnique({
     where: { id: session.user.id },
-    select: { status: true, passwordChangedAt: true, company: { select: { isActive: true } } },
+    select: { status: true, passwordChangedAt: true, mustChangePassword: true, company: { select: { isActive: true } } },
   });
   if (!user || user.status !== "ACTIVE") {
     throw new BusinessRuleError("PERMISSION_DENIED", "Your account is no longer active. Please sign in again.");
@@ -64,6 +71,10 @@ export async function requireSession() {
   // not silently keep working for the rest of its 30-day JWT lifetime.
   if (user.passwordChangedAt && session.user.sessionIssuedAt * 1000 < user.passwordChangedAt.getTime()) {
     throw new BusinessRuleError("PERMISSION_DENIED", "Your password was changed. Please sign in again.");
+  }
+  // P2: read live, so it can't be dodged with an older session token.
+  if (user.mustChangePassword && !options.allowPendingPasswordChange) {
+    throw new BusinessRuleError("PASSWORD_CHANGE_REQUIRED", PASSWORD_CHANGE_REQUIRED_MESSAGE);
   }
   setRequestActor(session.user.id, session.user.companyId);
   return session;

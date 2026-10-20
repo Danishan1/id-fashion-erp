@@ -839,6 +839,10 @@ model User {
   // old session survives a password change no better than it survives a
   // suspension.
   passwordChangedAt        DateTime?  @map("password_changed_at")
+  // P2 (2026-10-21): set on a login created from Employee Master (temporary
+  // password) and on an admin password reset. While true, the user can only
+  // change their password; changing it clears the flag.
+  mustChangePassword       Boolean    @default(false) @map("must_change_password")
   // DEPRECATED (Platform SaaS Phase 1, PLAT-001/004, 2026-10-13) — no longer
   // read by any authorization path. Platform operators now live in the
   // separate `PlatformUser` table and sign in at /platform/login; this flag

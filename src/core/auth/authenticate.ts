@@ -1,4 +1,5 @@
 import { prisma } from "@/core/db/client";
+import { normalizeEmail } from "@/lib/email";
 import { verifyPassword } from "@/core/auth/password";
 import { assertNotLockedOut, clearAttempts, recordFailedAttempt } from "@/core/auth/rateLimiter";
 import type { PlatformUserRole } from "@prisma/client";
@@ -22,6 +23,8 @@ export interface TenantSignIn {
   userType: "TENANT";
   companyId: string;
   defaultBranchId: string | null;
+  /** P2: still on a temporary password -- may only change it. */
+  mustChangePassword: boolean;
 }
 
 export interface PlatformSignIn {
@@ -32,17 +35,22 @@ export interface PlatformSignIn {
   platformRole: PlatformUserRole;
 }
 
-export async function authenticateTenantUser(email: string, password: string): Promise<TenantSignIn | null> {
+export async function authenticateTenantUser(rawEmail: string, password: string): Promise<TenantSignIn | null> {
+  // P2: emails are stored lower-case; match case-insensitively at sign-in
+  // (and key the lockout counter the same way, so case can't dodge it).
+  const email = normalizeEmail(rawEmail);
   try {
     assertNotLockedOut(email);
   } catch {
     return null;
   }
 
-  const user = await prisma.user.findUnique({
-    where: { email },
-    include: { company: { select: { isActive: true } } },
-  });
+  const include = { company: { select: { isActive: true } } } as const;
+  // Exact (lower-case) match first; a row saved before P2 may still be
+  // mixed-case, so fall back to a case-insensitive match for it.
+  const user =
+    (await prisma.user.findUnique({ where: { email }, include })) ??
+    (await prisma.user.findFirst({ where: { email: { equals: email, mode: "insensitive" } }, include, orderBy: { createdAt: "asc" } }));
   // PLAT-006: users of a suspended company can't sign in either.
   // PLAT-011: a support proxy user never signs in here — only through a
   // customer-approved support session (the "support-session" provider).
@@ -66,6 +74,7 @@ export async function authenticateTenantUser(email: string, password: string): P
     userType: "TENANT",
     companyId: user.companyId,
     defaultBranchId: user.defaultBranchId,
+    mustChangePassword: user.mustChangePassword,
   };
 }
 

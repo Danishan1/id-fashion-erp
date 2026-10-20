@@ -5,6 +5,7 @@ import { FormField, textInputClass } from "@/components/ui/FormField";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { COUNTRIES } from "@/lib/countries";
 import { WorkSkillsSelect } from "./WorkSkillsSelect";
+import { EmployeeLoginFields, type EmployeeLoginValues } from "./EmployeeLoginFields";
 
 export interface EmployeeFormValues {
   employeeCode: string;
@@ -92,6 +93,11 @@ export function EmployeeForm({ initialValues, submitUrl, method, onSuccess, onCa
   const [managers, setManagers] = useState<EmployeeOption[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // P2: on create only. On by default; takes effect once an email is entered.
+  const isCreate = method === "POST";
+  const [createLogin, setCreateLogin] = useState(true);
+  const [login, setLogin] = useState<EmployeeLoginValues>({ roleId: "", branchId: "" });
+  const willCreateLogin = isCreate && createLogin && values.email.trim() !== "";
 
   useEffect(() => {
     fetch("/api/v1/departments?pageSize=200")
@@ -153,7 +159,7 @@ export function EmployeeForm({ initialValues, submitUrl, method, onSuccess, onCa
     const res = await fetch(submitUrl, {
       method,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(values),
+      body: JSON.stringify(willCreateLogin ? { ...values, login } : values),
     });
 
     setIsSubmitting(false);
@@ -360,6 +366,19 @@ export function EmployeeForm({ initialValues, submitUrl, method, onSuccess, onCa
         />
         Active
       </label>
+
+      {isCreate && (
+        <div className="space-y-3 rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
+          <label className="flex items-center gap-2 text-sm font-medium text-zinc-700 dark:text-zinc-300">
+            <input type="checkbox" checked={createLogin} onChange={(e) => setCreateLogin(e.target.checked)} />
+            Create ERP login
+          </label>
+          {createLogin && !values.email.trim() && (
+            <p className="text-xs text-zinc-500 dark:text-zinc-400">Enter an email above — it becomes the username.</p>
+          )}
+          {willCreateLogin && <EmployeeLoginFields value={login} onChange={setLogin} />}
+        </div>
+      )}
 
       {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
 

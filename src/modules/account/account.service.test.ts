@@ -52,7 +52,7 @@ describe("changeOwnPassword", () => {
 
     expect(verifyPassword).toHaveBeenCalledWith("correct", "old-hash");
     expect(hashPassword).toHaveBeenCalledWith("newpassword123");
-    expect(UserAdminRepository.updatePasswordHash).toHaveBeenCalledWith("user-1", "new-hashed-password");
+    expect(UserAdminRepository.updatePasswordHash).toHaveBeenCalledWith("user-1", "new-hashed-password", false);
   });
 
   it("never logs the password or its hash in the audit trail", async () => {
@@ -66,5 +66,17 @@ describe("changeOwnPassword", () => {
     expect(logged).not.toContain("super-secret-new-password");
     expect(logged).not.toContain("old-hash");
     expect(logged).not.toContain("new-hashed-password");
+  });
+
+  it("P2: refuses the temporary password and the current password as the new one", async () => {
+    vi.mocked(UserAdminRepository.findByIdWithPasswordHash).mockResolvedValue({ id: "user-1", passwordHash: "old-hash" } as never);
+    vi.mocked(verifyPassword).mockResolvedValue(true);
+    await expect(changeOwnPassword(actor, { currentPassword: "12345678", newPassword: "12345678" })).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+    });
+    await expect(changeOwnPassword(actor, { currentPassword: "samepass99", newPassword: "samepass99" })).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+    });
+    expect(UserAdminRepository.updatePasswordHash).not.toHaveBeenCalled();
   });
 });

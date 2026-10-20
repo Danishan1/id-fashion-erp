@@ -36,7 +36,17 @@ const { writeAuditLog } = await import("@/core/audit/AuditLogger");
 const { hashPassword } = await import("@/core/auth/password");
 const { PermissionService } = await import("@/core/rbac/PermissionService");
 const { UserAdminRepository, UserAdminScopeRepository, RoleGrantRepository } = await import("./user-admin.repository");
-const { createUser, updateUser, setUserStatus, resetUserPassword, addUserBranchRole, removeUserBranchRole } = await import("./user-admin.service");
+const {
+  createUser,
+  updateUser,
+  setUserStatus,
+  resetUserPassword,
+  addUserBranchRole,
+  removeUserBranchRole,
+  createEmployeeLoginInTx,
+  suspendLoginForEmployee,
+  assertNewLoginAllowed,
+} = await import("./user-admin.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
 const input = { email: "new@co1.com", fullName: "New User", password: "password123", phone: "", branchId: "br-1", roleId: "role-1" };
@@ -204,7 +214,7 @@ describe("resetUserPassword", () => {
     await resetUserPassword(actor, "user-2", "brandnewpassword123");
 
     expect(hashPassword).toHaveBeenCalledWith("brandnewpassword123");
-    expect(UserAdminRepository.updatePasswordHash).toHaveBeenCalledWith("user-2", "hashed-password");
+    expect(UserAdminRepository.updatePasswordHash).toHaveBeenCalledWith("user-2", "hashed-password", true);
     expect(PermissionService.invalidate).toHaveBeenCalledWith("user-2");
   });
 
@@ -295,5 +305,54 @@ describe("role grant guards (P0)", () => {
     await removeUserBranchRole(actor, "user-2", "ubr-2");
     expect(UserAdminRepository.removeBranchRole).toHaveBeenCalledWith("ubr-2");
     expect(PermissionService.invalidate).toHaveBeenCalledWith("user-2");
+  });
+});
+
+describe("P2 -- employee logins", () => {
+  it("createUser stores the email lower-cased and checks duplicates on the lower-cased value", async () => {
+    await createUser(actor, { ...input, email: "  New@CO1.com " });
+    expect(UserAdminRepository.findByEmail).toHaveBeenCalledWith("new@co1.com");
+    expect(UserAdminRepository.createWithRoleInTx).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ email: "new@co1.com" }),
+      expect.anything()
+    );
+  });
+
+  it("an employee login uses the hashed temporary password and must be changed at first sign-in", async () => {
+    await createEmployeeLoginInTx({} as never, actor, {
+      email: "Ravi@Co1.com",
+      fullName: "Ravi",
+      branchId: "br-1",
+      roleId: "role-1",
+      employeeId: "emp-1",
+    });
+    expect(hashPassword).toHaveBeenCalledWith("12345678");
+    const [, data] = vi.mocked(UserAdminRepository.createWithRoleInTx).mock.calls[0];
+    expect(data).toMatchObject({ email: "ravi@co1.com", passwordHash: "hashed-password", mustChangePassword: true, employeeId: "emp-1" });
+    expect(JSON.stringify(data)).not.toContain("12345678");
+  });
+
+  it("an employee login goes through the same role-grant guard as Admin -> Users", async () => {
+    vi.mocked(RoleGrantRepository.findRoleGrantProfile).mockResolvedValue({
+      name: "ACCOUNTS_MANAGER",
+      rolePermissions: [{ permission: { key: "accounts.post" } }],
+    } as never);
+    await expect(assertNewLoginAllowed(actor, { email: "x@co1.com", branchId: "br-1", roleId: "role-1" })).rejects.toMatchObject({
+      code: "PERMISSION_DENIED",
+    });
+  });
+
+  it("suspends the linked login and clears its permission cache", async () => {
+    vi.mocked(UserAdminScopeRepository.findUserIdByEmployeeId).mockResolvedValue({ id: "user-2" } as never);
+    vi.mocked(UserAdminRepository.findById).mockResolvedValue({ id: "user-2", status: "ACTIVE" } as never);
+    await expect(suspendLoginForEmployee(actor, "emp-1")).resolves.toBe("user-2");
+    expect(UserAdminRepository.updateStatus).toHaveBeenCalledWith("user-2", "SUSPENDED");
+    expect(PermissionService.invalidate).toHaveBeenCalledWith("user-2");
+  });
+
+  it("does nothing when the employee has no login", async () => {
+    await expect(suspendLoginForEmployee(actor, "emp-1")).resolves.toBeNull();
+    expect(UserAdminRepository.updateStatus).not.toHaveBeenCalled();
   });
 });

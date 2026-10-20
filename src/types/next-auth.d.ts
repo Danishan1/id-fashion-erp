@@ -23,6 +23,8 @@ declare module "next-auth" {
       /** Unix seconds this session's JWT was issued — lets a password
        * change invalidate sessions that predate it. See CF-7/passwordChangedAt. */
       sessionIssuedAt: number;
+      /** P2: true while the user still has a temporary password. */
+      mustChangePassword: boolean;
     } & DefaultSession["user"];
   }
 
@@ -32,6 +34,7 @@ declare module "next-auth" {
     defaultBranchId?: string | null;
     platformRole?: string | null;
     supportSessionId?: string | null;
+    mustChangePassword?: boolean;
   }
 }
 
@@ -44,5 +47,6 @@ declare module "next-auth/jwt" {
     platformRole?: string;
     supportSessionId?: string;
     sessionIssuedAt: number;
+    mustChangePassword?: boolean;
   }
 }

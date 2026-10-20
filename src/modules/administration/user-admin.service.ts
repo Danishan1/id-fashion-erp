@@ -4,6 +4,9 @@ import { hashPassword } from "@/core/auth/password";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { PermissionService } from "@/core/rbac/PermissionService";
 import { RoleGrantRepository, UserAdminRepository, UserAdminScopeRepository } from "./user-admin.repository";
+import { normalizeEmail } from "@/lib/email";
+import { TEMPORARY_EMPLOYEE_PASSWORD } from "./temporary-password";
+import type { Prisma } from "@prisma/client";
 import type { AddUserBranchRoleInput, CreateUserInput, UpdateUserInput } from "./user-admin.schema";
 import { assertUserLimitAllows } from "@/modules/platform/company-subscription.service";
 
@@ -80,12 +83,21 @@ async function assertEmployeeLinkable(companyId: string, employeeId: string, exc
  * exercising this codebase's own well-built RBAC matrix beyond a single
  * Super Admin account.
  */
-export async function createUser(actor: ActorContext, input: CreateUserInput) {
+/**
+ * Every check a brand-new login must pass, shared by createUser() and the
+ * Employee Master login (P2) so both apply exactly the same rules. Returns the
+ * normalized (lower-case) email to store.
+ */
+export async function assertNewLoginAllowed(
+  actor: ActorContext,
+  input: { email: string; branchId: string; roleId: string }
+): Promise<string> {
   // Phase 4: the subscription plan may cap active users.
   await assertUserLimitAllows(actor.companyId);
-  const existing = await UserAdminRepository.findByEmail(input.email);
+  const email = normalizeEmail(input.email);
+  const existing = await UserAdminRepository.findByEmail(email);
   if (existing) {
-    throw new BusinessRuleError("DUPLICATE_EMAIL_EXISTS", `A user with email "${input.email}" already exists.`, { email: input.email });
+    throw new BusinessRuleError("DUPLICATE_EMAIL_EXISTS", `A user with email "${email}" already exists.`, { email });
   }
 
   // The picker endpoints (/api/v1/branches, /api/v1/roles) already scope by
@@ -104,6 +116,60 @@ export async function createUser(actor: ActorContext, input: CreateUserInput) {
     throw new BusinessRuleError("NOT_FOUND", "Role not found.", { id: input.roleId });
   }
   await assertCanGrantRole(actor, input.roleId);
+  return email;
+}
+
+/**
+ * P2: the login created together with an employee, inside the caller's
+ * transaction (so a failure here also undoes the employee). Temporary
+ * password + mustChangePassword. Call assertNewLoginAllowed() first.
+ */
+export async function createEmployeeLoginInTx(
+  tx: Prisma.TransactionClient,
+  actor: ActorContext,
+  input: { email: string; fullName: string; phone?: string | null; branchId: string; roleId: string; employeeId: string }
+) {
+  const passwordHash = await hashPassword(TEMPORARY_EMPLOYEE_PASSWORD);
+  return UserAdminRepository.createWithRoleInTx(
+    tx,
+    {
+      companyId: actor.companyId,
+      email: normalizeEmail(input.email),
+      fullName: input.fullName,
+      passwordHash,
+      phone: input.phone || null,
+      defaultBranchId: input.branchId,
+      employeeId: input.employeeId,
+      status: "ACTIVE",
+      mustChangePassword: true,
+    },
+    { branchId: input.branchId, roleId: input.roleId }
+  );
+}
+
+/** Suspends the login linked to an employee (P2 decision 7). Returns the user id, or null when there's none. */
+export async function suspendLoginForEmployee(actor: ActorContext, employeeId: string): Promise<string | null> {
+  const linked = await UserAdminScopeRepository.findUserIdByEmployeeId(employeeId);
+  if (!linked) return null;
+  const user = await UserAdminRepository.findById(actor.companyId, linked.id);
+  if (!user || user.status === "SUSPENDED") return null;
+  await UserAdminRepository.updateStatus(user.id, "SUSPENDED");
+  PermissionService.invalidate(user.id);
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "users",
+    recordId: user.id,
+    action: "UPDATE",
+    oldValues: { status: user.status },
+    newValues: { status: "SUSPENDED", reason: "Linked employee deactivated" },
+  });
+  return user.id;
+}
+
+export async function createUser(actor: ActorContext, rawInput: CreateUserInput) {
+  const email = await assertNewLoginAllowed(actor, rawInput);
+  const input = { ...rawInput, email };
   if (input.employeeId) {
     await assertEmployeeLinkable(actor.companyId, input.employeeId);
   }
@@ -151,6 +217,7 @@ export async function updateUser(actor: ActorContext, id: string, input: UpdateU
   const existing = await UserAdminRepository.findById(actor.companyId, id);
   if (!existing) throw new BusinessRuleError("NOT_FOUND", "User not found.", { id });
 
+  if (input.email !== undefined) input = { ...input, email: normalizeEmail(input.email) };
   if (input.email && input.email !== existing.email) {
     const emailOwner = await UserAdminRepository.findByEmail(input.email);
     if (emailOwner) {
@@ -308,7 +375,9 @@ export async function resetUserPassword(actor: ActorContext, id: string, newPass
   if (!existing) throw new BusinessRuleError("NOT_FOUND", "User not found.", { id });
 
   const passwordHash = await hashPassword(newPassword);
-  await UserAdminRepository.updatePasswordHash(id, passwordHash);
+  // P2 decision 4: an admin-set password is temporary -- the user must
+  // change it at their next sign-in.
+  await UserAdminRepository.updatePasswordHash(id, passwordHash, true);
 
   // Same reasoning as setUserStatus's own invalidate() call — not required
   // for the session-invalidation guarantee itself (PermissionService/

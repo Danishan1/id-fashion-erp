@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { userFindUniqueMock, userUpdateMock, platformFindUniqueMock, platformUpdateMock, verifyPasswordMock } = vi.hoisted(() => ({
+const { userFindFirstMock, userFindUniqueMock, userUpdateMock, platformFindUniqueMock, platformUpdateMock, verifyPasswordMock } = vi.hoisted(() => ({
   userFindUniqueMock: vi.fn(),
+  userFindFirstMock: vi.fn(),
   userUpdateMock: vi.fn(),
   platformFindUniqueMock: vi.fn(),
   platformUpdateMock: vi.fn(),
@@ -10,7 +11,7 @@ const { userFindUniqueMock, userUpdateMock, platformFindUniqueMock, platformUpda
 
 vi.mock("@/core/db/client", () => ({
   prisma: {
-    user: { findUnique: userFindUniqueMock, update: userUpdateMock },
+    user: { findUnique: userFindUniqueMock, findFirst: userFindFirstMock, update: userUpdateMock },
     platformUser: { findUnique: platformFindUniqueMock, update: platformUpdateMock },
   },
 }));
@@ -39,6 +40,7 @@ const platformRow = {
 };
 
 beforeEach(() => {
+  userFindFirstMock.mockReset().mockResolvedValue(null);
   for (const mock of [userFindUniqueMock, userUpdateMock, platformFindUniqueMock, platformUpdateMock, verifyPasswordMock]) mock.mockReset();
   verifyPasswordMock.mockResolvedValue(true);
   userFindUniqueMock.mockResolvedValue(tenantRow);
@@ -78,6 +80,29 @@ describe("authenticateTenantUser (/login)", () => {
     userFindUniqueMock.mockResolvedValue(null);
     await expect(authenticateTenantUser(platformRow.email, "pw")).resolves.toBeNull();
     expect(platformFindUniqueMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("P2 -- email case and forced password change", () => {
+  it("looks the email up lower-cased, so 'Owner@ACME.test' signs in", async () => {
+    const result = await authenticateTenantUser("  Owner@ACME.test ", "pw");
+    expect(userFindUniqueMock).toHaveBeenCalledWith(expect.objectContaining({ where: { email: "owner@acme.test" } }));
+    expect(result?.id).toBe("user-1");
+  });
+
+  it("still finds an older mixed-case row case-insensitively", async () => {
+    userFindUniqueMock.mockResolvedValue(null);
+    userFindFirstMock.mockResolvedValue({ ...tenantRow, email: "Owner@Acme.test" });
+    const result = await authenticateTenantUser("owner@acme.test", "pw");
+    expect(userFindFirstMock).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { email: { equals: "owner@acme.test", mode: "insensitive" } } })
+    );
+    expect(result?.id).toBe("user-1");
+  });
+
+  it("carries mustChangePassword into the session", async () => {
+    userFindUniqueMock.mockResolvedValue({ ...tenantRow, mustChangePassword: true });
+    expect((await authenticateTenantUser(tenantRow.email, "pw"))?.mustChangePassword).toBe(true);
   });
 });
 

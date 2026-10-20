@@ -25,7 +25,8 @@ export const authConfig = {
       const decision = decideRouteAccess(
         request.nextUrl.pathname,
         !!auth?.user,
-        auth?.user?.userType as UserType | undefined
+        auth?.user?.userType as UserType | undefined,
+        auth?.user?.mustChangePassword === true
       );
       if (decision.kind === "redirect") return Response.redirect(new URL(decision.to, request.nextUrl.origin));
       return decision.kind === "allow";
@@ -39,6 +40,7 @@ export const authConfig = {
           defaultBranchId?: string | null;
           platformRole?: string;
           supportSessionId?: string;
+          mustChangePassword?: boolean;
         };
         token.userId = signedIn.id;
         token.userType = signedIn.userType;
@@ -53,6 +55,10 @@ export const authConfig = {
         // token refresh — this is the session's own age, used to detect a
         // session that predates a password change.
         token.sessionIssuedAt = Math.floor(Date.now() / 1000);
+        // P2: read at sign-in only. Changing the password (or an admin reset)
+        // stamps passwordChangedAt, which ends this session -- so the next
+        // sign-in always carries the current value.
+        token.mustChangePassword = signedIn.mustChangePassword === true;
       }
       // No `trigger === "update"` handling: a session can no longer be
       // re-pointed at another company (PLAT-005 removed the company switcher).
@@ -71,6 +77,7 @@ export const authConfig = {
         session.user.platformRole = (token.platformRole as string | undefined) ?? null;
         session.user.supportSessionId = (token.supportSessionId as string | undefined) ?? null;
         session.user.sessionIssuedAt = token.sessionIssuedAt as number;
+        session.user.mustChangePassword = token.mustChangePassword === true;
       }
       return session;
     },
