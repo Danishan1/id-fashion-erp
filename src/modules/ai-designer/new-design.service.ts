@@ -19,6 +19,7 @@ import {
   buildSketchEditPrompt,
   buildSketchPenMarkupPrompt,
   NEW_DESIGN_PROMPT_VERSION,
+  pickDesignDirections,
 } from "@/core/ai-designer/image-generation/new-design-prompt";
 import { buildTechnicalFlatPrompt } from "@/core/ai/technical-development/prompt";
 import {
@@ -27,6 +28,7 @@ import {
   templatePublicPath,
   type GarmentSuggestion,
 } from "@/core/ai-designer/catalogs/garment-template-catalog";
+import { describeSketchChange } from "@/core/ai-designer/catalogs/sketch-structure-catalog";
 import { getEnvironmentByKey } from "@/core/ai-designer/catalogs/environment-catalog";
 import { TARGET_CUSTOMER_LABELS, type TargetCustomer } from "@/core/ai-designer/catalogs/customer-catalog";
 import { ProductRepository } from "@/modules/products/product.repository";
@@ -610,15 +612,31 @@ export async function generateNewDesign(
 
   const environment = project.environmentKey ? getEnvironmentByKey(project.environmentKey) : undefined;
   const keepTemplateBackground = !project.environmentKey || project.environmentKey === STUDIO_ENVIRONMENT_KEY;
-  const prompt = buildTemplateDressSwapPrompt({
-    garmentType: project.productCategory!,
-    targetCustomer: TARGET_CUSTOMER_LABELS[project.targetCustomer as TargetCustomer] ?? "Women",
-    ageGroup: project.ageGroup || "Adult",
-    designBrief: buildDesignBrief(project),
-    environmentLabel: project.environmentLabel || "Studio White",
-    environmentHint: project.isCustomEnvironment ? project.environmentLabel : environment?.promptHint ?? null,
-    keepTemplateBackground,
-  });
+  const designBrief = buildDesignBrief(project);
+  // One design direction per requested image, so 3 designs are 3 different
+  // garments instead of the same prompt repeated three times.
+  const directions = pickDesignDirections(project.productCategory!, input.imageCount, { hasBrief: Boolean(designBrief) });
+  const prompts = directions.map((direction, i) =>
+    buildTemplateDressSwapPrompt({
+      garmentType: project.productCategory!,
+      targetCustomer: TARGET_CUSTOMER_LABELS[project.targetCustomer as TargetCustomer] ?? "Women",
+      ageGroup: project.ageGroup || "Adult",
+      designBrief,
+      environmentLabel: project.environmentLabel || "Studio White",
+      environmentHint: project.isCustomEnvironment ? project.environmentLabel : environment?.promptHint ?? null,
+      keepTemplateBackground,
+      variation: {
+        optionNumber: i + 1,
+        totalOptions: directions.length,
+        direction,
+        otherDirections: directions.filter((_, j) => j !== i),
+      },
+    })
+  );
+  const prompt =
+    prompts.length === 1
+      ? prompts[0]
+      : prompts.map((p, i) => `===== DESIGN OPTION ${i + 1} of ${prompts.length} =====\n\n${p}`).join("\n\n");
 
   const specJson = {
     newDesign: true,
@@ -631,6 +649,8 @@ export async function generateNewDesign(
     environment: { key: project.environmentKey, label: project.environmentLabel },
     brandName: project.brandName,
     viewAngle: "FRONT",
+    // Same order as the generated images.
+    designDirections: directions,
   };
 
   const promptRow = await AiDesignerPromptRepository.create({
@@ -655,29 +675,41 @@ export async function generateNewDesign(
   });
 
   try {
-    const result = await runWithFailover({
-      companyId: actor.companyId,
-      userId: actor.userId,
-      capability: swapCapability,
-      generationContext: `AI Designer / New Design ${project.projectNumber}`,
-      aiDesignerProjectId: projectId,
-      inputImagePresent: true,
-      call: (provider) => {
-        const fabricImage = { buffer: fabricBuffer, mimeType: fabricAttachment.mimeType };
-        // Both methods are the same real two-image edit (image 1 = model
-        // template, image 2 = fabric); the prompt carries the dress-swap rules.
-        if (swapCapability === "DESIGN_REPLICATION" && provider.replicateWithNewMaterial) {
-          return provider.replicateWithNewMaterial({ prompt, count: input.imageCount, referenceImage: template, materialImage: fabricImage });
-        }
-        if (provider.applyFabric) {
-          return provider.applyFabric({ prompt, count: input.imageCount, baseImage: template, swatchImage: fabricImage });
-        }
-        throw new ImageGenerationServiceError(
-          `The configured image provider ("${provider.name}") cannot dress a model photo in a new fabric — use a provider that supports two-image editing (OpenAI or Gemini).`,
-          "UNSUPPORTED_OPERATION"
-        );
-      },
-    });
+    const fabricImage = { buffer: fabricBuffer, mimeType: fabricAttachment.mimeType };
+    // One call per design option, each with its own prompt. Sequential, not
+    // parallel, so a rate-limited (e.g. free-tier) provider isn't burst.
+    const runs = [];
+    for (const optionPrompt of prompts) {
+      runs.push(
+        await runWithFailover({
+          companyId: actor.companyId,
+          userId: actor.userId,
+          capability: swapCapability,
+          generationContext: `AI Designer / New Design ${project.projectNumber}`,
+          aiDesignerProjectId: projectId,
+          inputImagePresent: true,
+          call: (provider) => {
+            // Both methods are the same real two-image edit (image 1 = model
+            // template, image 2 = fabric); the prompt carries the dress-swap rules.
+            if (swapCapability === "DESIGN_REPLICATION" && provider.replicateWithNewMaterial) {
+              return provider.replicateWithNewMaterial({ prompt: optionPrompt, count: 1, referenceImage: template, materialImage: fabricImage });
+            }
+            if (provider.applyFabric) {
+              return provider.applyFabric({ prompt: optionPrompt, count: 1, baseImage: template, swatchImage: fabricImage });
+            }
+            throw new ImageGenerationServiceError(
+              `The configured image provider ("${provider.name}") cannot dress a model photo in a new fabric — use a provider that supports two-image editing (OpenAI or Gemini).`,
+              "UNSUPPORTED_OPERATION"
+            );
+          },
+        })
+      );
+    }
+    const result = {
+      images: runs.flatMap((r) => r.images),
+      providerName: [...new Set(runs.map((r) => r.providerName))].join(", "),
+      model: [...new Set(runs.map((r) => r.model))].join(", "),
+    };
 
     const images = await persistImages(actor, projectId, generation.id, result.images, "GENERATED_DESIGN_IMAGE");
     await AiDesignerGenerationRepository.markSuccess(generation.id);
@@ -1193,7 +1225,12 @@ export async function executeSketchEdit(
           [
             markupImage ? "Follow the revised technical flat sketch exactly (designer's pen-marked construction changes applied)" : null,
             input.instruction?.trim() || null,
-            input.structuralFields ? Object.entries(input.structuralFields).map(([k, v]) => `${k}: ${v}`).join(", ") : null,
+            input.structuralFields
+              ? Object.entries(input.structuralFields)
+                  .filter(([, v]) => v && v.trim())
+                  .map(([k, v]) => describeSketchChange(k, v.trim()))
+                  .join(" ")
+              : null,
           ]
             .filter(Boolean)
             .join(". ") || null

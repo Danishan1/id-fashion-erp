@@ -60,6 +60,58 @@ export const SKETCH_STRUCTURE_OPTIONS: SketchStructureGroup[] = [
   },
 ];
 
+/**
+ * Which parts of the drawing each category is allowed to change. Used in the
+ * sketch-edit prompt so the model knows what to redraw (and what to remove)
+ * and keeps everything else.
+ */
+export const SKETCH_CATEGORY_SCOPE: Record<string, { label: string; scope: string }> = {
+  silhouette: {
+    label: "Silhouette",
+    scope:
+      "the garment's overall outline: the side seams, waist shaping, the shape of the body/skirt below the bust, the amount of flare, and the hem width. Remove or redraw any existing tiers, gathers, panel seams, pleats or flounces that do not fit the new silhouette. Draw the NEW outline first, following the proportions given above; do not trace or keep the old side seams or hem line. Then place the unchanged details (neckline, straps, closures, bodice seams, print) onto the new outline",
+  },
+  neckline: { label: "Neckline & collar", scope: "the neckline shape and any collar, straps or neck finish" },
+  sleeves: { label: "Sleeves", scope: "the sleeves, sleeve hems/cuffs and the armhole shape" },
+  length: { label: "Length", scope: "where the hem falls (keep the hem finish and the rest of the garment)" },
+  pockets: { label: "Pockets", scope: "the pockets only (add, remove or replace them)" },
+  closures: { label: "Closures", scope: "the placket and fastening (buttons, zips, ties) only" },
+  construction: { label: "Seams & darts", scope: "the internal seams, darts, pleats and topstitching only" },
+};
+
+/**
+ * Precise drawing definitions for options whose label alone is too vague for
+ * an image model. Keyed by option value. Silhouettes are the important case:
+ * the model must know exactly how the outline and hem width should look.
+ */
+export const SKETCH_OPTION_DEFINITIONS: Record<string, string> = {
+  "A-Line":
+    "fitted at the bust, then the side seams run as straight diagonal lines from the waist to the hem, forming an 'A'. The hem is about 1.5 times the hip width. One smooth skirt panel: no tiers, no gathers, no pleats, no flounces.",
+  "Straight / Column":
+    "below the bust the outline is a tall rectangle: the side seams are vertical, parallel lines from the hip to the hem, and the hem is the SAME width as the hips (not wider). No flare at all, no gathers, no tiers, no flounces, no godets. Add a short slit at the centre back hem for walking.",
+  "Fit & Flare":
+    "a closely fitted bodice down to a clearly defined natural-waist seam, then a FULL CIRCLE skirt: right below the waist seam the skirt immediately spreads outward, so the hem is at least 2.5 times the waist width and extends well beyond the hips on both sides, with deep vertical fold lines and a wavy hem. It must look much fuller than an A-line (an A-line has straight sides and no folds). The contrast between the tight bodice and the full skirt must be obvious.",
+  "Boxy / Relaxed":
+    "a loose rectangle from shoulder to hem: the same width at bust, waist and hem, side seams straight and parallel, no waist seam, no waist shaping, no darts, no flare. Slightly dropped, wide shoulders.",
+  Trapeze:
+    "narrow at the shoulders and bust, then the body flares dramatically from just below the underarm to a very wide hem (at least 2 times the bust width), with NO waist seam and no waist shaping — an overall triangle outline.",
+  "Empire Waist":
+    "the waist seam is moved up to sit directly under the bust (well above the natural waist), so the bodice is short. Below that seam the skirt falls straight down and widens gently; the hem is about 1.3 times the hip width.",
+  Mermaid:
+    "tightly fitted from the bust through the waist, hips and thighs down to the knee (the knee width is no wider than the hips), then the skirt flares out sharply like a fish tail to a hem at least 2 times the knee width.",
+  Peplum:
+    "a fitted bodice to the natural waist, a short flared flounce (peplum) attached at the waist seam that ends at the upper hip and stands out wider than the hips, and below it a slim, straight, fitted lower part whose hem is no wider than the hips.",
+  Bodycon:
+    "hugs the body closely everywhere: the side seams follow the curves of bust, waist and hips, the waist is clearly narrow, and the hem is no wider than the hips. No flare, no gathers, no tiers.",
+};
+
+/** One line describing a requested change, with its definition when there is one. */
+export function describeSketchChange(category: string, value: string): string {
+  const label = SKETCH_CATEGORY_SCOPE[category]?.label ?? category;
+  const definition = SKETCH_OPTION_DEFINITIONS[value];
+  return definition ? `${label} → ${value}: ${definition}` : `${label} → ${value}`;
+}
+
 /** Every construction option value with its group, in catalog order. */
 export function listSketchStructureOptions(): { category: string; groupLabel: string; value: string }[] {
   return SKETCH_STRUCTURE_OPTIONS.flatMap((g) => g.options.map((value) => ({ category: g.category, groupLabel: g.label, value })));
