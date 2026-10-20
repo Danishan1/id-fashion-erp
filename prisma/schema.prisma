@@ -49,6 +49,7 @@ model Company {
   departments                         Department[]
   employees                           Employee[]
   employeeReportingLines              EmployeeReportingLine[]
+  productionHandbacks                 ProductionHandback[]
   products                            Product[]
   colors                              Color[]
   sizes                               Size[]
@@ -1052,6 +1053,7 @@ model User {
   customerReturnsReceived                    CustomerReturn[]                     @relation("CustomerReturnReceivedBy")
   customerReturnItemsInspected               CustomerReturnItem[]                 @relation("CustomerReturnItemInspectedBy")
 
+  productionHandbacks ProductionHandback[] @relation("ProductionHandbackBy")
   @@unique([companyId, supportForPlatformUserId])
   @@map("users")
 }
@@ -1593,6 +1595,7 @@ model Employee {
   // employee has no active line for a module, reportsToId is used instead.
   reportingLines        EmployeeReportingLine[] @relation("ReportingLineEmployee")
   managedReportingLines EmployeeReportingLine[] @relation("ReportingLineManager")
+  productionHandbacks   ProductionHandback[]
   user             User?
 
   // Production (Phase 5C) — a worker/operator is always tracked here, never
@@ -4777,6 +4780,7 @@ model JobOrder {
   productionLine       ProductionLine?              @relation(fields: [productionLineId], references: [id])
   assignments          JobOrderAssignment[]
   progressEntries      JobOrderProgressEntry[]
+  handbacks            ProductionHandback[]
   incomingTransactions ProductionStageTransaction[] @relation("StageTransactionTo")
   outgoingTransactions ProductionStageTransaction[] @relation("StageTransactionFrom")
   qcInspections         QcInspection[]
@@ -4853,6 +4857,7 @@ model JobOrderAssignment {
   employee            Employee                @relation("JobOrderAssignmentEmployee", fields: [employeeId], references: [id])
   assignedBy          User                    @relation("JobOrderAssignmentAssignedBy", fields: [assignedByUserId], references: [id])
   progressEntries     JobOrderProgressEntry[]
+  handbacks           ProductionHandback[]
   productionOperation ProductionOperation?    @relation(fields: [productionOperationId], references: [id])
   resolvedRateCard    PieceRateCard?          @relation(fields: [resolvedRateCardId], references: [id])
   overriddenBy        User?                   @relation("JobOrderAssignmentRateOverriddenBy", fields: [overriddenByUserId], references: [id])
@@ -4861,6 +4866,34 @@ model JobOrderAssignment {
   @@index([jobOrderId])
   @@index([employeeId])
   @@map("job_order_assignments")
+}
+
+/// P4 (2026-10-21, decision 4): a worker (or their supervisor) hands back
+/// pieces of an assignment they won't work. Append-only and traceable: the
+/// assignment's assignedQuantity is reduced by the same amount in the same
+/// transaction, freeing those pieces for someone else.
+model ProductionHandback {
+  id                     String   @id @default(uuid()) @db.Uuid
+  companyId              String   @map("company_id") @db.Uuid
+  jobOrderId             String   @map("job_order_id") @db.Uuid
+  jobOrderAssignmentId   String   @map("job_order_assignment_id") @db.Uuid
+  employeeId             String   @map("employee_id") @db.Uuid
+  quantity               Decimal  @db.Decimal(18, 4)
+  reason                 String
+  assignedQuantityBefore Decimal  @map("assigned_quantity_before") @db.Decimal(18, 4)
+  handedBackByUserId     String   @map("handed_back_by_user_id") @db.Uuid
+  createdAt              DateTime @default(now()) @map("created_at")
+
+  company      Company            @relation(fields: [companyId], references: [id])
+  jobOrder     JobOrder           @relation(fields: [jobOrderId], references: [id])
+  assignment   JobOrderAssignment @relation(fields: [jobOrderAssignmentId], references: [id])
+  employee     Employee           @relation(fields: [employeeId], references: [id])
+  handedBackBy User               @relation("ProductionHandbackBy", fields: [handedBackByUserId], references: [id])
+
+  @@index([jobOrderId])
+  @@index([jobOrderAssignmentId])
+  @@index([companyId, createdAt])
+  @@map("production_handbacks")
 }
 
 // Append-only worker-level logging — never edited or deleted. A genuine
@@ -9167,6 +9200,9 @@ model AiGarmentBuyerCommentCategorySummary {
 // ─────────────────────────────────────────────────────────────
 
 enum RelatedModule {
+  // P4 (2026-10-21): slips (generated PDFs or photos/scans of handwritten
+  // slips) uploaded against a job order from the Work Portal.
+  JOB_ORDER
   // Finished Goods Inventory module (2026-10-13, FGI-004) -- Attachment/audit-log
   // polymorphism for FinishedGoodsReceipt.
   FINISHED_GOODS_RECEIPT
