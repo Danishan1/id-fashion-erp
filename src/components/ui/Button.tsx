@@ -1,7 +1,7 @@
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 
 export type ButtonVariant = "primary" | "secondary" | "danger" | "success";
-export type ButtonSize = "sm" | "xs";
+export type ButtonSize = "lg" | "sm" | "xs";
 
 /**
  * The one place every button's color/size/focus-state is defined — created
@@ -37,6 +37,8 @@ const VARIANT_CLASSES: Record<ButtonVariant, string> = {
 };
 
 const SIZE_CLASSES: Record<ButtonSize, string> = {
+  /** P5: touch-friendly -- at least 48px tall, for phones and shop-floor screens. */
+  lg: "min-h-12 px-4 py-2 text-base",
   sm: "px-3 py-1.5 text-sm",
   xs: "px-2.5 py-1 text-xs",
 };

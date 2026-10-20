@@ -625,32 +625,32 @@ export function SubscriptionPanel({
               <div className="flex flex-wrap items-start justify-between border-b border-zinc-200 pb-4 dark:border-zinc-800">
                 <div>
                   <div className="text-base font-bold text-indigo-600 dark:text-indigo-400">Fashion ERP SaaS</div>
-                  <div className="text-[11px] text-zinc-500">Cloud Enterprise Software Solutions</div>
-                  <div className="mt-1 text-[11px] text-zinc-600 dark:text-zinc-400">GSTIN: 27AABCI1234F1Z5 · SAC: 998313</div>
+                  <div className="text-xs text-zinc-500">Cloud Enterprise Software Solutions</div>
+                  <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">GSTIN: 27AABCI1234F1Z5 · SAC: 998313</div>
                 </div>
                 <div className="text-right">
-                  <span className="inline-block rounded bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                  <span className="inline-block rounded bg-emerald-100 px-2 py-0.5 text-xs font-bold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
                     PAID IN FULL
                   </span>
                   <div className="mt-1 font-mono text-xs font-semibold">
                     INV-SAAS-{selectedReceiptPayment.id.slice(0, 8).toUpperCase()}
                   </div>
-                  <div className="text-[11px] text-zinc-500">
+                  <div className="text-xs text-zinc-500">
                     Date: {fmtDate(selectedReceiptPayment.paidAt)}
                   </div>
                 </div>
               </div>
 
               {/* Billed To / From */}
-              <div className="grid grid-cols-2 gap-4 py-3 border-b border-zinc-100 dark:border-zinc-800 text-[11px]">
+              <div className="grid grid-cols-2 gap-4 py-3 border-b border-zinc-100 dark:border-zinc-800 text-xs">
                 <div>
-                  <div className="font-semibold text-zinc-500 uppercase tracking-wider text-[10px]">Billed To:</div>
+                  <div className="font-semibold text-zinc-500 uppercase tracking-wider text-xs">Billed To:</div>
                   <div className="mt-0.5 font-bold text-zinc-900 dark:text-zinc-100">{companyName ?? "Customer Company"}</div>
                   {legalName && <div className="text-zinc-600 dark:text-zinc-400">{legalName}</div>}
                   <div className="text-zinc-500">GST / Tax ID: {taxRegistrationNo ?? "Not provided / Unregistered"}</div>
                 </div>
                 <div>
-                  <div className="font-semibold text-zinc-500 uppercase tracking-wider text-[10px]">Service Period:</div>
+                  <div className="font-semibold text-zinc-500 uppercase tracking-wider text-xs">Service Period:</div>
                   <div className="mt-0.5 font-medium text-zinc-800 dark:text-zinc-200">
                     {fmtDate(selectedReceiptPayment.periodStart)} – {fmtDate(selectedReceiptPayment.periodEnd)}
                   </div>
@@ -674,11 +674,11 @@ export function SubscriptionPanel({
                     <tr>
                       <td className="py-2">
                         <div className="font-medium">{selectedReceiptPayment.plan.name} Subscription</div>
-                        <div className="text-[11px] text-zinc-500">
+                        <div className="text-xs text-zinc-500">
                           Access to multi-tenant ERP features ({selectedReceiptPayment.billingCycle.toLowerCase()} cycle)
                         </div>
                         {selectedReceiptPayment.coupon && (
-                          <div className="text-[11px] text-emerald-600">
+                          <div className="text-xs text-emerald-600">
                             Coupon Applied: {selectedReceiptPayment.coupon.code}
                             {Number(selectedReceiptPayment.discountAmount) > 0 && ` (−₹${Number(selectedReceiptPayment.discountAmount).toLocaleString("en-IN")})`}
                           </div>
@@ -690,7 +690,7 @@ export function SubscriptionPanel({
                       </td>
                     </tr>
                   </tbody>
-                  <tfoot className="border-t border-zinc-200 text-[11px] dark:border-zinc-700">
+                  <tfoot className="border-t border-zinc-200 text-xs dark:border-zinc-700">
                     <tr>
                       <td colSpan={2} className="py-1 text-right text-zinc-500">Taxable Subtotal:</td>
                       <td className="py-1 text-right font-medium">
@@ -720,7 +720,7 @@ export function SubscriptionPanel({
               </div>
 
               {/* Payment Details Footer */}
-              <div className="mt-2 rounded bg-zinc-50 p-2.5 text-[11px] text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
+              <div className="mt-2 rounded bg-zinc-50 p-2.5 text-xs text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     Payment Method: <span className="font-semibold text-zinc-800 dark:text-zinc-200">{selectedReceiptPayment.method}</span>

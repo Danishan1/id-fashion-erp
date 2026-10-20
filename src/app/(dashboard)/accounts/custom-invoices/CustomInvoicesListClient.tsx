@@ -92,7 +92,7 @@ export function CustomInvoicesListClient() {
             ) : (
               <div className="overflow-x-auto rounded border border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900">
                 <table className="w-full text-left text-xs">
-                  <thead className="border-b border-zinc-200 bg-zinc-100/75 text-[11px] font-medium uppercase tracking-wider text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400">
+                  <thead className="border-b border-zinc-200 bg-zinc-100/75 text-xs font-medium uppercase tracking-wider text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400">
                     <tr>
                       <th className="px-3 py-1.5">#</th>
                       <th className="px-3 py-1.5">Item Description</th>

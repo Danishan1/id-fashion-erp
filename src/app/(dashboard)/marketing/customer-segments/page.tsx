@@ -163,7 +163,7 @@ export default function CustomerSegmentsPage() {
                   <td className="px-4 py-2">
                     <div className="flex flex-wrap gap-1">
                       {c.segments.map((s) => (
-                        <span key={s} className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${SEGMENT_BADGE_CLASS[s]}`}>
+                        <span key={s} className={`rounded-full px-2 py-0.5 text-xs font-medium ${SEGMENT_BADGE_CLASS[s]}`}>
                           {SEGMENT_LABELS[s]}
                         </span>
                       ))}

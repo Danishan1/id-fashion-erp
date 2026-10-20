@@ -241,7 +241,7 @@ export function FabricApplicationPanel({
             <div key={app.id} className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Before Fabric Application</p>
+                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-400">Before Fabric Application</p>
                   <img
                     src={imageUrl(app.baseImageAttachmentId)}
                     alt="Before fabric application"
@@ -250,7 +250,7 @@ export function FabricApplicationPanel({
                   />
                 </div>
                 <div>
-                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">After Fabric Application</p>
+                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-400">After Fabric Application</p>
                   <img
                     src={imageUrl(app.resultImageAttachmentId)}
                     alt="After fabric application"
@@ -275,7 +275,7 @@ export function FabricApplicationPanel({
 
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <span
-                  className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                  className={`rounded-full px-2 py-0.5 text-xs font-medium ${
                     app.decision === "APPROVED"
                       ? "bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-300"
                       : "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"

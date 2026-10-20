@@ -56,7 +56,7 @@ export function AutomationTab({ onSelect }: { onSelect: (t: CrmSettingsTab) => v
               <ul className="space-y-1">
                 {items.map((t) => (
                   <li key={t.key}>
-                    <span className="font-medium">{t.label}</span> <code className="text-[11px] text-zinc-500">{t.key}</code>
+                    <span className="font-medium">{t.label}</span> <code className="text-xs text-zinc-500">{t.key}</code>
                     {unavailableTriggers.has(t.key) && <span className="ml-1 text-xs text-amber-700 dark:text-amber-300">— {unavailableTriggers.get(t.key)}</span>}
                     <div className="text-xs text-zinc-500">{t.description}</div>
                   </li>
@@ -110,7 +110,7 @@ export function AutomationTab({ onSelect }: { onSelect: (t: CrmSettingsTab) => v
         <div className="grid gap-x-6 gap-y-1 sm:grid-cols-2 lg:grid-cols-3">
           {WEBHOOK_EVENTS.map((e) => (
             <div key={e.type}>
-              {e.label} <code className="text-[11px] text-zinc-500">{e.type}</code>
+              {e.label} <code className="text-xs text-zinc-500">{e.type}</code>
             </div>
           ))}
         </div>

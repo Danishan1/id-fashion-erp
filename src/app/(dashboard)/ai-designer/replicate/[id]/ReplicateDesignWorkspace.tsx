@@ -110,7 +110,7 @@ function WizardSection({
     <section ref={sectionRef} className="scroll-mt-20 rounded-lg border border-zinc-200 dark:border-zinc-800">
       <div className="flex items-center gap-3 px-4 py-3">
         <span
-          className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-medium ${
+          className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-medium ${
             isDone ? "bg-green-600 text-white" : isCurrent ? "bg-indigo-600 text-white" : "bg-zinc-200 text-zinc-500 dark:bg-zinc-700 dark:text-zinc-400"
           }`}
         >

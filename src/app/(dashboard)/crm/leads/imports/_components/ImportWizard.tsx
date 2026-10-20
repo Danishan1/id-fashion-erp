@@ -29,7 +29,7 @@ function Stepper({ current }: { current: Step }) {
       {STEPS.map((s, i) => (
         <li key={s} className="flex items-center gap-2" aria-current={i === idx ? "step" : undefined}>
           <span
-            className={`flex h-6 w-6 items-center justify-center rounded-full border text-[11px] font-semibold ${
+            className={`flex h-6 w-6 items-center justify-center rounded-full border text-xs font-semibold ${
               i < idx ? "border-indigo-600 bg-indigo-600 text-white" : i === idx ? "border-indigo-600 text-indigo-700 dark:text-indigo-300" : "border-zinc-300 text-zinc-400 dark:border-zinc-700"
             }`}
           >

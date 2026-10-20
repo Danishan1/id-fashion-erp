@@ -395,9 +395,9 @@ function GeneratedImageThumb({
       </div>
 
       <div className="flex items-center justify-between gap-1">
-        <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${DECISION_BADGE[image.decision]}`}>{image.decision}</span>
+        <span className={`rounded-full px-1.5 py-0.5 text-xs font-medium ${DECISION_BADGE[image.decision]}`}>{image.decision}</span>
         {image.generationRun.parentGeneratedImageId && (
-          <span className="text-[10px] text-stone-400 dark:text-stone-500" title="Created as a variation of another image">
+          <span className="text-xs text-stone-400 dark:text-stone-500" title="Created as a variation of another image">
             Variation
           </span>
         )}
@@ -409,19 +409,19 @@ function GeneratedImageThumb({
             rows={2}
             value={notesDraft}
             onChange={(e) => setNotesDraft(e.target.value)}
-            className="w-full rounded-md border border-stone-300 px-1.5 py-1 text-[11px] dark:border-stone-700 dark:bg-stone-900"
+            className="w-full rounded-md border border-stone-300 px-1.5 py-1 text-xs dark:border-stone-700 dark:bg-stone-900"
           />
           <div className="flex gap-1">
-            <button type="button" disabled={busy} onClick={saveNotes} className="rounded-md bg-stone-900 px-2 py-0.5 text-[10px] text-white dark:bg-amber-500 dark:text-stone-950">
+            <button type="button" disabled={busy} onClick={saveNotes} className="rounded-md bg-stone-900 px-2 py-0.5 text-xs text-white dark:bg-amber-500 dark:text-stone-950">
               Save
             </button>
-            <button type="button" onClick={() => setEditingNotes(false)} className="rounded-md border border-stone-300 px-2 py-0.5 text-[10px] dark:border-stone-700">
+            <button type="button" onClick={() => setEditingNotes(false)} className="rounded-md border border-stone-300 px-2 py-0.5 text-xs dark:border-stone-700">
               Cancel
             </button>
           </div>
         </div>
       ) : (
-        <button type="button" onClick={() => setEditingNotes(true)} className="block w-full truncate text-left text-[11px] text-stone-500 hover:underline dark:text-stone-400">
+        <button type="button" onClick={() => setEditingNotes(true)} className="block w-full truncate text-left text-xs text-stone-500 hover:underline dark:text-stone-400">
           {image.userNotes || "Add notes…"}
         </button>
       )}
@@ -431,7 +431,7 @@ function GeneratedImageThumb({
           type="button"
           disabled={busy || image.decision === "SELECTED"}
           onClick={() => setConfirmSelectOpen(true)}
-          className="rounded-md bg-emerald-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
+          className="rounded-md bg-emerald-600 px-1.5 py-0.5 text-xs font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
         >
           Select
         </button>
@@ -439,7 +439,7 @@ function GeneratedImageThumb({
           type="button"
           disabled={busy || image.decision === "REJECTED"}
           onClick={reject}
-          className="rounded-md border border-rose-300 px-1.5 py-0.5 text-[10px] font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-800 dark:text-rose-300 dark:hover:bg-rose-500/10"
+          className="rounded-md border border-rose-300 px-1.5 py-0.5 text-xs font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-800 dark:text-rose-300 dark:hover:bg-rose-500/10"
         >
           Reject
         </button>
@@ -447,7 +447,7 @@ function GeneratedImageThumb({
           type="button"
           disabled={busy}
           onClick={regenerate}
-          className="rounded-md border border-stone-300 px-1.5 py-0.5 text-[10px] font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-50 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-stone-800"
+          className="rounded-md border border-stone-300 px-1.5 py-0.5 text-xs font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-50 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-stone-800"
         >
           Regenerate
         </button>
@@ -455,7 +455,7 @@ function GeneratedImageThumb({
           type="button"
           disabled={busy}
           onClick={createVariation}
-          className="rounded-md border border-stone-300 px-1.5 py-0.5 text-[10px] font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-50 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-stone-800"
+          className="rounded-md border border-stone-300 px-1.5 py-0.5 text-xs font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-50 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-stone-800"
         >
           Create Variation
         </button>
@@ -463,7 +463,7 @@ function GeneratedImageThumb({
           type="button"
           disabled={busy}
           onClick={() => setModifyOpen(true)}
-          className="rounded-md bg-purple-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-purple-500 disabled:opacity-50"
+          className="rounded-md bg-purple-600 px-1.5 py-0.5 text-xs font-medium text-white hover:bg-purple-500 disabled:opacity-50"
         >
           MODIFY DESIGN
         </button>
@@ -472,7 +472,7 @@ function GeneratedImageThumb({
       <button
         type="button"
         onClick={toggleVariations}
-        className="block w-full text-left text-[10px] font-medium text-amber-700 hover:underline dark:text-amber-400"
+        className="block w-full text-left text-xs font-medium text-amber-700 hover:underline dark:text-amber-400"
       >
         {variationsOpen ? "Hide" : "Show"} design variations{variations ? ` (${variations.length})` : ""}
       </button>
@@ -480,9 +480,9 @@ function GeneratedImageThumb({
       {variationsOpen && (
         <div className="space-y-2 rounded-lg border border-stone-200 bg-stone-50 p-2 dark:border-stone-800 dark:bg-stone-900/50">
           {variations === undefined ? (
-            <p className="text-[10px] text-stone-500 dark:text-stone-400">Loading…</p>
+            <p className="text-xs text-stone-500 dark:text-stone-400">Loading…</p>
           ) : variations.length === 0 ? (
-            <p className="text-[10px] text-stone-500 dark:text-stone-400">No design variations yet — use MODIFY DESIGN above.</p>
+            <p className="text-xs text-stone-500 dark:text-stone-400">No design variations yet — use MODIFY DESIGN above.</p>
           ) : (
             variations.map((v) => (
               <DesignVariationRow
@@ -564,16 +564,16 @@ function DesignVariationRow({
     <div className="space-y-1.5 rounded-lg border border-stone-200 bg-white p-2 dark:border-stone-700 dark:bg-stone-900">
       <div className="grid grid-cols-2 gap-2">
         <div>
-          <p className="mb-1 text-[9px] font-semibold uppercase tracking-wide text-stone-400">Original</p>
+          <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-stone-400">Original</p>
           <img src={imageUrl(originalImage.imageAttachmentId)} alt="Original design" className="w-full rounded-md border border-stone-200 dark:border-stone-700" />
         </div>
         <div>
-          <p className="mb-1 text-[9px] font-semibold uppercase tracking-wide text-stone-400">Variation {variation.variationNumber}</p>
+          <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-stone-400">Variation {variation.variationNumber}</p>
           <img src={imageUrl(variation.imageAttachmentId)} alt={`Variation ${variation.variationNumber}`} className="w-full rounded-md border border-stone-200 dark:border-stone-700" />
         </div>
       </div>
 
-      <div className="space-y-0.5 text-[10px] text-stone-600 dark:text-stone-300">
+      <div className="space-y-0.5 text-xs text-stone-600 dark:text-stone-300">
         <p>
           <span className="font-medium">{DESIGN_FEATURE_LABELS[variation.featureKey]}</span> changed:{" "}
           <span className="text-stone-500 dark:text-stone-400">{variation.previousValue}</span> →{" "}
@@ -583,14 +583,14 @@ function DesignVariationRow({
       </div>
 
       <div className="flex flex-wrap items-center gap-1 pt-0.5">
-        <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-medium ${VARIATION_DECISION_BADGE[variation.decision]}`}>
+        <span className={`rounded-full px-1.5 py-0.5 text-xs font-medium ${VARIATION_DECISION_BADGE[variation.decision]}`}>
           {variation.decision === "KEPT_ORIGINAL" ? "KEPT ORIGINAL" : variation.decision}
         </span>
         <button
           type="button"
           disabled={busy || variation.decision === "SELECTED"}
           onClick={() => setConfirmSelectOpen(true)}
-          className="rounded-md bg-emerald-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
+          className="rounded-md bg-emerald-600 px-1.5 py-0.5 text-xs font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
         >
           Select Variation
         </button>
@@ -598,7 +598,7 @@ function DesignVariationRow({
           type="button"
           disabled={busy || variation.decision === "KEPT_ORIGINAL"}
           onClick={onKeepOriginal}
-          className="rounded-md border border-stone-300 px-1.5 py-0.5 text-[10px] font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-50 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-stone-800"
+          className="rounded-md border border-stone-300 px-1.5 py-0.5 text-xs font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-50 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-stone-800"
         >
           Keep Original
         </button>
@@ -606,7 +606,7 @@ function DesignVariationRow({
           type="button"
           disabled={busy}
           onClick={onCreateAnother}
-          className="rounded-md border border-stone-300 px-1.5 py-0.5 text-[10px] font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-50 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-stone-800"
+          className="rounded-md border border-stone-300 px-1.5 py-0.5 text-xs font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-50 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-stone-800"
         >
           Create Another Variation
         </button>

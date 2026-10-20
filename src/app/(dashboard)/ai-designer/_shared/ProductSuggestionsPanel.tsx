@@ -128,7 +128,7 @@ export function ProductSuggestionsPanel({
                       >
                         <div className="flex items-center justify-between">
                           <span className="font-medium text-zinc-800 dark:text-zinc-200">{item.productCategory}</span>
-                          <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
+                          <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
                             Priority {item.priorityRank}
                           </span>
                         </div>

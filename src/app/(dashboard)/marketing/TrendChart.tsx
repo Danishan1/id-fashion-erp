@@ -49,7 +49,7 @@ export function TrendChart({
           <polyline points={points.join(" ")} fill="none" stroke={color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
         </svg>
       )}
-      <div className="mt-1 flex justify-between text-[10px] text-zinc-400">
+      <div className="mt-1 flex justify-between text-xs text-zinc-400">
         <span>{data[0]?.date}</span>
         <span>{data[data.length - 1]?.date}</span>
       </div>

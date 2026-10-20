@@ -56,7 +56,7 @@ const inputCls =
 
 function StatusPicker({ value, onChange }: { value: FactStatus; onChange: (s: FactStatus) => void }) {
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value as FactStatus)} className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${STATUS_STYLE[value]}`}>
+    <select value={value} onChange={(e) => onChange(e.target.value as FactStatus)} className={`rounded-full border px-2 py-0.5 text-xs font-medium ${STATUS_STYLE[value]}`}>
       {(Object.keys(STATUS_LABEL) as FactStatus[]).map((s) => (
         <option key={s} value={s}>
           {STATUS_LABEL[s]}
@@ -72,7 +72,7 @@ function Section({ title, count, children, defaultOpen }: { title: string; count
       <summary className="flex cursor-pointer items-center justify-between px-4 py-2.5 text-sm font-semibold text-zinc-800 dark:text-zinc-100">
         <span>{title}</span>
         <span className="flex items-center gap-2">
-          {count ? <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-medium text-rose-700 dark:bg-rose-950 dark:text-rose-300">{count} to confirm</span> : null}
+          {count ? <span className="rounded-full bg-rose-100 px-2 py-0.5 text-xs font-medium text-rose-700 dark:bg-rose-950 dark:text-rose-300">{count} to confirm</span> : null}
           <span className="text-zinc-400 transition group-open:rotate-90">›</span>
         </span>
       </summary>
@@ -124,7 +124,7 @@ function RowTable<T extends Record<string, unknown>>({
     <div className="overflow-x-auto">
       <table className="w-full min-w-[640px] text-xs">
         <thead>
-          <tr className="text-left text-[10px] uppercase tracking-wide text-zinc-500">
+          <tr className="text-left text-xs uppercase tracking-wide text-zinc-500">
             {columns.map((c) => (
               <th key={c.key} className={`px-1 py-1 font-medium ${c.width ?? ""}`}>
                 {c.label}
@@ -182,7 +182,7 @@ function TypesetPreview({ pageNumber, analysis }: { pageNumber: number; analysis
   if (pageNumber === 3) {
     const rows = analysis.bom.slice(0, 6);
     return (
-      <div className="w-full space-y-0.5 overflow-hidden text-[8px] leading-tight text-zinc-600 dark:text-zinc-400">
+      <div className="w-full space-y-0.5 overflow-hidden text-xs leading-tight text-zinc-600 dark:text-zinc-400">
         {rows.map((b, i) => (
           <p key={i} className="truncate">
             <span className="font-medium text-zinc-800 dark:text-zinc-200">{b.item || `Row ${i + 1}`}</span>
@@ -197,7 +197,7 @@ function TypesetPreview({ pageNumber, analysis }: { pageNumber: number; analysis
   if (pageNumber === 5) {
     const rows = analysis.measurements.slice(0, 6);
     return (
-      <div className="w-full space-y-0.5 overflow-hidden text-[8px] leading-tight text-zinc-600 dark:text-zinc-400">
+      <div className="w-full space-y-0.5 overflow-hidden text-xs leading-tight text-zinc-600 dark:text-zinc-400">
         {rows.map((m, i) => (
           <p key={i} className="truncate">
             <span className="font-medium text-zinc-800 dark:text-zinc-200">{m.code || i + 1}.</span> {m.pom || "—"} — {m.baseValue} cm
@@ -456,23 +456,23 @@ export function TechPackMasterPanel({ projectId, onChanged }: { projectId: strin
                   <div key={p.id} className="overflow-hidden rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
                     <button type="button" onClick={() => p.imageAttachmentId && setPreview(p)} className="block aspect-[2/3] w-full bg-zinc-50 dark:bg-zinc-950">
                       {p.imageStatus === "IN_PROGRESS" ? (
-                        <span className="flex h-full animate-pulse items-center justify-center text-[10px] text-violet-600">Generating…</span>
+                        <span className="flex h-full animate-pulse items-center justify-center text-xs text-violet-600">Generating…</span>
                       ) : p.imageAttachmentId ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img src={imgUrl(p.imageAttachmentId)} alt={p.pageTitle} className="h-full w-full object-contain" />
                       ) : (
-                        <span className="flex h-full items-center justify-center p-2 text-center text-[10px] text-rose-600" title={p.imageError ?? ""}>
+                        <span className="flex h-full items-center justify-center p-2 text-center text-xs text-rose-600" title={p.imageError ?? ""}>
                           {p.imageStatus === "FAILED" ? `Failed: ${(p.imageError ?? "").slice(0, 80)}` : "Not generated"}
                         </span>
                       )}
                     </button>
                     <div className="p-1.5">
-                      <p className="truncate text-[10px] font-semibold text-zinc-700 dark:text-zinc-200">
+                      <p className="truncate text-xs font-semibold text-zinc-700 dark:text-zinc-200">
                         {displayPageNumber(p.pageNumber, techPack.pages.map((x) => x.pageNumber))}. {p.pageTitle}
                       </p>
                       {hybrid && (
                         <div className="mt-1 rounded border border-emerald-200 bg-emerald-50/60 p-1 dark:border-emerald-900 dark:bg-emerald-950/20">
-                          <p className="mb-0.5 text-[9px] font-semibold text-emerald-700 dark:text-emerald-300">📋 Real data (always exact):</p>
+                          <p className="mb-0.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300">📋 Real data (always exact):</p>
                           <TypesetPreview pageNumber={p.pageNumber} analysis={techPack.garmentAnalysisJson?.analysis} />
                         </div>
                       )}
@@ -480,7 +480,7 @@ export function TechPackMasterPanel({ projectId, onChanged }: { projectId: strin
                         type="button"
                         onClick={() => regenerate([p.pageNumber])}
                         disabled={Boolean(busy) || p.imageStatus === "IN_PROGRESS"}
-                        className="mt-1 text-[10px] font-medium text-violet-700 hover:underline disabled:opacity-40 dark:text-violet-300"
+                        className="mt-1 text-xs font-medium text-violet-700 hover:underline disabled:opacity-40 dark:text-violet-300"
                       >
                         ↻ Regenerate
                       </button>
@@ -507,7 +507,7 @@ export function TechPackMasterPanel({ projectId, onChanged }: { projectId: strin
                   </button>
                 </div>
               </div>
-              <p className="text-[11px] text-zinc-500">Saving rebuilds every page prompt you have not edited by hand, so corrected values appear on the next page images.</p>
+              <p className="text-xs text-zinc-500">Saving rebuilds every page prompt you have not edited by hand, so corrected values appear on the next page images.</p>
 
               <Section title="A. Garment Identification" count={unconfirmed?.identification} defaultOpen>
                 <FieldList fields={draft.identification} onChange={(v) => update("identification", v)} />
@@ -591,8 +591,8 @@ export function TechPackMasterPanel({ projectId, onChanged }: { projectId: strin
                   onChange={(v) => update("measurements", v)}
                 />
                 <div className="mt-3 overflow-x-auto">
-                  <p className="mb-1 text-[11px] font-medium text-zinc-500">Graded spec (calculated)</p>
-                  <table className="text-[11px]">
+                  <p className="mb-1 text-xs font-medium text-zinc-500">Graded spec (calculated)</p>
+                  <table className="text-xs">
                     <thead>
                       <tr>
                         <th className="px-2 py-1 text-left">POM</th>
@@ -627,9 +627,9 @@ export function TechPackMasterPanel({ projectId, onChanged }: { projectId: strin
                 <textarea value={draft.garmentVisualDescription} onChange={(e) => update("garmentVisualDescription", e.target.value)} rows={4} className={inputCls} />
               </Section>
               <Section title="Notes for Designer & Suggested Additional Views">
-                <p className="mb-1 text-[11px] font-medium text-zinc-500">Notes for designer (one per line)</p>
+                <p className="mb-1 text-xs font-medium text-zinc-500">Notes for designer (one per line)</p>
                 <textarea value={draft.notesForDesigner.join("\n")} onChange={(e) => update("notesForDesigner", e.target.value.split("\n"))} rows={5} className={inputCls} />
-                <p className="mb-1 mt-2 text-[11px] font-medium text-zinc-500">Suggested additional views (one per line)</p>
+                <p className="mb-1 mt-2 text-xs font-medium text-zinc-500">Suggested additional views (one per line)</p>
                 <textarea value={draft.suggestedAdditionalViews.join("\n")} onChange={(e) => update("suggestedAdditionalViews", e.target.value.split("\n"))} rows={3} className={inputCls} />
               </Section>
             </div>
@@ -645,9 +645,9 @@ export function TechPackMasterPanel({ projectId, onChanged }: { projectId: strin
                   <div key={p.id}>
                     <div className="mb-1 flex items-center justify-between">
                       <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-200">
-                        Page {p.pageNumber} — {p.pageTitle} {p.promptEdited && <span className="ml-1 rounded bg-amber-100 px-1.5 text-[10px] font-medium text-amber-700">edited</span>}
+                        Page {p.pageNumber} — {p.pageTitle} {p.promptEdited && <span className="ml-1 rounded bg-amber-100 px-1.5 text-xs font-medium text-amber-700">edited</span>}
                       </p>
-                      <div className="flex gap-3 text-[11px]">
+                      <div className="flex gap-3 text-xs">
                         {p.promptEdited && (
                           <button type="button" onClick={() => savePrompt(p.pageNumber, true)} disabled={Boolean(busy)} className="text-zinc-500 hover:underline">
                             Reset to auto

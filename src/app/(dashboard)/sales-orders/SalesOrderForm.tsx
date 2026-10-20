@@ -764,7 +764,7 @@ function VariantQuantityGrid({
         <thead>
           <tr className="bg-zinc-50 dark:bg-zinc-900/60">
             <th className="border-b border-r border-zinc-200 dark:border-zinc-800"></th>
-            <th className="border-b border-r border-zinc-200 px-1 py-1.5 text-center text-[10px] font-normal uppercase tracking-wide text-zinc-400 dark:border-zinc-800">
+            <th className="border-b border-r border-zinc-200 px-1 py-1.5 text-center text-xs font-normal uppercase tracking-wide text-zinc-400 dark:border-zinc-800">
               Fill
             </th>
             {sizes.map((size) => (
@@ -778,7 +778,7 @@ function VariantQuantityGrid({
           </tr>
           <tr className="bg-zinc-50 dark:bg-zinc-900/60">
             <th className="border-b border-r border-zinc-200 dark:border-zinc-800"></th>
-            <th className="border-b border-r border-zinc-200 px-1 py-1 text-center text-[10px] font-normal text-zinc-400 dark:border-zinc-800">
+            <th className="border-b border-r border-zinc-200 px-1 py-1 text-center text-xs font-normal text-zinc-400 dark:border-zinc-800">
               all sizes
             </th>
             {sizes.map((size) => (

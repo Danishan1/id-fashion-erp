@@ -278,7 +278,7 @@ export function DesignViewClient({ project }: { project: DesignViewProject }) {
                 }`}
               >
                 <span>✏️ Technical Flat Sketch</span>
-                {sketchId && <span className="text-[10px]">✓</span>}
+                {sketchId && <span className="text-xs">✓</span>}
               </button>
             </div>
             {viewMode === "SKETCH" && !sketchId && (
@@ -337,7 +337,7 @@ export function DesignViewClient({ project }: { project: DesignViewProject }) {
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={attachmentUrl(v.currentImage!.imageAttachmentId)} alt={`v${v.versionNumber}`} className="h-24 w-20 object-cover object-top" />
-                    <span className="absolute bottom-1 left-1 rounded bg-black/60 px-1 text-[10px] text-white">v{v.versionNumber}</span>
+                    <span className="absolute bottom-1 left-1 rounded bg-black/60 px-1 text-xs text-white">v{v.versionNumber}</span>
                   </button>
                 ))}
             </div>

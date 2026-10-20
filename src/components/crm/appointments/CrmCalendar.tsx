@@ -280,7 +280,7 @@ export function CrmCalendar({
                         onClick={() => onEventClick(ev.id)}
                         aria-label={eventLabel(ev)}
                         data-event-id={ev.id}
-                        className={`block w-full truncate rounded border-l-2 px-1 text-left text-[11px] leading-4 ${TONES[ev.tone]} ${ev.muted ? "line-through opacity-60" : ""} ${ev.pending ? "opacity-50" : ""}`}
+                        className={`block w-full truncate rounded border-l-2 px-1 text-left text-xs leading-4 ${TONES[ev.tone]} ${ev.muted ? "line-through opacity-60" : ""} ${ev.pending ? "opacity-50" : ""}`}
                       >
                         {formatZonedTime(ev.start, timeZone)} {ev.title}
                       </button>
@@ -288,7 +288,7 @@ export function CrmCalendar({
                   ))}
                 </ul>
                 {dayEvents.length > shown.length && (
-                  <button type="button" onClick={() => onShowDay?.(d)} className="mt-0.5 text-[11px] font-medium text-indigo-600 hover:underline dark:text-indigo-400">
+                  <button type="button" onClick={() => onShowDay?.(d)} className="mt-0.5 text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400">
                     +{dayEvents.length - shown.length} more
                   </button>
                 )}
@@ -314,7 +314,7 @@ export function CrmCalendar({
         </div>
         <div ref={scroller} className="relative max-h-[70vh] overflow-y-auto">
           <div className="flex" style={{ height: 24 * HOUR_PX }}>
-            <div className="w-14 shrink-0 select-none text-right text-[11px] text-zinc-400" aria-hidden>
+            <div className="w-14 shrink-0 select-none text-right text-xs text-zinc-400" aria-hidden>
               {Array.from({ length: 24 }, (_, h) => (
                 <div key={h} style={{ height: HOUR_PX }} className="-translate-y-2 pr-2">
                   {h === 0 ? "" : `${String(h).padStart(2, "0")}:00`}
@@ -357,7 +357,7 @@ export function CrmCalendar({
                     onDragEnd={() => setOver(null)}
                     onClick={() => onEventClick(s.event.id)}
                     style={{ top: s.top, height: s.height, left: `calc(${(s.lane / s.lanes) * 100}% + 2px)`, width: `calc(${100 / s.lanes}% - 4px)` }}
-                    className={`absolute z-[1] overflow-hidden rounded border-l-4 px-1.5 py-0.5 text-left text-[11px] leading-4 shadow-sm ${TONES[s.event.tone]} ${s.event.muted ? "opacity-60" : ""} ${s.event.pending ? "animate-pulse opacity-60" : ""} ${onMove && s.event.draggable ? "cursor-grab" : ""}`}
+                    className={`absolute z-[1] overflow-hidden rounded border-l-4 px-1.5 py-0.5 text-left text-xs leading-4 shadow-sm ${TONES[s.event.tone]} ${s.event.muted ? "opacity-60" : ""} ${s.event.pending ? "animate-pulse opacity-60" : ""} ${onMove && s.event.draggable ? "cursor-grab" : ""}`}
                   >
                     <span className="block truncate font-medium">{s.event.title}</span>
                     <span className="block truncate">

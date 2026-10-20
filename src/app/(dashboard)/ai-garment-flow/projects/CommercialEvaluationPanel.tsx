@@ -263,7 +263,7 @@ export function CommercialEvaluationPanel({
                         {item.commercialDevelopmentScore}
                       </td>
                       <td className="px-2 py-2 text-center">
-                        <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${RANK_BADGE[effectiveRank]}`}>
+                        <span className={`rounded-full px-1.5 py-0.5 text-xs font-medium ${RANK_BADGE[effectiveRank]}`}>
                           {RANK_LABEL[effectiveRank]}
                         </span>
                       </td>
@@ -283,7 +283,7 @@ export function CommercialEvaluationPanel({
                     <h5 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
                       {item.designDirection.designDirectionName}
                     </h5>
-                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${RANK_BADGE[effectiveRank]}`}>
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${RANK_BADGE[effectiveRank]}`}>
                       AI: {RANK_LABEL[item.aiRank]}
                     </span>
                   </div>

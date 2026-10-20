@@ -155,7 +155,7 @@ export function ColumnChart({
         <div className="relative">
           <div className="flex h-[150px] gap-1">
             {/* y-axis: 0, half, top */}
-            <div className="flex w-7 shrink-0 flex-col justify-between pb-4 text-right text-[10px] text-zinc-400" aria-hidden>
+            <div className="flex w-7 shrink-0 flex-col justify-between pb-4 text-right text-xs text-zinc-400" aria-hidden>
               <span>{formatNumber(top, { notation: "compact" })}</span>
               <span>{formatNumber(Math.round(top / 2), { notation: "compact" })}</span>
               <span>0</span>
@@ -190,7 +190,7 @@ export function ColumnChart({
                   </div>
                 ))}
               </div>
-              <div className="flex h-4 text-[10px] text-zinc-400" aria-hidden>
+              <div className="flex h-4 text-xs text-zinc-400" aria-hidden>
                 {points.map((p, i) => (
                   <span key={p.bucket} className="min-w-0 flex-1 overflow-visible whitespace-nowrap text-center">
                     {i % labelEvery === 0 ? shortDate(p.bucket, unit) : ""}

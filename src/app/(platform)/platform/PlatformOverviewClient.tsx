@@ -131,7 +131,7 @@ export function PlatformOverviewClient({ data }: { data: PlatformOverviewData })
             <span className="text-xs font-semibold uppercase tracking-wider text-indigo-700 dark:text-indigo-400">
               Monthly Recurring (MRR)
             </span>
-            <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-800 dark:bg-indigo-900/60 dark:text-indigo-300">
+            <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-xs font-bold text-indigo-800 dark:bg-indigo-900/60 dark:text-indigo-300">
               Run Rate
             </span>
           </div>
@@ -166,7 +166,7 @@ export function PlatformOverviewClient({ data }: { data: PlatformOverviewData })
             <span className="text-sm font-semibold text-amber-600">{financials.trialSubscriptions}</span>
             <span className="text-xs text-zinc-500">Trial</span>
           </div>
-          <div className="mt-1 text-[11px] text-zinc-500">
+          <div className="mt-1 text-xs text-zinc-500">
             {financials.graceSubscriptions} in grace · {financials.expiredSubscriptions} expired
           </div>
         </div>
@@ -229,7 +229,7 @@ export function PlatformOverviewClient({ data }: { data: PlatformOverviewData })
                     <td className="py-2 pr-4 font-medium text-amber-950 dark:text-amber-100">{exp.companyName}</td>
                     <td className="py-2 px-4 text-amber-900 dark:text-amber-200">{exp.planName ?? "Standard"}</td>
                     <td className="py-2 px-4">
-                      <span className="inline-flex rounded bg-amber-200/80 px-2 py-0.5 text-[10px] font-bold text-amber-900 dark:bg-amber-900/60 dark:text-amber-200">
+                      <span className="inline-flex rounded bg-amber-200/80 px-2 py-0.5 text-xs font-bold text-amber-900 dark:bg-amber-900/60 dark:text-amber-200">
                         {exp.isTrial ? "Trial" : "Subscription"}
                       </span>
                     </td>
@@ -287,7 +287,7 @@ export function PlatformOverviewClient({ data }: { data: PlatformOverviewData })
                         style={{ width: `${percentage}%` }}
                       />
                     </div>
-                    <div className="flex justify-between text-[11px] text-zinc-400">
+                    <div className="flex justify-between text-xs text-zinc-400">
                       <span>{plan.monthlyPrice > 0 ? `₹${plan.monthlyPrice.toLocaleString("en-IN")}/mo` : "Custom pricing"}</span>
                       <span>{plan.annualPrice > 0 ? `₹${plan.annualPrice.toLocaleString("en-IN")}/yr` : ""}</span>
                     </div>
@@ -336,7 +336,7 @@ export function PlatformOverviewClient({ data }: { data: PlatformOverviewData })
                       </td>
                       <td className="py-2.5 px-3 text-zinc-600 dark:text-zinc-300">{p.planName}</td>
                       <td className="py-2.5 px-3 text-zinc-500">
-                        <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                        <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
                           {p.method}
                         </span>
                       </td>
@@ -371,7 +371,7 @@ export function PlatformOverviewClient({ data }: { data: PlatformOverviewData })
               <div key={act.id} className="flex items-center justify-between py-2.5 text-xs">
                 <div className="flex items-center gap-2">
                   <span
-                    className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                    className={`rounded-full px-2 py-0.5 text-xs font-bold ${
                       act.action === "CREATE"
                         ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
                         : act.action === "DELETE"
@@ -383,7 +383,7 @@ export function PlatformOverviewClient({ data }: { data: PlatformOverviewData })
                   </span>
                   <span className="font-semibold text-zinc-900 dark:text-zinc-100">{act.companyName}</span>
                   <span className="text-zinc-400">·</span>
-                  <span className="font-mono text-[11px] text-zinc-500">{act.tableName}</span>
+                  <span className="font-mono text-xs text-zinc-500">{act.tableName}</span>
                 </div>
                 <div className="flex items-center gap-3 text-zinc-400">
                   <span>{act.operatorName ? `by ${act.operatorName}` : "System"}</span>

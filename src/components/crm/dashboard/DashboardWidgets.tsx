@@ -68,7 +68,7 @@ export function KpiGrid({ cards }: { cards: KpiCard[] }) {
           >
             <span className="flex items-center justify-between gap-2 text-xs text-zinc-500">
               <span>{c.label}</span>
-              <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-zinc-500 dark:bg-zinc-800">{SCOPE_LABEL[c.scope]}</span>
+              <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-800">{SCOPE_LABEL[c.scope]}</span>
             </span>
             <span className="mt-1 text-2xl font-semibold tabular-nums text-zinc-900 dark:text-zinc-50">
               {c.value !== null ? formatNumber(c.value) : null}

@@ -524,19 +524,19 @@ export const SketchPenCanvas = forwardRef<
       {/* Floats over the sketch (not in the layout) so the sketch never shifts while a curve is being bent. */}
       <div className="relative flex min-h-0 flex-1 flex-col">
       {pendingCurve && (
-        <div className="pointer-events-auto absolute inset-x-2 bottom-2 z-20 flex flex-wrap items-center gap-2 rounded-lg border border-violet-200 bg-violet-50/95 px-3 py-1 text-[11px] text-violet-800 shadow-md backdrop-blur dark:border-violet-900 dark:bg-violet-950/90 dark:text-violet-200">
+        <div className="pointer-events-auto absolute inset-x-2 bottom-2 z-20 flex flex-wrap items-center gap-2 rounded-lg border border-violet-200 bg-violet-50/95 px-3 py-1 text-xs text-violet-800 shadow-md backdrop-blur dark:border-violet-900 dark:bg-violet-950/90 dark:text-violet-200">
           <span>⌒ Drag the purple dot to bend the curve · drag the white dots to move its ends</span>
           <button
             type="button"
             onClick={() => commitPendingCurve()}
-            className="ml-auto rounded bg-violet-600 px-2 py-0.5 text-[11px] font-semibold text-white hover:bg-violet-700"
+            className="ml-auto rounded bg-violet-600 px-2 py-0.5 text-xs font-semibold text-white hover:bg-violet-700"
           >
             ✓ Done (Enter)
           </button>
           <button
             type="button"
             onClick={cancelPendingCurve}
-            className="rounded border border-violet-300 px-2 py-0.5 text-[11px] hover:bg-violet-100 dark:border-violet-700 dark:hover:bg-violet-900/40"
+            className="rounded border border-violet-300 px-2 py-0.5 text-xs hover:bg-violet-100 dark:border-violet-700 dark:hover:bg-violet-900/40"
           >
             ✕ Cancel (Esc)
           </button>

@@ -1079,7 +1079,7 @@ export function SampleWorkflowPanel({
             return (
               <div key={step.key} className="flex items-center">
                 <div
-                  className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-medium ${
+                  className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-medium ${
                     isPast
                       ? "bg-green-600 text-white"
                       : isCurrent
@@ -1678,7 +1678,7 @@ export function SampleWorkflowPanel({
                   <div className="flex items-center justify-between">
                     <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-200">Costing</p>
                     {version.isCostingLocked && (
-                      <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] font-medium text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300">
+                      <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300">
                         Locked{version.costingLockedBy ? ` by ${version.costingLockedBy.fullName}` : ""}
                       </span>
                     )}

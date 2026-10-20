@@ -290,7 +290,7 @@ export function DesignViewClient({ sampleRequestId, initialRequest }: DesignView
                   <div className="flex items-center justify-between">
                     <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-200">Costing Summary</p>
                     {version.isCostingLocked && (
-                      <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] font-medium text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300">
+                      <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300">
                         Locked{version.costingLockedBy ? ` by ${version.costingLockedBy.fullName}` : ""}
                       </span>
                     )}

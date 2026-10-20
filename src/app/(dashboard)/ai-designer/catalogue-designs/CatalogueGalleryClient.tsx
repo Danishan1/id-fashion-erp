@@ -126,21 +126,21 @@ export function CatalogueGalleryClient() {
                       <span className="text-xs">Not generated yet</span>
                     </div>
                   )}
-                  <span className={`absolute left-2 top-2 rounded-full px-2 py-0.5 text-[10px] font-medium ${STATUS_BADGE_CLASS[p.status] ?? ""}`}>
+                  <span className={`absolute left-2 top-2 rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_BADGE_CLASS[p.status] ?? ""}`}>
                     {STATUS_LABELS[p.status] ?? p.status}
                   </span>
                   {p.currentVersion && (
-                    <span className="absolute right-2 top-2 rounded-full bg-black/60 px-2 py-0.5 text-[10px] text-white">v{p.currentVersion.versionNumber}</span>
+                    <span className="absolute right-2 top-2 rounded-full bg-black/60 px-2 py-0.5 text-xs text-white">v{p.currentVersion.versionNumber}</span>
                   )}
                 </Link>
                 <div className="p-3">
                   <p className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">{p.projectName}</p>
-                  <p className="mt-0.5 truncate text-[11px] text-zinc-500">
+                  <p className="mt-0.5 truncate text-xs text-zinc-500">
                     {p.projectNumber}
                     {p.productCategory ? ` · ${p.productCategory}` : ""}
                     {p.designSource ? ` · ${SOURCE_LABELS[p.designSource]}` : ""}
                   </p>
-                  <p className="truncate text-[11px] text-zinc-400">{p.fabricProduct?.styleName ?? p.fabricName ?? "—"}</p>
+                  <p className="truncate text-xs text-zinc-400">{p.fabricProduct?.styleName ?? p.fabricName ?? "—"}</p>
                   <div className="mt-3 flex gap-2">
                     {img ? (
                       <>

@@ -150,7 +150,7 @@ export function TechnicalFlatPanel({
             <div key={flat.id} className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Selected Garment Visual</p>
+                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-400">Selected Garment Visual</p>
                   <img
                     src={imageUrl(flat.baseImageAttachmentId)}
                     alt="Garment visual this flat was generated from"
@@ -159,7 +159,7 @@ export function TechnicalFlatPanel({
                   />
                 </div>
                 <div>
-                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Technical Flat</p>
+                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-400">Technical Flat</p>
                   <img
                     src={imageUrl(flat.resultImageAttachmentId)}
                     alt="Technical flat"
@@ -175,7 +175,7 @@ export function TechnicalFlatPanel({
 
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <span
-                  className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                  className={`rounded-full px-2 py-0.5 text-xs font-medium ${
                     flat.decision === "APPROVED"
                       ? "bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-300"
                       : "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"

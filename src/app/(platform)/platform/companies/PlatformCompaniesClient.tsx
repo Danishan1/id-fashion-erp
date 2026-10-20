@@ -357,7 +357,7 @@ export function PlatformCompaniesClient({ companies, canCreate, canRequestSuppor
                   <td className="px-4 py-3 text-zinc-700 dark:text-zinc-300">
                     <div className="text-xs font-medium">{SUBSCRIPTION_STATE_LABELS[c.subscriptionState]}</div>
                     {c.periodEndsAt && (
-                      <div className="text-[11px] text-zinc-500 dark:text-zinc-400">until {formatDate(c.periodEndsAt)}</div>
+                      <div className="text-xs text-zinc-500 dark:text-zinc-400">until {formatDate(c.periodEndsAt)}</div>
                     )}
                   </td>
                   <td className="px-4 py-3 text-zinc-700 dark:text-zinc-300 text-xs">

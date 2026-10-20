@@ -64,7 +64,7 @@ export function PlatformShell({ userName, roleLabel, children }: { userName: str
             Sign out
           </button>
         </header>
-        <main className="min-h-0 flex-1 overflow-y-auto bg-zinc-50 p-6 dark:bg-zinc-950">{children}</main>
+        <main className="min-h-0 flex-1 overflow-y-auto bg-zinc-50 p-4 sm:p-6 dark:bg-zinc-950">{children}</main>
       </div>
     </div>
   );

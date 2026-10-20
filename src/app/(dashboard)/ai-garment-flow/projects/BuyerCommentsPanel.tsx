@@ -98,7 +98,7 @@ export function BuyerCommentsPanel({ projectId, setError }: { projectId: string;
             <div className="space-y-2">
               {analysis.categories.map((c) => (
                 <div key={c.id} className="rounded-md border border-zinc-100 p-3 dark:border-zinc-800">
-                  <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-medium text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-300">
+                  <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-300">
                     {CATEGORY_LABEL[c.category]}
                   </span>
                   <p className="mt-1 text-sm text-zinc-700 dark:text-zinc-200">{c.summary}</p>
