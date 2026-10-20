@@ -1,25 +1,23 @@
 import { notFound } from "next/navigation";
 import { CrmPageHeader } from "@/components/crm/CrmPageHeader";
 import { getCrmPageContext } from "@/modules/crm/core/crm-page";
-import { CrmSettingsClient, type CrmSettingsTab } from "./_components/CrmSettingsClient";
-
-const TABS: CrmSettingsTab[] = ["statuses", "sources", "tags", "custom-fields", "duplicates", "contact-fields", "contact-duplicates", "company-statuses", "company-fields", "company-duplicates", "pipelines", "opportunity-fields", "contact-options", "api-keys", "webhooks", "channels"];
+import { CrmSettingsClient } from "./_components/CrmSettingsClient";
+import { CRM_SETTINGS_TABS, type CrmSettingsTab } from "./_components/settings-tabs";
 
 /** CRM configuration — requires crm_settings.view; changes require crm_settings.edit. */
 export default async function CrmSettingsPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
   const { permissions } = await getCrmPageContext();
   if (!permissions.settings) notFound();
   const { tab } = await searchParams;
-  const initialTab = TABS.includes(tab as CrmSettingsTab) ? (tab as CrmSettingsTab) : "statuses";
+  const initialTab = (CRM_SETTINGS_TABS as readonly string[]).includes(tab ?? "") ? (tab as CrmSettingsTab) : "overview";
   return (
     <>
       <CrmPageHeader
         title="CRM Settings"
-        description={permissions.settingsEdit ? "Lead and company statuses, pipelines and stages, sources, tags, custom fields, duplicate rules, form options, API keys, webhooks and conversation channels for this company." : "You can view these settings. Ask an admin to change them."}
-
+        description={permissions.settingsEdit ? "Configure the CRM, connect other systems and manage API access and webhooks for this company." : "You can view these settings. Ask an admin to change them."}
         breadcrumbs={[{ label: "Settings" }]}
       />
-      <CrmSettingsClient initialTab={initialTab} canEdit={permissions.settingsEdit} />
+      <CrmSettingsClient initialTab={initialTab} canEdit={permissions.settingsEdit} permissions={permissions} />
     </>
   );
 }

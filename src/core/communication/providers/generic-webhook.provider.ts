@@ -1,5 +1,8 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { lookup as dnsLookup } from "node:dns/promises";
+import { isIP } from "node:net";
 import { z } from "zod";
+import { isBlockedAddress } from "@/modules/crm/workflows/workflow-webhook";
 import {
   MESSAGE_TYPES,
   PROVIDER_DELIVERY_STATUSES,
@@ -86,6 +89,36 @@ export function checkOutboundUrl(value: string, production = process.env.NODE_EN
   }
   if (url.protocol !== "https:" && !(url.protocol === "http:" && !production)) return "The outbound URL must use https.";
   if (url.username || url.password) return "Don't put a user name or password in the URL — requests are signed instead.";
+  if (production && !allowListed(url)) {
+    const host = url.hostname.replace(/^\[|\]$/g, "");
+    if (/^(localhost|.*\.local|.*\.internal|.*\.localhost)$/i.test(host) || (isIP(host) && isBlockedAddress(host))) return "The outbound URL must be a public address (internal and private-network addresses are not allowed).";
+  }
+  return null;
+}
+
+/** Hosts an administrator deliberately allows (on-premise gateways) — the same list the workflow / outgoing webhooks use. */
+function allowListed(url: URL) {
+  const allowed = (process.env.CRM_WORKFLOW_WEBHOOK_ALLOWED_HOSTS ?? "").split(",").map((h) => h.trim().toLowerCase()).filter(Boolean);
+  return allowed.includes(url.hostname.replace(/^\[|\]$/g, "").toLowerCase());
+}
+
+/**
+ * Phase 22 SSRF guard, checked on every send in production: the URL shape (above)
+ * and every address the host resolves to must be public — loopback, private,
+ * link-local / cloud-metadata, CGNAT and reserved ranges are refused, unless the
+ * host is in CRM_WORKFLOW_WEBHOOK_ALLOWED_HOSTS. Redirects are never followed.
+ * Development (NODE_ENV ≠ production) may call local relays.
+ */
+export async function checkOutboundDestination(value: string, production = process.env.NODE_ENV === "production"): Promise<string | null> {
+  const shape = checkOutboundUrl(value, production);
+  if (shape || !production) return shape;
+  const url = new URL(value);
+  if (allowListed(url)) return null;
+  const host = url.hostname.replace(/^\[|\]$/g, "");
+  if (isIP(host)) return null; // literal already vetted by checkOutboundUrl
+  const addresses = await dnsLookup(host, { all: true, verbatim: true }).catch(() => [] as { address: string }[]);
+  if (!addresses.length) return null; // unresolvable: fetch fails as "unreachable" (retryable)
+  if (addresses.some((a) => isBlockedAddress(a.address))) return "The outbound URL resolves to a private or internal address; only public addresses can be called.";
   return null;
 }
 
@@ -309,6 +342,8 @@ export const genericWebhookProvider: ChannelProvider = {
   async sendMessage(channel: ProviderChannel, message: OutboundMessage): Promise<SendResult> {
     const config = readConfig(channel.config);
     if (!config.outboundUrl) return { ok: false, errorCode: "CHANNEL_NOT_SENDABLE", errorMessage: "Replies are not set up for this channel.", retryable: false };
+    const blocked = await checkOutboundDestination(config.outboundUrl);
+    if (blocked) return { ok: false, errorCode: "DESTINATION_BLOCKED", errorMessage: blocked, retryable: false };
     const payload = JSON.stringify({
       id: message.idempotencyKey,
       channelId: channel.id,

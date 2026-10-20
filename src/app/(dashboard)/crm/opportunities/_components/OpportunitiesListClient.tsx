@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { CrmBadge } from "@/components/crm/CrmBadge";
+import { BulkActionsButton } from "@/components/bulk/BulkActionsButton";
 import { CrmBulkBar } from "@/components/crm/CrmBulkBar";
 import { CrmColumnPicker } from "@/components/crm/CrmColumnPicker";
 import { crmFilterKeys } from "@/components/crm/CrmFilterBar";
@@ -134,6 +135,8 @@ export function OpportunitiesListClient({
 
   const { filters } = useOpportunityFilters({ meta, users, refreshKey });
   const listState = useCrmListState(crmFilterKeys(filters));
+  // Phase 14: the list's current filters + search, for "all matching records" bulk jobs.
+  const bulkFilterQuery = new URLSearchParams({ ...listState.filters, ...(listState.search ? { search: listState.search } : {}) }).toString();
   // The default view opens once, and only when the URL doesn't already ask for a search or filters.
   const defaultApplied = useRef(Boolean(listState.search) || Object.values(listState.filters).some(Boolean));
 
@@ -302,6 +305,7 @@ export function OpportunitiesListClient({
         </button>
       )}
       {activeView && activeViewId === defaultViewId && <span className="text-xs text-zinc-500 dark:text-zinc-400">Your default view</span>}
+      <BulkActionsButton entityType="OPPORTUNITY" selectedIds={selected} filterQuery={bulkFilterQuery} onSubmitted={() => setSelected([])} />
       <CrmColumnPicker columns={ALL_COLUMNS.map((c) => ({ key: c.key, header: c.header }))} visibleKeys={visibleColumns} onChange={changeColumns} />
       {permissions.create && (
         <Link href="/crm/opportunities/new" className={buttonClasses("primary", "sm")}>
@@ -353,6 +357,7 @@ export function OpportunitiesListClient({
             <Button size="xs" variant="danger" onClick={() => setDialog({ kind: "archive", ids: selected, label: `${selected.length} opportunity(ies)` })}>
               Archive
             </Button>
+            <BulkActionsButton entityType="OPPORTUNITY" size="xs" label="More bulk actions…" selectedIds={selected} filterQuery={bulkFilterQuery} onSubmitted={() => setSelected([])} />
           </CrmBulkBar>
         }
       />

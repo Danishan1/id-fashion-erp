@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { CrmBadge } from "@/components/crm/CrmBadge";
+import { BulkActionsButton } from "@/components/bulk/BulkActionsButton";
 import { CrmBulkBar } from "@/components/crm/CrmBulkBar";
 import { CrmColumnPicker } from "@/components/crm/CrmColumnPicker";
 import { crmFilterKeys } from "@/components/crm/CrmFilterBar";
@@ -130,6 +131,8 @@ export function LeadsListClient({ permissions, meta, users }: { permissions: Lea
 
   const { filters } = useLeadFilters({ meta, users, refreshKey });
   const listState = useCrmListState(crmFilterKeys(filters));
+  // Phase 14: the list's current filters + search, for "all matching records" bulk jobs.
+  const bulkFilterQuery = new URLSearchParams({ ...listState.filters, ...(listState.search ? { search: listState.search } : {}) }).toString();
 
   const loadViews = () =>
     fetch("/api/v1/crm/saved-views?entityType=LEAD")
@@ -259,6 +262,7 @@ export function LeadsListClient({ permissions, meta, users }: { permissions: Lea
           </button>
         </>
       )}
+      <BulkActionsButton entityType="LEAD" selectedIds={selected} filterQuery={bulkFilterQuery} onSubmitted={() => setSelected([])} />
       <CrmColumnPicker columns={ALL_COLUMNS.map((c) => ({ key: c.key, header: c.header }))} visibleKeys={visibleColumns} onChange={setVisibleColumns} />
       {permissions.create && (
         <>
@@ -307,6 +311,7 @@ export function LeadsListClient({ permissions, meta, users }: { permissions: Lea
             <Button size="xs" variant="danger" onClick={() => setDialog({ kind: "archive", ids: selected, label: `${selected.length} lead(s)` })}>
               Archive
             </Button>
+            <BulkActionsButton entityType="LEAD" size="xs" label="More bulk actions…" selectedIds={selected} filterQuery={bulkFilterQuery} onSubmitted={() => setSelected([])} />
           </CrmBulkBar>
         }
       />

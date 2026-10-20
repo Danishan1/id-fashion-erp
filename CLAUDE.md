@@ -7818,3 +7818,106 @@ All six phases done (35/35 tasks). Deploy and rollback steps: `docs/PLATFORM_SAA
 - Other modules use `TemplateService` (crm-templates.service.ts): `renderTemplate(actor | crmSystemActor, templateId, { refs } | { values, entities }, { requireUsable: true })`. Only ACTIVE templates may be used to send; messages store the final text plus `template_id` + `template_version_id`. Register live references with `registerTemplateUsageProvider` (blocks archiving).
 - Inbox: send accepts `templateId` + `templateVersionId`; provider gets `OutboundMessage.template` (providerMetadata + parameters). Test sends go through the provider adapter with `test: true` and "[TEST]" - never stored in crm_messages; audited + `template.test_sent` event.
 - Report: `docs/crm/PHASE_12_MESSAGE_TEMPLATES.md`.
+
+## CRM rebuild - Phase 18 Workflow Automation Engine (2026-10-13)
+- Triggers come ONLY from the `crm_events` outbox: `dispatchWorkflowEvents` (worker job `workflow.tick`, every 15 s; a best-effort kick after commits) claims each event in `crm_workflow_event_log` and creates executions in the same transaction (idempotency key `evt:<eventId>:<workflowId>`). Never start workflows from in-memory callbacks. New trigger = emit a crm_event + one `WORKFLOW_TRIGGERS` entry (`workflow-triggers.ts`).
+- Definitions are JSON graphs (`workflow-definition.ts`, client-safe, shared by UI/API/engine). Published versions are immutable (DB trigger `crm_workflow_versions_guard`); editing a published workflow creates draft v N+1. Executions keep their version.
+- Conditions: whitelisted fields/operators only (`workflow-fields.ts`, `workflow-conditions.ts`), no expressions. Actions (`workflow-action-catalog.ts` + `workflow-actions.ts`) always call the existing CRM services; new action = catalog entry + runner. Messages/webhooks/notes are never auto-retried.
+- Run-as = publisher; permissions re-checked live before every action. Actions run in `runWithRequestContext({ requestId: "wfexec:<id>" })` - that correlation id is how recursion protection works (don't change it).
+- Webhooks: `workflow-webhook.ts` only (SSRF-checked, pinned DNS, signed). Waits are persisted (`next_run_at`), time zone via crm-timezone.
+- Test mode (mode TEST) never changes or sends anything. Permissions: crm_settings view/edit. APIs use `[...path]` catch-all routes.
+- Report: `docs/crm/PHASE_18_WORKFLOW_AUTOMATION.md`.
+
+## Phase 14 Reusable Bulk Action Engine (2026-10-14)
+- Generic engine in `src/modules/bulk-actions/` (registry, engine, service, queue, worker, route wrapper); CRM registrations in `src/modules/crm/bulk/`. Tables `bulk_jobs` + `bulk_job_items` (one item per record, snapshot taken at submit, incl. "all matching the filter").
+- Clients send only `entityType` + `actionKey` registry keys; `getHandler` refuses an action of another entity. New action = `registerAction({ paramsSchema: strict zod, permissions, prepare, executeItem | executeBatch(+finalize), retrySafe, confirmation, maxItems })` and load it from `bulk-registrations.ts`. Handlers MUST call the module's existing service as `ctx.actor` - never write tables directly. Unavailable features: `unavailableReason` (CRM delete, sequence enrolment).
+- Processing only in the worker (`npm run worker`, queue `bulk-actions-<db hash>`, concurrency 2): Postgres lease (`lock_token`/`locked_at`, 3 min), re-validation at start (requester active, permissions, params), batches of 50, per-item outcome, cancel = stop remaining (no rollback), retry = NEW linked job of failed items sharing root idempotency keys `bulk:<rootJobId>:<entityId>`. Recovery tick `bulk.recover` every minute re-enqueues stalled jobs and purges expired exports.
+- Item error messages must be user-safe: use `BulkItemError` / BusinessRuleError; anything else is stored as generic "Unexpected error" (`toSafeItemError`).
+- Exports: `sanitizeSpreadsheetCell` on every text cell (= + - @ tab CR → prefixed '), private `saveFile` storage, download only by the requester with crm.export, 7-day expiry; storageKey never leaves the server.
+- UI: `<BulkActionsButton entityType selectedIds filterQuery />` on list pages; jobs at `/crm/bulk-jobs`. APIs: `/api/v1/bulk-actions/{capabilities,preview}`, `/api/v1/bulk-jobs` + `[...path]`.
+- Bulk changes trigger Phase 18 workflows like manual ones: handlers go through the services (crm_events), and the engine runs each item in `runWithRequestContext({ requestId: "bulkjob:<jobId>" })`. Never use the `wfexec:` prefix there (that would mark bulk changes as workflow-made).
+- Report + "how to register a bulk action": `docs/crm/PHASE_14_BULK_ACTION_ENGINE.md`.
+
+## Phase 21 CRM Dashboard (2026-10-14)
+- `/crm` = `CrmDashboardClient`; data only from `GET /api/v1/crm/dashboard` (`src/modules/crm/dashboard/crm-dashboard.service.ts`): one request, `?widgets=` = visible widgets only, each widget computed independently ({status:"ok"|"error"}).
+- Every number is built from the list filters (`leadFilterSchema`/`opportunityFilterSchema` + `buildLeadWhere`/`buildOpportunityWhere`, `buildActivityWhere`, `buildAppointmentWhere`) and its drill-down link is `*FilterToParams` of the SAME filter object - keep it that way (integration test re-counts every link). Days are Asia/Kolkata business days. Opportunity values are per-currency CRM estimates; never sum currencies or mix ERP revenue.
+- Visibility on the server: record scope + owner filter (another owner needs crm.view_all); workflow/integration health needs crm_settings.view; feed uses the company-feed rule (OWN = own actions).
+- Customisation = CRM preferences `dashboard.layout` / `dashboard.filters` (schemas in `dashboard-registry.ts`); new widget = catalogue entry + service function + view.
+- Report: `docs/crm/PHASE_21_DASHBOARD.md`.
+
+## CRM Phase 22 — Settings, API configuration, webhooks & integration guidance (2026-10-14)
+
+Full write-up: `docs/crm/PHASE_22_SETTINGS_INTEGRATIONS.md`.
+
+**Secret rule (all CRM credentials).** A secret is shown once, in the create or rotate response, and never again. Never add a "reveal", never put a secret in a list/detail/update/test response, an edit form, a log, an audit row, a URL or browser storage.
+- UI: `src/components/crm/SecretOnce.tsx`.
+  - `SecretOnce`: needs a "stored it" confirmation, warns before the page is left, and reports real copy results.
+  - `CopyButton` / `CopyableCode`: copy buttons that report the real result.
+  - `CaptureShared.tsx` re-exports these.
+- Workflow secret: `GET /workflows/{id}/webhook-secret` and `revealWebhookSecret` were removed. Rotate only (POST, `no-store`).
+
+**Settings IA.**
+- `settings/_components/settings-tabs.ts` holds `CRM_SETTINGS_TABS` and the groups. It is a non-client module, because the server page validates `?tab=` with it.
+- Default tab: `overview`. Old tab ids are kept.
+- New sections:
+  - `overview` / `integrations` / `access` (`OverviewTabs.tsx`);
+  - `api` (`ApiAccessTab.tsx`);
+  - `webhooks-out` (`OutgoingWebhooksTab.tsx`);
+  - `automation` (`AutomationTab.tsx`).
+- `GET /api/v1/crm/settings/overview` (`crm-integrations-overview.service.ts`) computes integration statuses from the DB: CONNECTED / NEEDS_ATTENTION / AVAILABLE / PLANNED.
+- Meta Lead Ads, IndiaMART, built-in WhatsApp Cloud and mailbox sync are **Planned**. Don't mark them working.
+
+**Outgoing webhooks** (`src/modules/crm/webhooks-out/`).
+- Tables: `crm_webhook_subscriptions` and `crm_webhook_deliveries` (migration `20261015100000_crm_webhook_subscriptions`).
+- Events: the CRM event registry minus workflow draft events (`webhook-events.ts`, client-safe).
+- Delivery runs in worker job `webhook.tick` every 15 s (`crm-import.worker.ts`, scheduler `crm-webhook-tick`):
+  - queues per (subscription, event), unique, with a 24 h look-back from `active_since`;
+  - claims with a lease (`SKIP LOCKED`);
+  - sends through `postSignedWebhook` (pinned public IP, no redirects, 10 s);
+  - retries at 1m / 5m / 30m / 2h / 6h, then FAILED.
+- Disabling a subscription cancels its queue; re-enabling or adding events doesn't replay.
+- Delivery logs store outcomes only. Payload is stored only for test deliveries, which are synthetic.
+- Routes: `/api/v1/crm/settings/webhook-subscriptions[...]` (view = `crm_settings.view`, rest = `crm_settings.edit`).
+
+**SSRF.**
+- `generic-webhook.provider.ts` `checkOutboundUrl` / `checkOutboundDestination`: in production, internal names and private addresses are refused when saved and re-checked by DNS before each send (`DESTINATION_BLOCKED`).
+- The allow-list `CRM_WORKFLOW_WEBHOOK_ALLOWED_HOSTS` is shared.
+- The blocked message is now "only public URLs can be called".
+
+**Tests.**
+- `webhooks-out.unit.test.ts` and `webhooks-out.integration.test.ts`. The integration test runs a real HTTP receiver on 127.0.0.1 with `CRM_WORKFLOW_WEBHOOK_ALLOW_HTTP=true` and `ALLOWED_HOSTS=127.0.0.1` set in the test file.
+- `SecretOnce.test.tsx`, `OutgoingWebhooksTab.test.tsx`, and the SSRF cases in `communication.test.ts`.
+- `bulk-queue.integration.test.ts` needs `BULK_IT_REDIS_URL` as well.
+
+## CRM default automations (2026-10-16)
+
+User guide: `docs/crm/workflows/11-default-automations.md`.
+
+**Catalogue: `src/modules/crm/workflows/default-workflows.ts`.**
+- 20 ready-made workflows: 13 start on (tasks and in-app alerts only), 7 start off (nurture, tagging, long waits).
+- The file is DATA ONLY with type-only imports: `prisma/seed.ts` imports it under plain Node.
+- No company-specific ids (statuses, stages, tags, users, templates) and no MESSAGE / EXTERNAL actions. Use enum, date and number fields, new tag *names*, and RECORD_OWNER / RUN_AS recipients.
+- Every merge variable must have a fallback.
+- `default-workflows.test.ts` enforces all of this and runs each definition through the publish validator.
+
+**Keys and install.**
+- `crm_workflows.template_key` is unique per company (migration `20261016100000_crm_default_workflows`). Never rename or reuse a key.
+- `installDefaultWorkflows(actor, { keys? })` in `crm-workflows.service.ts`:
+  - publishes v1 through `validateDefinitionForPublish`, with the installer as run-as;
+  - sets PUBLISHED, or DISABLED per `enabledByDefault`;
+  - skips existing copies (any status, including ARCHIVED);
+  - audits and emits events.
+- `listDefaultWorkflows` returns the catalogue with this company's copies.
+- API: `/api/v1/crm/workflows/defaults` (GET view, POST edit). It is a static route beside `[...path]`.
+
+**Seed.** `seedDefaultWorkflows(companyId, superAdminId)` in `prisma/seed.ts` inserts the rows directly (same canonical-JSON hash, no webhook secret) and is idempotent per key.
+
+**UI.**
+- Workflows list:
+  - "Default" badge;
+  - an "On" switch column (edit users): resume, or disable with confirmation;
+  - a "Default automations" dialog that adds the missing ones.
+- Detail page: "Default automation" badge; "Turn on" instead of "Resume" for DISABLED workflows.
+- `templateKey` and `version` were added to the list and detail DTOs.
+
+**Engine note.** In tests, `tickWorkflows` dispatches an event and the next tick runs the queued execution. Tick twice (the second with `now + 1s`).

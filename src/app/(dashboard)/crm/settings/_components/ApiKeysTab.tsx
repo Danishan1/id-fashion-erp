@@ -117,14 +117,10 @@ export function ApiKeysTab({ canEdit }: { canEdit: boolean }) {
         {canEdit && <Button onClick={() => setEditing("new")}>Create API key</Button>}
       </div>
       {created && (
-        <div className="space-y-3">
-          <SecretOnce label="Your new API key" value={created} />
+        <SecretOnce label="Your new API key" value={created} onDone={() => setCreated(null)}>
           <p className="text-sm text-zinc-600 dark:text-zinc-300">Example request:</p>
           <CodeBlock>{exampleRequest(created)}</CodeBlock>
-          <Button variant="secondary" onClick={() => setCreated(null)}>
-            I&apos;ve saved the key
-          </Button>
-        </div>
+        </SecretOnce>
       )}
       {rows.length === 0 ? (
         <CrmEmptyState title="No API keys yet" description="Create a key for each website or system that should send leads, so you can revoke one without affecting the others." />

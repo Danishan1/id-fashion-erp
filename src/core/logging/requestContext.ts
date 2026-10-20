@@ -39,3 +39,12 @@ export function setRequestActor(userId: string, companyId: string): void {
 export function getRequestContext(): RequestContext | undefined {
   return storage.getStore();
 }
+
+/**
+ * Runs `fn` with its own request context — for work that isn't an HTTP
+ * request (CRM workflow actions: their correlation id "wfexec:<executionId>"
+ * marks every event and log line they cause).
+ */
+export function runWithRequestContext<T>(context: RequestContext, fn: () => Promise<T>): Promise<T> {
+  return storage.run({ ...context }, fn);
+}

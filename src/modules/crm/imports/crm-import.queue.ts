@@ -26,7 +26,13 @@ export type CrmIngestJob =
   | { name: "ingest.retry"; data: { eventId: string } }
   | { name: "import.cleanup"; data: Record<string, never> }
   // Phase 09: activity reminders, scheduled every minute by the worker.
-  | { name: "activity.reminders"; data: Record<string, never> };
+  | { name: "activity.reminders"; data: Record<string, never> }
+  // Phase 11: stuck outbound messages → FAILED.
+  | { name: "conversation.sweep"; data: Record<string, never> }
+  // Phase 18: workflow dispatch + due executions (every 15 s, plus a kick after triggering events).
+  | { name: "workflow.tick"; data: Record<string, never> }
+  // Phase 22: outgoing webhook subscriptions — queue, send, retry (every 15 s).
+  | { name: "webhook.tick"; data: Record<string, never> };
 
 let queue: Queue | null = null;
 

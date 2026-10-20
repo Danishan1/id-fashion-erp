@@ -1,5 +1,6 @@
 import type { CrmEntityType, Prisma } from "@prisma/client";
 import { prisma } from "@/core/db/client";
+import { PermissionService } from "@/core/rbac/PermissionService";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { CrmCompanyRepository } from "./companies/crm-company.repository";
 import { CrmContactRepository } from "./contacts/crm-contact.repository";
@@ -19,6 +20,15 @@ export async function assertCrmEntityAccess(actor: CrmActor, entityType: CrmEnti
   if (entityType === "TEMPLATE") {
     const template = await prisma.crmMessageTemplate.findFirst({ where: { id: entityId, companyId: actor.companyId }, select: { id: true } });
     if (!template) throw new BusinessRuleError("NOT_FOUND", "Record not found.", { entityType, entityId });
+    return;
+  }
+  // Workflows are company configuration: their history is for crm_settings viewers.
+  if (entityType === "WORKFLOW") {
+    const [workflow, canView] = await Promise.all([
+      prisma.crmWorkflow.findFirst({ where: { id: entityId, companyId: actor.companyId }, select: { id: true } }),
+      PermissionService.can(actor.userId, "crm_settings", "view"),
+    ]);
+    if (!workflow || !canView) throw new BusinessRuleError("NOT_FOUND", "Record not found.", { entityType, entityId });
     return;
   }
   const scope = await getCrmRecordScope(actor);
