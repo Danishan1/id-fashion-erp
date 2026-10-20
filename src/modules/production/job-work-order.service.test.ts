@@ -69,10 +69,15 @@ vi.mock("./job-work-order.repository", () => ({
     findByIdempotencyKey: vi.fn(),
     updateInTx: vi.fn(),
     findPendingForCompany: vi.fn(),
+    updateApprovalStatusConditionalInTx: vi.fn(),
   },
 }));
 
-const mockTx = { jobWorkOrder: {}, jobWorkReceipt: {} };
+// jobWorkReceipt.findUniqueOrThrow backs approveJobWorkReceipt()'s own final
+// return value -- the one spot in this module that reads straight off `tx`
+// rather than through a mocked repository method (see its own describe
+// block below).
+const mockTx = { jobWorkOrder: {}, jobWorkReceipt: { findUniqueOrThrow: vi.fn() } };
 const mockPrisma = vi.hoisted(() => ({
   productionStage: { findMany: vi.fn() },
   warehouse: { findFirst: vi.fn() },
@@ -99,6 +104,7 @@ const { generateEarningForJobWorkReceipt } = await import("./piece-rate-earning.
 const {
   createJobWorkOrder,
   receiveJobWork,
+  approveJobWorkReceipt,
   reverseJobWorkReceipt,
   transitionJobWorkOrderStatus,
   resumeJobWorkOrderFromHold,
@@ -767,6 +773,42 @@ describe("receiveJobWork — multi-stage cascade (2026-09-28)", () => {
     );
   });
 
+  // Job Work cascade variant-breakdown fix (2026-10-20, post-push audit
+  // Medium finding): receiveJobWork's own cascade call never passed
+  // variantBreakdown through before this fix, so a variant-bearing style
+  // completed via an external Job Work receipt silently never created a
+  // Finished Goods Reservation. cascadeReceivedThroughStagesInTx itself is
+  // mocked in this file — resolveFinalStageVariantBreakdown's own real
+  // validation is covered in job-order.service.test.ts, where that function
+  // actually lives un-mocked. This test only proves the pass-through.
+  it("passes the submitted variantBreakdown through to the cascade", async () => {
+    const order = jobWorkOrder({
+      coveredStages: [
+        { productionStageId: "stage-sew", sequence: 0 },
+        { productionStageId: "stage-pak", sequence: 1 },
+      ],
+      finishedGoodsWarehouseId: "wh-fg",
+    });
+    vi.mocked(JobWorkOrderRepository.findAnyById).mockResolvedValue(order as never);
+    vi.mocked(JobWorkOrderRepository.findForGuardedUpdateInTx).mockResolvedValue(order as never);
+    vi.mocked(JobWorkReceiptRepository.createInTx).mockResolvedValue({ id: "rcpt-1" } as never);
+
+    await receiveJobWork(actor, "jwo-1", {
+      receivedDate: "2026-10-20",
+      receivedQuantity: 40,
+      rejectedQuantity: 0,
+      damagedQuantity: 0,
+      remarks: "",
+      variantBreakdown: [{ productVariantId: "var-1", quantity: 40 }],
+    });
+
+    expect(cascadeReceivedThroughStagesInTx).toHaveBeenCalledWith(
+      mockTx,
+      actor,
+      expect.objectContaining({ variantBreakdown: [{ productVariantId: "var-1", quantity: 40 }] })
+    );
+  });
+
   it("blocks reversing a receipt whose pieces already cascaded to later stages", async () => {
     vi.mocked(JobWorkReceiptRepository.findAnyById).mockResolvedValue({
       id: "rcpt-1",
@@ -781,5 +823,92 @@ describe("receiveJobWork — multi-stage cascade (2026-09-28)", () => {
     );
     await expect(reverseJobWorkReceipt(actor, "rcpt-1", "wrong count")).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
     expect(applyJobOrderQuantityDelta).not.toHaveBeenCalled();
+  });
+});
+
+// Job Work cascade variant-breakdown fix (2026-10-20) -- approveJobWorkReceipt
+// is the Supervisor-decision counterpart to receiveJobWork for an external
+// unit's PENDING submission: its own cascade call had the identical gap,
+// closed the identical way (an optional 3rd `input` param, defaulted to {}
+// so every pre-existing direct call with no third argument is unaffected).
+describe("approveJobWorkReceipt — multi-stage cascade (2026-10-20)", () => {
+  const receipt = {
+    id: "rcpt-1",
+    jobWorkOrderId: "jwo-1",
+    approvalStatus: "PENDING" as const,
+    submittedByUserId: "external-user-1",
+    receivedQuantity: 40,
+    rejectedQuantity: 0,
+    damagedQuantity: 0,
+  };
+
+  beforeEach(() => {
+    vi.mocked(JobWorkReceiptRepository.findAnyById).mockReset().mockResolvedValue(receipt as never);
+    vi.mocked(JobWorkReceiptRepository.updateApprovalStatusConditionalInTx).mockReset().mockResolvedValue({ count: 1 } as never);
+    mockTx.jobWorkReceipt.findUniqueOrThrow
+      .mockReset()
+      .mockResolvedValue({ id: "rcpt-1", approvalStatus: "APPROVED" } as never);
+  });
+
+  it("approves the receipt, applies its quantities, and passes variantBreakdown through to the cascade", async () => {
+    const order = jobWorkOrder({
+      coveredStages: [
+        { productionStageId: "stage-sew", sequence: 0 },
+        { productionStageId: "stage-pak", sequence: 1 },
+      ],
+      finishedGoodsWarehouseId: "wh-fg",
+      issuedQuantity: 50,
+    });
+    vi.mocked(JobWorkOrderRepository.findForGuardedUpdateInTx).mockResolvedValue(order as never);
+    vi.mocked(JobWorkOrderRepository.findAnyById).mockResolvedValue(order as never);
+
+    const result = await approveJobWorkReceipt(actor, "rcpt-1", {
+      variantBreakdown: [{ productVariantId: "var-1", quantity: 40 }],
+    });
+
+    expect(JobWorkReceiptRepository.updateApprovalStatusConditionalInTx).toHaveBeenCalledWith(
+      mockTx,
+      "rcpt-1",
+      "PENDING",
+      expect.objectContaining({ approvalStatus: "APPROVED", receivedByUserId: actor.userId })
+    );
+    expect(applyJobOrderQuantityDelta).toHaveBeenCalledWith(mockTx, "jo-1", { completed: 40, rejected: 0, damaged: 0 });
+    expect(cascadeReceivedThroughStagesInTx).toHaveBeenCalledWith(
+      mockTx,
+      actor,
+      expect.objectContaining({
+        sourceJobOrderId: "jo-1",
+        downstreamStageIds: ["stage-pak"],
+        quantity: 40,
+        variantBreakdown: [{ productVariantId: "var-1", quantity: 40 }],
+      })
+    );
+    expect(result).toEqual({ id: "rcpt-1", approvalStatus: "APPROVED" });
+  });
+
+  it("defaults to no variantBreakdown when none is submitted — pre-existing call shape unaffected", async () => {
+    const order = jobWorkOrder({
+      coveredStages: [
+        { productionStageId: "stage-sew", sequence: 0 },
+        { productionStageId: "stage-fin", sequence: 1 },
+      ],
+      issuedQuantity: 50,
+    });
+    vi.mocked(JobWorkOrderRepository.findForGuardedUpdateInTx).mockResolvedValue(order as never);
+    vi.mocked(JobWorkOrderRepository.findAnyById).mockResolvedValue(order as never);
+
+    await approveJobWorkReceipt(actor, "rcpt-1");
+
+    expect(cascadeReceivedThroughStagesInTx).toHaveBeenCalledWith(
+      mockTx,
+      actor,
+      expect.objectContaining({ variantBreakdown: undefined })
+    );
+  });
+
+  it("rejects approving a receipt that was already decided", async () => {
+    vi.mocked(JobWorkReceiptRepository.findAnyById).mockResolvedValue({ ...receipt, approvalStatus: "APPROVED" } as never);
+    await expect(approveJobWorkReceipt(actor, "rcpt-1")).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+    expect(cascadeReceivedThroughStagesInTx).not.toHaveBeenCalled();
   });
 });

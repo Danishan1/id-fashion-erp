@@ -22,7 +22,7 @@ import {
 import { resolveContractorPieceRate } from "./piece-rate-resolution.service";
 import { generateEarningForJobWorkReceipt } from "./piece-rate-earning.service";
 import { JobOrderRepository, ProductionOrderRepository } from "./production.repository";
-import type { CreateJobWorkOrderInput, ReceiveJobWorkInput } from "./job-work-order.schema";
+import type { ApproveJobWorkReceiptInput, CreateJobWorkOrderInput, ReceiveJobWorkInput } from "./job-work-order.schema";
 import { JobWorkOrderRepository, JobWorkReceiptRepository } from "./job-work-order.repository";
 
 export interface ActorContext {
@@ -851,6 +851,7 @@ export async function receiveJobWork(actor: ActorContext, jobWorkOrderId: string
         quantity: input.receivedQuantity,
         finishedGoodsWarehouseId: order.finishedGoodsWarehouseId,
         jobWorkNumber: order.jobWorkNumber,
+        variantBreakdown: input.variantBreakdown,
       });
 
       // Piece-Rate (2026-09-18) — the external "worker" here is the
@@ -897,7 +898,11 @@ export async function receiveJobWork(actor: ActorContext, jobWorkOrderId: string
  * exact same accumulator/applyJobOrderQuantityDelta path an internal receipt
  * already uses. Self-approval-guarded — the external submitter cannot
  * approve their own submission. */
-export async function approveJobWorkReceipt(actor: ActorContext, receiptId: string) {
+export async function approveJobWorkReceipt(
+  actor: ActorContext,
+  receiptId: string,
+  input: ApproveJobWorkReceiptInput = {}
+) {
   await assertInternalUser(actor);
   const receipt = await JobWorkReceiptRepository.findAnyById(actor.companyId, receiptId);
   if (!receipt) throw new BusinessRuleError("NOT_FOUND", "Job-work receipt not found.", { id: receiptId });
@@ -953,6 +958,7 @@ export async function approveJobWorkReceipt(actor: ActorContext, receiptId: stri
         quantity: Number(receipt.receivedQuantity),
         finishedGoodsWarehouseId: fullOrder.finishedGoodsWarehouseId,
         jobWorkNumber: fullOrder.jobWorkNumber,
+        variantBreakdown: input.variantBreakdown,
       });
     }
 

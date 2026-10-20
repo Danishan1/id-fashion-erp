@@ -193,16 +193,17 @@ async function completeAtFinalStageInTx(
     quantity: number;
     warehouseId: string;
     /** Finished Goods Inventory module (FGI-021) -- when supplied (Forward/
-     * QC-Accept landing on a final stage for a style with configured
-     * variants -- see resolveFinalStageVariantBreakdown below), REPLACES the
-     * flat ledger posting below with createFinishedGoodsReceiptInTx()'s own
-     * N per-variant postings -- never runs ALONGSIDE the flat call, which
-     * would double-post StockBalance (see that function's own doc comment
-     * for the full reasoning). null/omitted for every other caller -- a
-     * style with no configured variants, or cascadeReceivedThroughStagesInTx
-     * (the Job Work multi-stage cascade, deliberately out of this task's
-     * scope per the plan's own "Forward/QC-Accept... UI and API" wording) --
-     * the original, byte-for-byte-unchanged flat posting. */
+     * QC-Accept/the Job Work multi-stage cascade landing on a final stage for
+     * a style with configured variants -- see resolveFinalStageVariantBreakdown
+     * below), REPLACES the flat ledger posting below with
+     * createFinishedGoodsReceiptInTx()'s own N per-variant postings -- never
+     * runs ALONGSIDE the flat call, which would double-post StockBalance
+     * (see that function's own doc comment for the full reasoning). null for
+     * every no-variant style, regardless of caller -- the original,
+     * byte-for-byte-unchanged flat posting. (2026-10-20: the Job Work cascade
+     * used to be a third, deliberately-exempted "always flat" caller -- see
+     * resolveFinalStageVariantBreakdown's own doc comment for why that scope
+     * boundary was closed.) */
     variantBreakdown?: { productVariantId: string; quantity: number }[] | null;
   }
 ) {
@@ -265,20 +266,21 @@ async function completeAtFinalStageInTx(
 /**
  * Finished Goods Inventory module (FGI-020) — validates and resolves the
  * colour/size breakdown for a batch about to land on a final production
- * stage, called from `forwardJobOrder()`/`recordQcInspection()` BEFORE their
+ * stage. Called from `forwardJobOrder()`/`recordQcInspection()` BEFORE their
  * own transaction opens (so a rejection here never leaves a partial write
  * behind — the same "rejected before any posting occurs" discipline every
- * other pre-transaction guard in this file already follows).
+ * other pre-transaction guard in this file already follows), and (2026-10-20,
+ * closing the Phase 1 post-push audit's Medium-severity finding) from
+ * `cascadeReceivedThroughStagesInTx` below, INSIDE its own transaction, right
+ * when its loop reaches a final stage — Job Work's own established
+ * convention already validates several of its guards mid-transaction and
+ * relies on rollback (see `receiveJobWork()`'s `OVER_RECEIPT_NOT_ALLOWED`
+ * check, which runs after a receipt row is already created in the same
+ * transaction), so this isn't a new pattern for that caller.
  *
  * Returns `null` when the style has no configured (active) `ProductVariant`
  * rows at all — the flat-only posting path, completely unchanged for that
- * case; no breakdown is required or even meaningful. Deliberately scoped
- * only to the Forward/QC-Accept call sites per the plan's own "Extend the
- * Forward/QC-Accept-to-final-stage UI and API" wording —
- * `cascadeReceivedThroughStagesInTx` (the Job Work multi-stage cascade)
- * never calls this and always takes the flat-only path, even for a style
- * that has configured variants; that is an intentional scope boundary, not
- * an oversight.
+ * case; no breakdown is required or even meaningful.
  *
  * Throws `VALIDATION_ERROR` when the style DOES have variants configured
  * and the caller supplied no breakdown (or an empty one — never silently
@@ -286,7 +288,7 @@ async function completeAtFinalStageInTx(
  * style, or a sum that doesn't match the quantity actually being completed,
  * within this file's own `EPSILON` tolerance.
  */
-async function resolveFinalStageVariantBreakdown(
+export async function resolveFinalStageVariantBreakdown(
   productId: string,
   quantity: number,
   variantBreakdown: { productVariantId: string; quantity: number }[]
@@ -485,6 +487,22 @@ function guardedIncrementQcPassed(tx: Prisma.TransactionClient, jobOrderId: stri
  * cascaded quantity; the last covered stage's job order is left completed
  * (ready to forward/QC internally) unless it is a final stage, in which case
  * the pieces land in Finished Goods.
+ *
+ * `variantBreakdown` (2026-10-20, closing the Phase 1 post-push audit's
+ * Medium-severity finding) — previously this cascade ALWAYS took the
+ * flat-only FG-posting path, even for a variant-bearing style, meaning
+ * production completed via an external Job Work receipt never created a
+ * Finished Goods Reservation and silently understated a real order's own
+ * "Allocated" figure. Now resolved via `resolveFinalStageVariantBreakdown`
+ * (the exact same validation `forwardJobOrder`/`recordQcInspection` already
+ * use) the moment the loop reaches a final stage — never speculatively
+ * resolved earlier, since only the terminal stage's own completion actually
+ * needs it. Optional and defaults to `[]`: a no-variant style resolves to
+ * `null` regardless (unchanged, flat-only path), and an omitted/empty
+ * breakdown on a variant-bearing style throws the same `VALIDATION_ERROR`
+ * the internal paths already throw — callers (`receiveJobWork`/
+ * `approveJobWorkReceipt`) must supply it when the covered range ends on a
+ * final stage for a style that has configured variants.
  */
 export async function cascadeReceivedThroughStagesInTx(
   tx: Prisma.TransactionClient,
@@ -496,6 +514,7 @@ export async function cascadeReceivedThroughStagesInTx(
     quantity: number;
     finishedGoodsWarehouseId: string | null;
     jobWorkNumber: string;
+    variantBreakdown?: { productVariantId: string; quantity: number }[];
   },
 ) {
   if (params.quantity <= EPSILON || params.downstreamStageIds.length === 0) return;
@@ -537,6 +556,16 @@ export async function cascadeReceivedThroughStagesInTx(
           {},
         );
       }
+      // Resolved only now, right at the terminal stage — see this function's
+      // own doc comment. Throws VALIDATION_ERROR (rolling back this whole
+      // transaction, including the stage-transaction/forwarded-accumulator
+      // writes already made above) if the style has variants and none/an
+      // invalid breakdown was supplied.
+      const resolvedVariantBreakdown = await resolveFinalStageVariantBreakdown(
+        current.productionOrder.productId,
+        params.quantity,
+        params.variantBreakdown ?? []
+      );
       await completeAtFinalStageInTx(tx, actor, {
         productId: current.productionOrder.productId,
         lotId: current.lot.id,
@@ -544,9 +573,7 @@ export async function cascadeReceivedThroughStagesInTx(
         productionOrderId: current.productionOrderId,
         quantity: params.quantity,
         warehouseId: params.finishedGoodsWarehouseId,
-        // Finished Goods Inventory module (FGI-020) -- deliberately no
-        // breakdown collected here, out of this task's own stated scope
-        // ("Forward/QC-Accept... UI and API" only); always the flat-only path.
+        variantBreakdown: resolvedVariantBreakdown,
       });
       return;
     }

@@ -11,6 +11,17 @@ import { JOB_WORK_ORDER_STATUS_LABELS, JOB_WORK_ORDER_STATUS_BADGE_CLASS } from 
 
 type JobWorkStatus = keyof typeof JOB_WORK_ORDER_STATUS_LABELS;
 
+// Multi-stage job work cascade fix (2026-10-20) — the same shape
+// LotWorkflowPanel's own Forward/QC variant-breakdown grid already uses, for
+// the exact same reason: a style with configured colour/size variants needs
+// the receive to be split per variant before it can post to Finished Goods.
+interface FinalStageVariantOption {
+  productVariantId: string;
+  colorName: string;
+  sizeName: string;
+  skuCode: string;
+}
+
 interface ReceiptRow {
   id: string;
   receiptNumber: string;
@@ -118,6 +129,12 @@ export function JobWorkOrderWorkflowPanel({ jobWorkOrderId, initialOrder }: { jo
   const [rejectedQty, setRejectedQty] = useState("0");
   const [damagedQty, setDamagedQty] = useState("0");
   const [receiveRemarks, setReceiveRemarks] = useState("");
+  // Multi-stage job work cascade fix (2026-10-20) -- populated only when this
+  // receive's own cascade (see cascadeEndsAtFinalStage below) will land a
+  // variant-bearing style's pieces in Finished Goods; cleared otherwise, so a
+  // single-stage or non-final-ending job work behaves exactly as before.
+  const [receiveVariantOptions, setReceiveVariantOptions] = useState<FinalStageVariantOption[]>([]);
+  const [receiveVariantQtyById, setReceiveVariantQtyById] = useState<Record<string, string>>({});
 
   const [reverseTarget, setReverseTarget] = useState<ReceiptRow | null>(null);
   const [reverseReason, setReverseReason] = useState("");
@@ -131,6 +148,15 @@ export function JobWorkOrderWorkflowPanel({ jobWorkOrderId, initialOrder }: { jo
   const tracking = order.stageTracking;
   const nextIsFinal = !!tracking?.nextStage?.isFinal;
 
+  // Multi-stage job work cascade fix (2026-10-20) -- mirrors
+  // cascadeReceivedThroughStagesInTx's own real logic: a receive only ever
+  // posts to Finished Goods when more than one stage is covered (so there's
+  // a real downstream cascade at all) AND the last covered stage is final.
+  // A single-stage job work, or one that ends mid-floor, never needs this.
+  const coveredStages = order.coveredStages ?? [];
+  const cascadeEndsAtFinalStage =
+    coveredStages.length > 1 && !!coveredStages[coveredStages.length - 1]?.productionStage.isFinal;
+
   useEffect(() => {
     if (!showForward || !nextIsFinal) return;
     fetch("/api/v1/warehouses?pageSize=200")
@@ -138,6 +164,30 @@ export function JobWorkOrderWorkflowPanel({ jobWorkOrderId, initialOrder }: { jo
       .then((body) => setWarehouses(body.data ?? []))
       .catch(() => {});
   }, [showForward, nextIsFinal]);
+
+  // Finished Goods Inventory (FGI-020) suggestions endpoint is keyed on the
+  // production order, not the job order -- reused as-is here, same as
+  // LotWorkflowPanel's own Forward/QC fetches.
+  useEffect(() => {
+    (showReceive && cascadeEndsAtFinalStage
+      ? fetch(`/api/v1/production-orders/${order.jobOrder.lot.productionOrder.id}/variant-breakdown-suggestions`)
+          .then((res) => res.json())
+          .then((body) => {
+            const rows = (body.data ?? []) as Array<{ productVariantId: string; colorName: string; sizeName: string; skuCode: string }>;
+            return rows.map((r) => ({ productVariantId: r.productVariantId, colorName: r.colorName, sizeName: r.sizeName, skuCode: r.skuCode }));
+          })
+          .catch(() => [] as FinalStageVariantOption[])
+      : Promise.resolve<FinalStageVariantOption[]>([])
+    ).then((options) => {
+      setReceiveVariantOptions(options);
+      setReceiveVariantQtyById({});
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showReceive, cascadeEndsAtFinalStage]);
+
+  const receiveBreakdownTotal = Object.values(receiveVariantQtyById).reduce((sum, v) => sum + (Number(v) || 0), 0);
+  const receiveBreakdownValid =
+    receiveVariantOptions.length === 0 || Math.abs(receiveBreakdownTotal - Number(receivedQty || 0)) < 0.0001;
 
   const submitForward = async () => {
     if (!tracking?.receivingJobOrder) return;
@@ -199,6 +249,12 @@ export function JobWorkOrderWorkflowPanel({ jobWorkOrderId, initialOrder }: { jo
             damagedQuantity: Number(damagedQty),
             remarks: receiveRemarks || undefined,
             idempotencyKey: receiveIdempotencyKey,
+            variantBreakdown:
+              receiveVariantOptions.length > 0
+                ? Object.entries(receiveVariantQtyById)
+                    .filter(([, v]) => Number(v) > 0)
+                    .map(([productVariantId, v]) => ({ productVariantId, quantity: Number(v) }))
+                : undefined,
           }),
         }),
       "Failed to record this receipt."
@@ -208,6 +264,7 @@ export function JobWorkOrderWorkflowPanel({ jobWorkOrderId, initialOrder }: { jo
       setRejectedQty("0");
       setDamagedQty("0");
       setReceiveRemarks("");
+      setReceiveVariantQtyById({});
       // A new key for the NEXT distinct receive action — the one that just
       // succeeded keeps its key retired, so a stray retry of it later can
       // never accidentally collide with a genuinely new receipt.
@@ -549,11 +606,58 @@ export function JobWorkOrderWorkflowPanel({ jobWorkOrderId, initialOrder }: { jo
           <FormField label="Remarks" htmlFor="receiveRemarks">
             <input id="receiveRemarks" value={receiveRemarks} onChange={(e) => setReceiveRemarks(e.target.value)} className={textInputClass()} />
           </FormField>
+          {receiveVariantOptions.length > 0 && (
+            <div>
+              <p className="mb-2 text-xs text-zinc-500">
+                This style has colour/size variants configured, and this receipt&apos;s own multi-stage
+                cascade ends at a Finished Goods stage — record a breakdown of which variants make up the
+                Received quantity.
+              </p>
+              <div className="max-h-64 overflow-y-auto rounded-md border border-zinc-200 dark:border-zinc-800">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-zinc-50 dark:bg-zinc-900">
+                    <tr className="text-left text-xs text-zinc-500">
+                      <th className="px-2 py-1.5 font-medium">Color</th>
+                      <th className="px-2 py-1.5 font-medium">Size</th>
+                      <th className="px-2 py-1.5 font-medium">SKU</th>
+                      <th className="px-2 py-1.5 text-right font-medium">Qty</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {receiveVariantOptions.map((v) => (
+                      <tr key={v.productVariantId} className="border-t border-zinc-100 dark:border-zinc-800">
+                        <td className="px-2 py-1.5 text-zinc-700 dark:text-zinc-200">{v.colorName}</td>
+                        <td className="px-2 py-1.5 text-zinc-700 dark:text-zinc-200">{v.sizeName}</td>
+                        <td className="px-2 py-1.5 text-zinc-500">{v.skuCode}</td>
+                        <td className="px-2 py-1.5 text-right">
+                          <input
+                            type="number"
+                            min={0}
+                            step="0.0001"
+                            value={receiveVariantQtyById[v.productVariantId] ?? ""}
+                            onChange={(e) =>
+                              setReceiveVariantQtyById((prev) => ({ ...prev, [v.productVariantId]: e.target.value }))
+                            }
+                            className="w-24 rounded border border-zinc-300 px-2 py-1 text-right text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p
+                className={`mt-2 text-sm font-medium ${receiveBreakdownValid ? "text-zinc-900 dark:text-zinc-50" : "text-red-600 dark:text-red-400"}`}
+              >
+                Breakdown Total: {receiveBreakdownTotal} (must equal {receivedQty || "0"})
+              </p>
+            </div>
+          )}
           <div className="flex justify-end gap-2">
             <button type="button" onClick={() => setShowReceive(false)} className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800">
               Cancel
             </button>
-            <button type="button" onClick={submitReceive} disabled={isBusy} className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60">
+            <button type="button" onClick={submitReceive} disabled={isBusy || !receiveBreakdownValid} className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60">
               {isBusy ? "Saving…" : "Record Receipt"}
             </button>
           </div>

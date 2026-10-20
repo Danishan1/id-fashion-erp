@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { variantBreakdownItemSchema } from "./production.schema";
 
 export const createJobWorkOrderSchema = z.object({
   jobOrderId: z.string().uuid("Job order is required"),
@@ -69,6 +70,12 @@ export const receiveJobWorkSchema = z.object({
   remarks: z.string().max(1000).optional().or(z.literal("")),
   // Optional, client-generated — see CF-5 in HARDENING_BRANCH_INDEPENDENT_AUDIT.md.
   idempotencyKey: z.string().min(1).max(200).optional(),
+  // Multi-stage job work cascade fix (2026-10-20) — required by the SERVICE
+  // layer only when the covered range ends on a final stage AND the style
+  // has configured variants (Zod can't know either without a DB lookup,
+  // matching finishedGoodsWarehouseId's own established "optional here,
+  // enforced service-side" pattern on forwardJobOrderSchema).
+  variantBreakdown: z.array(variantBreakdownItemSchema).optional(),
 });
 export type ReceiveJobWorkInput = z.infer<typeof receiveJobWorkSchema>;
 
@@ -76,6 +83,17 @@ export const reverseJobWorkReceiptSchema = z.object({
   reason: z.string().min(1, "A reason is required to reverse a job-work receipt.").max(500),
 });
 export type ReverseJobWorkReceiptInput = z.infer<typeof reverseJobWorkReceiptSchema>;
+
+// Multi-stage job work cascade fix (2026-10-20) — an external submission's
+// own receiveJobWorkSchema payload never collects a breakdown (it's held
+// PENDING with zero quantity applied until a Supervisor approves it), so the
+// approval action is where that Supervisor supplies it instead, for exactly
+// the same reason finishedGoodsWarehouseId/variantBreakdown are optional
+// here and enforced service-side.
+export const approveJobWorkReceiptSchema = z.object({
+  variantBreakdown: z.array(variantBreakdownItemSchema).optional(),
+});
+export type ApproveJobWorkReceiptInput = z.infer<typeof approveJobWorkReceiptSchema>;
 
 export const jobWorkOrderStatusChangeSchema = z.object({
   status: z.enum(["ON_HOLD", "CANCELLED", "CLOSED"]),

@@ -17,7 +17,7 @@ vi.mock("@/modules/employees/employee.repository", () => ({
 
 const mockPrismaClient = vi.hoisted(() => ({
   productionStage: { findFirst: vi.fn() },
-  jobOrder: { count: vi.fn(), updateMany: vi.fn(), findMany: vi.fn() },
+  jobOrder: { count: vi.fn(), updateMany: vi.fn(), findMany: vi.fn(), findUniqueOrThrow: vi.fn() },
   lot: { findUniqueOrThrow: vi.fn() },
   user: { findUnique: vi.fn() },
   // Backs getProductionSettings() — every existing test relies on the
@@ -110,7 +110,7 @@ const {
 const { resolvePieceRate } = await import("./piece-rate-resolution.service");
 const { generateEarningForJobOrderProgress, generateEarningsForQcAcceptance } = await import("./piece-rate-earning.service");
 const { computeAvailableToCommit, assertEntryWithinAssignmentInTx, syncAssignmentStatusInTx } = await import("./assignment-capacity");
-const { computeJobOrderStatus, assignWorker, recordProgressEntry, forwardJobOrder, revertJobOrder, recordQcInspection, recordAdjustmentEntry, getJobOrderById, prepareLotStartAssignments, submitSelfProgressEntry } = await import("./job-order.service");
+const { computeJobOrderStatus, assignWorker, recordProgressEntry, forwardJobOrder, revertJobOrder, recordQcInspection, recordAdjustmentEntry, getJobOrderById, prepareLotStartAssignments, submitSelfProgressEntry, cascadeReceivedThroughStagesInTx } = await import("./job-order.service");
 const { createFinishedGoodsReceiptInTx } = await import("@/modules/finished-goods-inventory/finished-goods-receipt.service");
 const { recordInventoryTransaction } = await import("@/modules/inventory/inventory.service");
 
@@ -178,6 +178,7 @@ beforeEach(() => {
   mockPrismaClient.jobOrder.count.mockReset();
   mockPrismaClient.jobOrder.updateMany.mockReset();
   mockPrismaClient.jobOrder.findMany.mockReset();
+  mockPrismaClient.jobOrder.findUniqueOrThrow.mockReset();
   mockPrismaClient.lot.findUniqueOrThrow.mockReset();
   mockPrismaClient.user.findUnique.mockReset();
   mockPrismaClient.productionSettings.findUnique.mockReset();
@@ -1320,5 +1321,122 @@ describe("submitSelfProgressEntry — My Work is authorized by the Work Skill, n
       message: expect.stringContaining('"Stage" in your Work Skills'),
     });
     expect(JobOrderProgressEntryRepository.createInTx).not.toHaveBeenCalled();
+  });
+});
+
+// Job Work cascade variant-breakdown fix (2026-10-20, post-push audit's
+// Medium-severity finding): cascadeReceivedThroughStagesInTx previously
+// ALWAYS took the flat-only FG-posting path, even for a variant-bearing
+// style, so production completed via an external Job Work receipt never
+// created a Finished Goods Reservation. This exercises the function
+// directly (it's called from job-work-order.service.ts, not from
+// forwardJobOrder/recordQcInspection, so it's untested by their own FGI-020
+// describe blocks above) — mirroring those same 3 scenarios one-for-one:
+// no-variant flat path unchanged, variant-bearing with no breakdown
+// rejected, and a valid breakdown correctly resolved and posted.
+describe("cascadeReceivedThroughStagesInTx — colour/size breakdown at a final stage (2026-10-20 fix)", () => {
+  function stubCascadeToFinalStage() {
+    mockPrismaClient.jobOrder.findUniqueOrThrow
+      // The source job order, fetched once at the top of the function.
+      .mockResolvedValueOnce(
+        jobOrder({
+          id: "jo-1",
+          productionStage: stage({ id: "stage-1", sequence: 1, name: "Stitching" }),
+          productionOrder: { productId: "prod-1" },
+        }) as never
+      )
+      // The "fresh" re-fetch right after postStageTransactionInTx, used only
+      // for its own completedQuantity (the guardedIncrementForwarded cap).
+      .mockResolvedValueOnce({ completedQuantity: "10" } as never);
+    vi.mocked(prisma.productionStage.findFirst).mockResolvedValue(
+      stage({ id: "stage-2", sequence: 2, isFinal: true, name: "Packing", code: "PAK" }) as never
+    );
+    mockPrismaClient.jobOrder.count.mockResolvedValue(0);
+    mockPrismaClient.jobOrder.updateMany.mockResolvedValue({ count: 1 } as never);
+    vi.mocked(JobOrderRepository.createInTx).mockResolvedValue({ id: "jo-2", status: "PENDING", completedQuantity: "0" } as never);
+    vi.mocked(ProductionStageTransactionRepository.createInTx).mockResolvedValue({ id: "txn-1" } as never);
+    vi.mocked(LotRepository.updateInTx).mockResolvedValue({} as never);
+    mockPrismaClient.lot.findUniqueOrThrow.mockResolvedValue({ quantity: "10" } as never);
+    mockPrismaClient.jobOrder.findMany.mockResolvedValue([
+      { completedQuantity: "10", rejectedQuantity: "0", damagedQuantity: "0", productionStage: { isFinal: true } },
+    ] as never);
+  }
+
+  const cascadeParams = {
+    sourceJobOrderId: "jo-1",
+    downstreamStageIds: ["stage-2"],
+    quantity: 10,
+    finishedGoodsWarehouseId: "wh-1",
+    jobWorkNumber: "JWO-2026-00001",
+  };
+
+  it("takes the flat-only path (never calls createFinishedGoodsReceiptInTx) when the style has no configured variants", async () => {
+    stubCascadeToFinalStage();
+    mockPrismaClient.productVariant.findMany.mockResolvedValue([]);
+
+    await cascadeReceivedThroughStagesInTx(mockPrismaClient as never, actor, cascadeParams);
+
+    expect(createFinishedGoodsReceiptInTx).not.toHaveBeenCalled();
+    expect(recordInventoryTransaction).toHaveBeenCalledWith(
+      mockPrismaClient,
+      actor,
+      expect.objectContaining({ productId: "prod-1", quantity: 10, referenceModule: "PRODUCTION_ORDER", referenceRecordId: "lot-1" })
+    );
+  });
+
+  it("rejects before any Finished Goods write when the style HAS configured variants but no breakdown was supplied", async () => {
+    stubCascadeToFinalStage();
+    mockPrismaClient.productVariant.findMany.mockResolvedValue([{ id: "var-1" }]);
+
+    await expect(cascadeReceivedThroughStagesInTx(mockPrismaClient as never, actor, cascadeParams)).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+    });
+
+    expect(createFinishedGoodsReceiptInTx).not.toHaveBeenCalled();
+    expect(recordInventoryTransaction).not.toHaveBeenCalled();
+  });
+
+  it("rejects a breakdown that doesn't sum to the cascaded quantity", async () => {
+    stubCascadeToFinalStage();
+    mockPrismaClient.productVariant.findMany.mockResolvedValue([{ id: "var-1" }, { id: "var-2" }]);
+
+    await expect(
+      cascadeReceivedThroughStagesInTx(mockPrismaClient as never, actor, {
+        ...cascadeParams,
+        variantBreakdown: [{ productVariantId: "var-1", quantity: 6 }],
+      })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+
+    expect(createFinishedGoodsReceiptInTx).not.toHaveBeenCalled();
+  });
+
+  it("calls createFinishedGoodsReceiptInTx (REPLACING the flat posting, never alongside it) when a valid breakdown is supplied", async () => {
+    stubCascadeToFinalStage();
+    mockPrismaClient.productVariant.findMany.mockResolvedValue([{ id: "var-1" }, { id: "var-2" }]);
+
+    await cascadeReceivedThroughStagesInTx(mockPrismaClient as never, actor, {
+      ...cascadeParams,
+      variantBreakdown: [
+        { productVariantId: "var-1", quantity: 6 },
+        { productVariantId: "var-2", quantity: 4 },
+      ],
+    });
+
+    expect(createFinishedGoodsReceiptInTx).toHaveBeenCalledWith(
+      mockPrismaClient,
+      actor,
+      expect.objectContaining({
+        productId: "prod-1",
+        lotId: "lot-1",
+        productionOrderId: "po-1",
+        warehouseId: "wh-1",
+        quantity: 10,
+        variantBreakdown: [
+          { productVariantId: "var-1", quantity: 6 },
+          { productVariantId: "var-2", quantity: 4 },
+        ],
+      })
+    );
+    expect(recordInventoryTransaction).not.toHaveBeenCalled();
   });
 });
