@@ -270,7 +270,11 @@ export const JobOrderProgressEntryRepository = {
    * getAllowedProductionStageIds. */
   findPendingForCompany: (
     companyId: string,
-    scope: { allowedBranchIds: Set<string> | null; allowedStageIds: Set<string> | null } = {
+    scope: {
+      allowedBranchIds: Set<string> | null;
+      allowedStageIds: Set<string> | null;
+      teamEmployeeIds?: Set<string> | null;
+    } = {
       allowedBranchIds: null,
       allowedStageIds: null,
     }
@@ -278,6 +282,7 @@ export const JobOrderProgressEntryRepository = {
     prisma.jobOrderProgressEntry.findMany({
       where: {
         approvalStatus: "PENDING",
+        ...(scope.teamEmployeeIds ? { employeeId: { in: [...scope.teamEmployeeIds] } } : {}),
         jobOrder: {
           companyId,
           ...(scope.allowedStageIds ? { productionStageId: { in: [...scope.allowedStageIds] } } : {}),

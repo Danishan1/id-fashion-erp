@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/core/db/client";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import type { CrmActor } from "../core/crm-actor";
-import { crmOwnerWhere, getCrmRecordScope, type CrmRecordScope } from "../core/crm-visibility";
+import { crmOwnerSql, crmOwnerWhere, getCrmRecordScope, type CrmRecordScope } from "../core/crm-visibility";
 import { CrmOpportunityRepository, OPPORTUNITY_LIST_SELECT } from "../opportunities/crm-opportunity.repository";
 import { buildOpportunityWhere } from "../opportunities/opportunity-filters";
 import { parseOpportunityFilterParams } from "../opportunities/opportunity.schema";
@@ -183,7 +183,7 @@ export async function getPipelineReport(actor: CrmActor, pipelineId: string, ran
 
 /** Per opportunity, the furthest stage order reached in this pipeline (history ∪ current stage), grouped. */
 async function reachedByStage(actor: CrmActor, scope: CrmRecordScope, pipelineId: string, range: { from?: string | null; to?: string | null }) {
-  const scopeSql = scope.mode === "ALL" ? Prisma.empty : Prisma.sql`AND (o."owner_user_id" = ${scope.userId}::uuid OR (o."owner_user_id" IS NULL AND o."created_by_user_id" = ${scope.userId}::uuid))`;
+  const scopeSql = crmOwnerSql(scope, "o");
   const fromSql = range.from ? Prisma.sql`AND o."created_at" >= ${new Date(`${range.from}T00:00:00.000Z`)}` : Prisma.empty;
   const toSql = range.to ? Prisma.sql`AND o."created_at" < ${new Date(new Date(`${range.to}T00:00:00.000Z`).getTime() + 86_400_000)}` : Prisma.empty;
   const rows = await prisma.$queryRaw<{ furthest: number; count: bigint }[]>`

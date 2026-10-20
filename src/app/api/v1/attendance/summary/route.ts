@@ -12,7 +12,7 @@ export async function GET(req: NextRequest) {
     const date = req.nextUrl.searchParams.get("date");
     if (!date) throw new BusinessRuleError("VALIDATION_ERROR", "date is required.", {});
 
-    const summary = await getAttendanceSummaryForDate(session.user.companyId, date);
+    const summary = await getAttendanceSummaryForDate({ companyId: session.user.companyId, userId: session.user.id }, date);
 
     return NextResponse.json({ data: summary });
   } catch (error) {

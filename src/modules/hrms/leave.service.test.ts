@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const hrmsScope = vi.hoisted(() => ({ getHrmsEmployeeScope: vi.fn(), assertHrmsEmployeeInScope: vi.fn() }));
+vi.mock("./hrms-scope", () => ({
+  ...hrmsScope,
+  hrmsEmployeeWhere: (scope: string[] | null) => (scope === null ? {} : { employeeId: { in: scope } }),
+}));
+
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { assert: vi.fn() } }));
 vi.mock("@/core/notifications/NotificationService", () => ({ createNotification: vi.fn() }));
@@ -46,6 +52,8 @@ const { getLeaveBalance, approveLeaveRequest, rejectLeaveRequest, createLeaveReq
 const actor = { companyId: "co-1", userId: "user-1", branchId: "br-1" };
 
 beforeEach(() => {
+  hrmsScope.getHrmsEmployeeScope.mockReset().mockResolvedValue(null);
+  hrmsScope.assertHrmsEmployeeInScope.mockReset().mockResolvedValue(undefined);
   vi.mocked(prisma.leaveType.findFirst).mockReset();
   vi.mocked(prisma.employee.findFirst).mockReset();
   vi.mocked(prisma.employee.findMany).mockReset();
@@ -378,5 +386,27 @@ describe("runLeaveCarryForward", () => {
     expect(LeaveBalanceCarryForwardRepository.create).not.toHaveBeenCalled();
     expect(prisma.leaveType.findFirst).not.toHaveBeenCalled();
     expect(result.carryForwardsCreated).toBe(0);
+  });
+});
+
+describe("P3 -- HRMS team scope on leave", () => {
+  it("refuses to approve a request for an employee outside the approver's HRMS team", async () => {
+    vi.mocked(LeaveRequestRepository.findAnyById).mockResolvedValue({
+      id: "lr-1",
+      status: "PENDING",
+      employeeId: "emp-outside",
+      createdByUserId: "user-9",
+    } as never);
+    hrmsScope.assertHrmsEmployeeInScope.mockRejectedValue(Object.assign(new Error("nf"), { code: "NOT_FOUND" }));
+    await expect(approveLeaveRequest(actor, "lr-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(LeaveRequestRepository.update).not.toHaveBeenCalled();
+    expect(hrmsScope.assertHrmsEmployeeInScope).toHaveBeenCalledWith("user-1", "hrms_leave", "emp-outside", expect.anything());
+  });
+
+  it("refuses to reject a request outside the team", async () => {
+    vi.mocked(LeaveRequestRepository.findAnyById).mockResolvedValue({ id: "lr-1", status: "PENDING", employeeId: "emp-outside" } as never);
+    hrmsScope.assertHrmsEmployeeInScope.mockRejectedValue(Object.assign(new Error("nf"), { code: "NOT_FOUND" }));
+    await expect(rejectLeaveRequest(actor, "lr-1", { reason: "no" } as never)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(LeaveRequestRepository.update).not.toHaveBeenCalled();
   });
 });

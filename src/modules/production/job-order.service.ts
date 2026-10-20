@@ -41,7 +41,7 @@ import type {
   UpdatePendingProgressEntryInput,
 } from "./production.schema";
 import type { ActorContext } from "./production-order.service";
-import { assertProductionBranchScope, getProductionRecordScope } from "./production-scope";
+import { assertProductionBranchScope, getProductionApprovalTeam, getProductionRecordScope } from "./production-scope";
 
 const EPSILON = 0.0001;
 
@@ -1274,6 +1274,10 @@ async function loadPendingEntryInScope(actor: ActorContext, entryId: string) {
   }
   await assertProductionBranchScope(actor, entry.jobOrder.lot.branchId, { label: "Progress entry", id: entryId });
   await assertStageAccess(actor, entry.jobOrder.productionStageId);
+  const team = await getProductionApprovalTeam(actor.userId);
+  if (team && (!entry.employeeId || !team.has(entry.employeeId))) {
+    throw new BusinessRuleError("NOT_FOUND", "Progress entry not found.", { id: entryId });
+  }
   return entry;
 }
 
@@ -1483,11 +1487,12 @@ export async function listMySubmittedProgressEntries(actor: ActorContext) {
 /** Backs the Supervisor-facing "Pending Approvals" queue. */
 export async function listPendingProgressEntries(actor: ActorContext) {
   await PermissionService.assert(actor.userId, "production", "approve");
-  const [allowedBranchIds, allowedStageIds] = await Promise.all([
+  const [allowedBranchIds, allowedStageIds, teamEmployeeIds] = await Promise.all([
     PermissionService.getAllowedBranchIds(actor.userId),
     PermissionService.getAllowedProductionStageIds(actor.userId),
+    getProductionApprovalTeam(actor.userId),
   ]);
-  return JobOrderProgressEntryRepository.findPendingForCompany(actor.companyId, { allowedBranchIds, allowedStageIds });
+  return JobOrderProgressEntryRepository.findPendingForCompany(actor.companyId, { allowedBranchIds, allowedStageIds, teamEmployeeIds });
 }
 
 export async function forwardJobOrder(actor: ActorContext, jobOrderId: string, input: ForwardJobOrderInput) {

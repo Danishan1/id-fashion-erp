@@ -1,6 +1,7 @@
 import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { PermissionService } from "@/core/rbac/PermissionService";
+import { assertHrmsEmployeeInScope, getHrmsEmployeeScope, hrmsEmployeeWhere } from "./hrms-scope";
 import { createNotification } from "@/core/notifications/NotificationService";
 import { prisma } from "@/core/db/client";
 import type { ListQuery } from "@/lib/list-query";
@@ -22,9 +23,11 @@ function findLinkedUserId(companyId: string, employeeId: string) {
   return prisma.user.findFirst({ where: { companyId, employeeId }, select: { id: true } });
 }
 
-export async function listAttendanceCorrections(companyId: string, query: ListQuery, status?: string) {
+export async function listAttendanceCorrections(actor: ActorContext, query: ListQuery, status?: string) {
+  const scope = await getHrmsEmployeeScope(actor.userId, "hrms_attendance");
   const where: Prisma.AttendanceCorrectionRequestWhereInput = {
-    companyId,
+    companyId: actor.companyId,
+    ...hrmsEmployeeWhere(scope),
     ...(status ? { status: status as never } : {}),
     ...(query.search ? { employee: { fullName: { contains: query.search, mode: "insensitive" as const } } } : {}),
   };
@@ -43,6 +46,7 @@ export async function createAttendanceCorrectionRequest(actor: ActorContext, inp
     select: { id: true, fullName: true, reportsToId: true },
   });
   if (!employee) throw new BusinessRuleError("NOT_FOUND", "Employee not found.", { id: input.employeeId });
+  await assertHrmsEmployeeInScope(actor.userId, "hrms_attendance", input.employeeId, { label: "Employee", id: input.employeeId });
 
   const attendanceDate = new Date(input.attendanceDate);
   const existingRecord = await AttendanceRepository.findByEmployeeAndDate(input.employeeId, attendanceDate);
@@ -109,6 +113,7 @@ export async function approveAttendanceCorrectionRequest(actor: ActorContext, id
   // self-approval guard can actually apply — mirrors the exact fix already
   // made to approveLeaveRequest() for the identical reason.
   await PermissionService.assert(actor.userId, "hrms_attendance", "approve", { createdBy: existing.createdByUserId });
+  await assertHrmsEmployeeInScope(actor.userId, "hrms_attendance", existing.employeeId, { label: "Attendance correction request", id });
 
   const currentRecord = await AttendanceRepository.findByEmployeeAndDate(existing.employeeId, existing.attendanceDate);
   const record = await AttendanceRepository.upsert(
@@ -162,6 +167,8 @@ export async function rejectAttendanceCorrectionRequest(actor: ActorContext, id:
   if (existing.status !== "PENDING") {
     throw new BusinessRuleError("INVALID_STATE_TRANSITION", `This correction request is already "${existing.status}".`, { currentStatus: existing.status });
   }
+
+  await assertHrmsEmployeeInScope(actor.userId, "hrms_attendance", existing.employeeId, { label: "Attendance correction request", id });
 
   const updated = await AttendanceCorrectionRepository.update(id, {
     status: "REJECTED",

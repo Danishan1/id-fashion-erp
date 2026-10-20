@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const hrmsScope = vi.hoisted(() => ({ getHrmsEmployeeScope: vi.fn(), assertHrmsEmployeeInScope: vi.fn() }));
+vi.mock("./hrms-scope", () => ({
+  ...hrmsScope,
+  hrmsEmployeeWhere: (scope: string[] | null) => (scope === null ? {} : { employeeId: { in: scope } }),
+}));
+
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { assert: vi.fn() } }));
 vi.mock("@/core/notifications/NotificationService", () => ({ createNotification: vi.fn() }));
@@ -39,6 +45,8 @@ const {
 const actor = { companyId: "co-1", userId: "user-1", branchId: "br-1" };
 
 beforeEach(() => {
+  hrmsScope.getHrmsEmployeeScope.mockReset().mockResolvedValue(null);
+  hrmsScope.assertHrmsEmployeeInScope.mockReset().mockResolvedValue(undefined);
   vi.mocked(prisma.employee.findFirst).mockReset();
   vi.mocked(prisma.user.findFirst).mockReset();
   vi.mocked(PermissionService.assert).mockReset().mockResolvedValue(undefined);

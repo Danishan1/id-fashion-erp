@@ -6,6 +6,7 @@ import { prisma } from "@/core/db/client";
 import type { ListQuery } from "@/lib/list-query";
 import type { Prisma } from "@prisma/client";
 import { HrConfigRepository } from "@/modules/hr-config/hr-config.repository";
+import { assertHrmsEmployeeInScope, getHrmsEmployeeScope, hrmsEmployeeWhere } from "./hrms-scope";
 import { LeaveBalanceCarryForwardRepository, LeaveRequestRepository, LeaveTypeRepository } from "./leave.repository";
 import type { CreateLeaveRequestInput, CreateLeaveTypeInput, RejectLeaveRequestInput, UpdateLeaveTypeInput } from "./leave.schema";
 
@@ -161,9 +162,11 @@ export async function listLeaveCarryForwards(companyId: string, toYear?: number)
   return LeaveBalanceCarryForwardRepository.findMany(companyId, toYear);
 }
 
-export async function listLeaveRequests(companyId: string, query: ListQuery, status?: string) {
+export async function listLeaveRequests(actor: ActorContext, query: ListQuery, status?: string) {
+  const scope = await getHrmsEmployeeScope(actor.userId, "hrms_leave");
   const where: Prisma.LeaveRequestWhereInput = {
-    companyId,
+    companyId: actor.companyId,
+    ...hrmsEmployeeWhere(scope),
     ...(status ? { status: status as never } : {}),
     ...(query.search ? { employee: { fullName: { contains: query.search, mode: "insensitive" as const } } } : {}),
   };
@@ -182,6 +185,7 @@ export async function createLeaveRequest(actor: ActorContext, input: CreateLeave
     select: { id: true, fullName: true, reportsToId: true },
   });
   if (!employee) throw new BusinessRuleError("NOT_FOUND", "Employee not found.", { id: input.employeeId });
+  await assertHrmsEmployeeInScope(actor.userId, "hrms_leave", input.employeeId, { label: "Employee", id: input.employeeId });
   const leaveType = await prisma.leaveType.findFirst({ where: { id: input.leaveTypeId, companyId: actor.companyId }, select: { id: true } });
   if (!leaveType) throw new BusinessRuleError("NOT_FOUND", "Leave type not found.", { id: input.leaveTypeId });
 
@@ -247,6 +251,7 @@ export async function approveLeaveRequest(actor: ActorContext, id: string) {
   // approve checkpoint in this app. Previously omitted, which let a
   // MANAGEMENT-role user approve their own leave request.
   await PermissionService.assert(actor.userId, "hrms_leave", "approve", { createdBy: existing.createdByUserId });
+  await assertHrmsEmployeeInScope(actor.userId, "hrms_leave", existing.employeeId, { label: "Leave request", id });
 
   const year = existing.startDate.getFullYear();
   const balance = await getLeaveBalance(actor.companyId, existing.employeeId, existing.leaveTypeId, year);
@@ -294,6 +299,8 @@ export async function rejectLeaveRequest(actor: ActorContext, id: string, input:
   if (existing.status !== "PENDING") {
     throw new BusinessRuleError("INVALID_STATE_TRANSITION", `This leave request is already "${existing.status}".`, { currentStatus: existing.status });
   }
+
+  await assertHrmsEmployeeInScope(actor.userId, "hrms_leave", existing.employeeId, { label: "Leave request", id });
 
   const updated = await LeaveRequestRepository.update(id, { status: "REJECTED", approvedByUserId: actor.userId, decidedAt: new Date(), rejectionReason: input.reason });
 

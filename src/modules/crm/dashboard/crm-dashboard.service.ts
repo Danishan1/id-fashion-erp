@@ -12,7 +12,7 @@ import { crmEntityHref } from "../core/crm-entity-types";
 import { CrmEventRepository } from "../core/crm-event.repository";
 import { presentCrmEvent } from "../core/crm-events.service";
 import { BUSINESS_TIME_ZONE } from "../core/crm-timezone";
-import { getCrmRecordScope, type CrmRecordScope } from "../core/crm-visibility";
+import { crmOwnerSql, getCrmRecordScope, isCrmScopeUser, type CrmRecordScope } from "../core/crm-visibility";
 import { buildLeadWhere } from "../leads/lead-filters";
 import { leadFilterSchema, leadFilterToParams, type LeadFilter } from "../leads/lead.schema";
 import { buildOpportunityWhere } from "../opportunities/opportunity-filters";
@@ -128,7 +128,7 @@ async function buildContext(actor: CrmActor, q: DashboardQuery, now: Date): Prom
   if (q.owner === "me") ownerIds = [actor.userId];
   else if (q.owner !== "all") {
     // Another person's numbers need view_all; their own id is always fine.
-    if (q.owner !== actor.userId && scope.mode !== "ALL") throw new BusinessRuleError("PERMISSION_DENIED", "You can only see your own records.");
+    if (!isCrmScopeUser(scope, q.owner)) throw new BusinessRuleError("PERMISSION_DENIED", "You can only see your own and your team's records.");
     const user = await prisma.user.findFirst({ where: { id: q.owner, companyId: actor.companyId }, select: { id: true } });
     if (!user) throw new BusinessRuleError("VALIDATION_ERROR", "Unknown owner.", { fieldErrors: { owner: "Choose a user of this company." } });
     ownerIds = [q.owner];
@@ -183,7 +183,7 @@ function activitiesHref(ctx: Ctx, view: string) {
 
 /** Raw-SQL visibility + owner filter for a table aliased `t` (same rule as crmOwnerWhere). */
 function ownerSql(ctx: Ctx): Prisma.Sql {
-  const vis = ctx.scope.mode === "ALL" ? Prisma.empty : Prisma.sql`AND (t."owner_user_id" = ${ctx.scope.userId}::uuid OR (t."owner_user_id" IS NULL AND t."created_by_user_id" = ${ctx.scope.userId}::uuid))`;
+  const vis = crmOwnerSql(ctx.scope, "t");
   const own = ctx.ownerIds ? Prisma.sql`AND t."owner_user_id" IN (${Prisma.join(ctx.ownerIds.map((id) => Prisma.sql`${id}::uuid`))})` : Prisma.empty;
   return Prisma.sql`${vis} ${own}`;
 }

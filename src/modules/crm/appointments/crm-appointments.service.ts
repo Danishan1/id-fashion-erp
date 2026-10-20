@@ -18,7 +18,7 @@ import type { CreateActivityInput, UpdateActivityInput } from "../activities/act
 import type { CrmActor } from "../core/crm-actor";
 import { runCrmMutation, type CrmMutationContext } from "../core/crm-mutation";
 import { BUSINESS_TIME_ZONE, formatZonedDate, formatZonedTime, NonexistentLocalTimeError, zoneAbbreviation, zonedParts, zonedToInstant } from "../core/crm-timezone";
-import { getCrmRecordScope, type CrmRecordScope } from "../core/crm-visibility";
+import { crmScopeUserFilter, getCrmRecordScope, isCrmScopeUser, type CrmRecordScope } from "../core/crm-visibility";
 import { assertCrmEntityAccess } from "../crm-entity-access";
 import { optionSuggestions } from "../settings/crm-settings.service";
 import { REMINDER_OPTIONS } from "../activities/activity-registry";
@@ -259,7 +259,7 @@ export function findConflicts(db: Prisma.TransactionClient | typeof prisma, comp
 /** What the caller may see of someone's busy time: titles only for items they could open. */
 function presentConflicts(actor: CrmActor, scope: CrmRecordScope, rows: ConflictRow[]) {
   return rows.map((c) => {
-    const visible = scope.mode === "ALL" || c.assignedToUserId === actor.userId || c.createdByUserId === actor.userId;
+    const visible = isCrmScopeUser(scope, c.assignedToUserId) || isCrmScopeUser(scope, c.createdByUserId);
     return { id: visible ? c.id : null, title: visible ? c.subject : "Busy", type: c.type, startAt: iso(c.dueAt), endAt: iso(c.endAt), status: c.status, timezone: c.timezone };
   });
 }
@@ -636,7 +636,10 @@ export async function buildAppointmentWhere(actor: CrmActor, scope: CrmRecordSco
   for (const [t, id] of [["OPPORTUNITY", f.opportunityId], ["CONTACT", f.contactId], ["COMPANY", f.companyId], ["LEAD", f.leadId]] as const) {
     if (id) and.push({ links: { some: { entityType: t, entityId: id } } });
   }
-  if (!record && scope.mode === "OWN") and.push({ OR: [{ assignedToUserId: actor.userId }, { createdByUserId: actor.userId }] });
+  if (!record && scope.mode === "OWN") {
+    const ids = crmScopeUserFilter(scope);
+    and.push({ OR: [{ assignedToUserId: ids }, { createdByUserId: ids }] });
+  }
   if (f.mine) and.push({ assignedToUserId: actor.userId });
   if (f.assignedToUserIds?.length) and.push({ assignedToUserId: { in: f.assignedToUserIds } });
   if (f.statuses?.length) and.push({ status: { in: f.statuses } });

@@ -169,8 +169,8 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     // used for crm/marketing above), including leave approval.
     // Approve/reject added for the Attendance Correction Request workflow —
     // same "MANAGEMENT is the checkpoint" shape as hrms_leave just below.
-    hrms_attendance: ["view", "create", "edit", "approve", "reject", "export"],
-    hrms_leave: ["view", "create", "edit", "approve", "reject", "export"],
+    hrms_attendance: ["view", "view_all", "create", "edit", "approve", "reject", "export"],
+    hrms_leave: ["view", "view_all", "create", "edit", "approve", "reject", "export"],
     sampling: ["view", "approve", "reject"],
     buyer_enquiries: ["view", "reject"],
     sales_orders: ["view", "approve", "export"],

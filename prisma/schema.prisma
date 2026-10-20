@@ -48,6 +48,7 @@ model Company {
   supplierMaterialCategories          SupplierMaterialCategory[]
   departments                         Department[]
   employees                           Employee[]
+  employeeReportingLines              EmployeeReportingLine[]
   products                            Product[]
   colors                              Color[]
   sizes                               Size[]
@@ -1588,6 +1589,10 @@ model Employee {
   employeeCategory EmployeeCategory? @relation(fields: [employeeCategoryId], references: [id])
   reportsTo        Employee?         @relation("EmployeeHierarchy", fields: [reportsToId], references: [id])
   reports          Employee[]        @relation("EmployeeHierarchy")
+  // P3: per-module reporting lines (Production / CRM / HRMS). Where an
+  // employee has no active line for a module, reportsToId is used instead.
+  reportingLines        EmployeeReportingLine[] @relation("ReportingLineEmployee")
+  managedReportingLines EmployeeReportingLine[] @relation("ReportingLineManager")
   user             User?
 
   // Production (Phase 5C) — a worker/operator is always tracked here, never
@@ -1611,6 +1616,39 @@ model Employee {
 
   @@unique([companyId, employeeCode])
   @@map("employees")
+}
+
+enum HierarchyModule {
+  PRODUCTION
+  CRM
+  HRMS
+}
+
+/// P3 (2026-10-21): module-specific reporting structure. One active line per
+/// employee per module (partial unique index in the migration). A manager sees
+/// everyone below them in that module (direct reports and all descendants).
+/// Loops are refused by the service. No line for a module = fall back to
+/// Employee.reportsToId.
+model EmployeeReportingLine {
+  id              String          @id @default(uuid()) @db.Uuid
+  companyId       String          @map("company_id") @db.Uuid
+  employeeId      String          @map("employee_id") @db.Uuid
+  managerId       String          @map("manager_id") @db.Uuid
+  module          HierarchyModule
+  startDate       DateTime        @default(now()) @map("start_date") @db.Date
+  endDate         DateTime?       @map("end_date") @db.Date
+  isActive        Boolean         @default(true) @map("is_active")
+  createdByUserId String?         @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+
+  company  Company  @relation(fields: [companyId], references: [id])
+  employee Employee @relation("ReportingLineEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
+  manager  Employee @relation("ReportingLineManager", fields: [managerId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, module, managerId])
+  @@index([employeeId, module])
+  @@map("employee_reporting_lines")
 }
 
 /// An employee's Work Skill = one production stage they are trained for

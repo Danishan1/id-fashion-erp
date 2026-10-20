@@ -7,6 +7,7 @@ import type { ListQuery } from "@/lib/list-query";
 import type { CreateEmployeeInput, EmployeeInput, EmployeeLoginInput, EmployeeUpdateInput } from "./employee.schema";
 import { prisma } from "@/core/db/client";
 import { PermissionService } from "@/core/rbac/PermissionService";
+import { invalidateTeamScope } from "@/core/hierarchy/team-scope";
 import {
   assertNewLoginAllowed,
   createEmployeeLoginInTx,
@@ -228,6 +229,7 @@ export async function createEmployee(actor: ActorContext, rawInput: CreateEmploy
     action: "CREATE",
     newValues: { ...employee, workSkillStageIds: workSkills ?? [] },
   });
+  if (input.reportsToId) invalidateTeamScope(actor.companyId);
   if (user && login && loginEmail) await auditLoginCreated(actor, user.id, employee.id, loginEmail, login);
 
   return { ...employee, loginUserId: user?.id ?? null };
@@ -296,6 +298,7 @@ export async function updateEmployee(actor: ActorContext, id: string, input: Emp
   const updated = await EmployeeRepository.update(id, toUpdateData(input));
   if (workSkills !== undefined) await EmployeeRepository.replaceWorkSkills(id, workSkills);
   if (before.isActive && updated.isActive === false) await suspendLoginForEmployee(actor, id);
+  if (input.reportsToId !== undefined) invalidateTeamScope(actor.companyId);
 
   await writeAuditLog({
     companyId: actor.companyId,

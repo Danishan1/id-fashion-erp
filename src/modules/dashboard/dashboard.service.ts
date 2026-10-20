@@ -1,3 +1,4 @@
+import { HIERARCHY_MODULES, descendantsOf, loadManagerMap } from "@/core/hierarchy/team-scope";
 import { prisma } from "@/core/db/client";
 
 /**
@@ -54,20 +55,33 @@ function utcDayBoundaries(): { start: Date; end: Date } {
 }
 
 /**
- * A supervisor's own "my team" view — scoped to their direct reports via
- * Employee.reportsToId (a plain one-level lookup, not the full downward
- * tree — matches "my employees," not "my employees' employees," which is
- * what a line manager actually means by "my team"). Deliberately excludes
+ * Everyone below this employee in any module's reporting hierarchy
+ * (Production, CRM or HRMS lines, falling back to Employee.reportsToId) —
+ * direct reports and all descendants (P3, decision 9). Active employees only.
+ */
+export async function getTeamEmployeeIds(companyId: string, employeeId: string): Promise<string[]> {
+  const below = new Set<string>();
+  for (const hierarchyModule of HIERARCHY_MODULES) {
+    for (const id of descendantsOf(await loadManagerMap(companyId, hierarchyModule), employeeId)) below.add(id);
+  }
+  if (below.size === 0) return [];
+  const active = await prisma.employee.findMany({
+    where: { companyId, id: { in: [...below] }, isActive: true, deletedAt: null },
+    select: { id: true },
+  });
+  return active.map((e) => e.id);
+}
+
+/**
+ * A supervisor's own "my team" view — everyone below them in the reporting
+ * hierarchy (P3: direct reports and all descendants, across the module
+ * reporting lines; previously direct reports only). Deliberately excludes
  * anyone with zero direct reports from ever reaching this function — see
  * getDashboardViewForUser()'s own branch below, which falls back to the
  * ordinary company view for an individual contributor.
  */
 export async function getTeamDashboard(companyId: string, supervisorEmployeeId: string): Promise<TeamOverview> {
-  const reports = await prisma.employee.findMany({
-    where: { companyId, reportsToId: supervisorEmployeeId, isActive: true },
-    select: { id: true },
-  });
-  const reportIds = reports.map((r) => r.id);
+  const reportIds = await getTeamEmployeeIds(companyId, supervisorEmployeeId);
   if (reportIds.length === 0) {
     return { teamSize: 0, presentToday: 0, activeJobOrders: 0, pendingLeaveRequests: 0 };
   }
@@ -116,10 +130,8 @@ export async function getDashboardViewForUser(params: {
   });
 
   if (user?.employeeId) {
-    const directReportCount = await prisma.employee.count({
-      where: { companyId: params.companyId, reportsToId: user.employeeId, isActive: true },
-    });
-    if (directReportCount > 0) {
+    const teamIds = await getTeamEmployeeIds(params.companyId, user.employeeId);
+    if (teamIds.length > 0) {
       const team = await getTeamDashboard(params.companyId, user.employeeId);
       return { kind: "team", supervisorName: user.employee?.fullName ?? "You", team };
     }

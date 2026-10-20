@@ -26,7 +26,10 @@ vi.mock("@/lib/api-route", async () => {
 });
 vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { assert: assertMock } }));
 vi.mock("@/modules/crm/core/crm-events.service", () => ({ listCrmEvents: listMock, getCrmEventById: getMock }));
-vi.mock("@/modules/crm/core/crm-visibility", () => ({ getCrmRecordScope: scopeMock }));
+vi.mock("@/modules/crm/core/crm-visibility", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/modules/crm/core/crm-visibility")>()),
+  getCrmRecordScope: scopeMock,
+}));
 vi.mock("@/modules/crm/crm-entity-access", () => ({ assertCrmEntityAccess: accessMock, mergedContactIds: mergedMock, companyTimelineScope: companyScopeMock }));
 vi.mock("@/modules/crm/activities/crm-activity.repository", () => ({ CrmActivityRepository: { linkedActivityIds: activityIdsMock } }));
 vi.mock("@/modules/crm/conversations/crm-conversation.repository", () => ({ linkedConversationIds: conversationIdsMock }));

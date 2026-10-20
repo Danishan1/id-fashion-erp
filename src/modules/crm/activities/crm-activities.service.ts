@@ -9,7 +9,7 @@ import { BUSINESS_TIME_ZONE, formatZonedDate, formatZonedTime, zoneAbbreviation 
 import { crmEntityHref } from "../core/crm-entity-types";
 import type { CrmEventType } from "../core/crm-event-types";
 import { runCrmMutation, type CrmMutationContext } from "../core/crm-mutation";
-import { getCrmRecordScope, type CrmRecordScope } from "../core/crm-visibility";
+import { crmScopeUserFilter, getCrmRecordScope, isCrmScopeUser, type CrmRecordScope } from "../core/crm-visibility";
 import { assertCrmEntityAccess } from "../crm-entity-access";
 import { optionSuggestions } from "../settings/crm-settings.service";
 import { dueFilterWhere, dueFromParts, dueParts, dueState, reminderTime } from "./activity-due";
@@ -84,7 +84,7 @@ export async function canSeeRecord(actor: CrmActor, ref: Ref) {
 
 /** Visible if: crm.view_all, or assigned to / created by the user, or the user can see its record. */
 async function canAccess(actor: CrmActor, scope: CrmRecordScope, a: { assignedToUserId: string | null; createdByUserId: string; entityType: CrmEntityType; entityId: string }) {
-  if (scope.mode === "ALL" || a.assignedToUserId === actor.userId || a.createdByUserId === actor.userId) return true;
+  if (isCrmScopeUser(scope, a.assignedToUserId) || isCrmScopeUser(scope, a.createdByUserId)) return true;
   return canSeeRecord(actor, a);
 }
 
@@ -242,7 +242,10 @@ export function buildActivityWhere(actor: CrmActor, scope: CrmRecordScope, f: Ac
   const and: Prisma.CrmActivityWhereInput[] = [{ companyId: actor.companyId, deletedAt: null }];
   // A specific record's activities: access to that record was checked by the caller.
   if (f.entityType && f.entityId) and.push({ links: { some: { entityType: f.entityType, entityId: f.entityId } } });
-  else if (scope.mode === "OWN") and.push({ OR: [{ assignedToUserId: actor.userId }, { createdByUserId: actor.userId }] });
+  else if (scope.mode === "OWN") {
+    const ids = crmScopeUserFilter(scope);
+    and.push({ OR: [{ assignedToUserId: ids }, { createdByUserId: ids }] });
+  }
   if (f.relatedType) and.push({ entityType: f.relatedType });
   if (f.types?.length) and.push({ type: { in: f.types } });
   if (f.statuses?.length) and.push({ status: { in: f.statuses } });

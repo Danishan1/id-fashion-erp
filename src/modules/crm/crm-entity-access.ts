@@ -6,7 +6,7 @@ import { CrmCompanyRepository } from "./companies/crm-company.repository";
 import { CrmContactRepository } from "./contacts/crm-contact.repository";
 import { conversationScopeWhere } from "./conversations/conversation-access";
 import type { CrmActor } from "./core/crm-actor";
-import { crmOwnerWhere, getCrmRecordScope } from "./core/crm-visibility";
+import { crmOwnerWhere, getCrmRecordScope, isCrmScopeUser } from "./core/crm-visibility";
 
 /**
  * "Can this user see this CRM record?" for any entity type — used by the
@@ -61,7 +61,7 @@ async function assertActivityAccess(actor: CrmActor, activityId: string): Promis
   const a = await prisma.crmActivity.findFirst({ where: { id: activityId, companyId: actor.companyId, deletedAt: null }, select: { assignedToUserId: true, createdByUserId: true, entityType: true, entityId: true } });
   if (!a) throw new BusinessRuleError("NOT_FOUND", "Record not found.", { entityType: "ACTIVITY", entityId: activityId });
   const scope = await getCrmRecordScope(actor);
-  if (scope.mode === "ALL" || a.assignedToUserId === actor.userId || a.createdByUserId === actor.userId) return;
+  if (isCrmScopeUser(scope, a.assignedToUserId) || isCrmScopeUser(scope, a.createdByUserId)) return;
   if (a.entityType === "ACTIVITY") throw new BusinessRuleError("NOT_FOUND", "Record not found.", { entityType: "ACTIVITY", entityId: activityId });
   await assertCrmEntityAccess(actor, a.entityType, a.entityId);
 }

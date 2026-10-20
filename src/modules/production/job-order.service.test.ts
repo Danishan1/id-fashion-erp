@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
+const { teamScopeMock } = vi.hoisted(() => ({ teamScopeMock: vi.fn() }));
+vi.mock("@/core/hierarchy/team-scope", () => ({ getTeamScope: teamScopeMock }));
 vi.mock("@/core/rbac/PermissionService", () => ({
   PermissionService: { assert: vi.fn(), getAllowedProductionStageIds: vi.fn(), getAllowedBranchIds: vi.fn(), can: vi.fn().mockResolvedValue(true) },
 }));
@@ -166,6 +168,7 @@ beforeEach(() => {
     .mockResolvedValue({ id: "asg-1", jobOrderId: "jo-1", employeeId: "emp-1", status: "ASSIGNED" } as never);
   vi.mocked(ProductionOrderRepository.findAnyById).mockReset();
   vi.mocked(PermissionService.assert).mockReset().mockResolvedValue(undefined);
+  teamScopeMock.mockReset().mockResolvedValue({ employeeId: null, teamEmployeeIds: [], teamUserIds: [] });
   vi.mocked(PermissionService.getAllowedProductionStageIds).mockReset().mockResolvedValue(null);
   vi.mocked(PermissionService.getAllowedBranchIds).mockReset().mockResolvedValue(null);
   vi.mocked(JobOrderRepository.findForGuardedUpdateInTx).mockReset();
@@ -1507,6 +1510,18 @@ describe("P0 — branch and stage scope on production writes and approvals", () 
     expect(JobOrderProgressEntryRepository.findPendingForCompany).toHaveBeenCalledWith("co-1", {
       allowedBranchIds: null,
       allowedStageIds: null,
+      teamEmployeeIds: null,
     });
+  });
+
+  it("P3: an approver with a Production team only sees and decides that team's entries", async () => {
+    teamScopeMock.mockResolvedValue({ employeeId: "emp-sup", teamEmployeeIds: ["emp-1", "emp-2"], teamUserIds: [] });
+    vi.mocked(JobOrderProgressEntryRepository.findPendingForCompany).mockResolvedValue([] as never);
+    await listPendingProgressEntries(actor);
+    const scope = vi.mocked(JobOrderProgressEntryRepository.findPendingForCompany).mock.lastCall![1]!;
+    expect([...scope.teamEmployeeIds!]).toEqual(["emp-1", "emp-2"]);
+
+    vi.mocked(JobOrderProgressEntryRepository.findAnyById).mockResolvedValue(pendingEntry({ employeeId: "emp-outside" }) as never);
+    await expect(approveProgressEntry(actor, "entry-1", {} as never)).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 });

@@ -2,6 +2,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/core/db/client";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { PermissionService } from "@/core/rbac/PermissionService";
+import { getTeamScope } from "@/core/hierarchy/team-scope";
 import { LotRepository, ProductionOrderRepository } from "./production.repository";
 
 /**
@@ -20,6 +21,20 @@ export async function assertProductionBranchScope(
   if (allowed !== null && (!branchId || !allowed.has(branchId))) {
     throw new BusinessRuleError("NOT_FOUND", `${notFound.label} not found.`, { id: notFound.id });
   }
+}
+
+/**
+ * P3 (2026-10-21, decision 2a): whose progress entries an approver handles.
+ * When the approver has a Production team (anyone below them in the
+ * Production reporting hierarchy), Pending Approvals and approve/reject/edit
+ * are limited to entries logged for those employees. An approver with no
+ * Production team keeps today's behaviour (stage and branch limits only),
+ * so a company that hasn't set up reporting lines sees no change.
+ * Returns null when there's no team restriction.
+ */
+export async function getProductionApprovalTeam(userId: string): Promise<Set<string> | null> {
+  const team = await getTeamScope(userId, "PRODUCTION");
+  return team.teamEmployeeIds.length > 0 ? new Set(team.teamEmployeeIds) : null;
 }
 
 /**
