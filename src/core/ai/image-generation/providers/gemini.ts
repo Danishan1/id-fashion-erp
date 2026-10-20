@@ -42,6 +42,14 @@ function mapSdkError(err: unknown): ImageGenerationServiceError {
     if (err.status === 401 || err.status === 403) {
       return new ImageGenerationServiceError("Image generation could not be completed. Please try again.", "AUTH_FAILURE", err);
     }
+    // Paid (prepay) account with an empty balance comes back as 402 RESOURCE_EXHAUSTED.
+    if (err.status === 402 || /credits are depleted|prepayment credits/i.test(err.message)) {
+      return new ImageGenerationServiceError(
+        "Image generation credits are exhausted for this provider. Please top up and try again.",
+        "CREDITS_EXHAUSTED",
+        err
+      );
+    }
     if (err.status === 429) {
       // Gemini's free tier reuses HTTP 429 for both "too many requests per minute" and a
       // genuinely exhausted quota — the response body's own text is the only signal

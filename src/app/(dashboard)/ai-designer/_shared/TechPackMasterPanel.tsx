@@ -2,14 +2,14 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { MasterAnalysis, MasterField } from "@/core/ai-designer/tech-pack-master/schema";
-import { gradedValue, pageMode } from "@/core/ai-designer/tech-pack-master/schema";
+import { displayPageNumber, gradedValue, MASTER_PAGE_DEFINITIONS, pageMode } from "@/core/ai-designer/tech-pack-master/schema";
 
 /**
  * Master-prompt Tech Pack (2026-09-28): one click analyses the current
- * design with the company's master prompt, builds the 7 page prompts and
- * generates all 7 page images in the background. The user can correct any
+ * design with the company's master prompt, builds the page prompts and
+ * generates every page image in the background. The user can correct any
  * analysis field (missing ones are highlighted), edit any page prompt,
- * regenerate single pages, and download the full 7-page PDF.
+ * regenerate single pages, and download the full PDF.
  */
 
 type FactStatus = "CONFIRMED" | "ASSUMED" | "NOT_VISIBLE";
@@ -247,7 +247,6 @@ function countUnconfirmed(a: MasterAnalysis): Record<string, number> {
     identification: n(a.identification),
     construction: n(a.construction),
     closure: n(a.closure),
-    patternPrint: n(a.patternPrint),
     bom: n(a.bom),
     measurements: n(a.measurements),
     labelsPackaging: n(a.labelsPackaging),
@@ -393,6 +392,8 @@ export function TechPackMasterPanel({ projectId, onChanged }: { projectId: strin
   const totalUnconfirmed = unconfirmed ? Object.values(unconfirmed).reduce((a, b) => a + b, 0) : 0;
   const allPageNumbers = useMemo(() => techPack?.pages.map((p) => p.pageNumber) ?? [], [techPack]);
   const doneCount = techPack?.pages.filter((p) => p.imageStatus === "SUCCESS").length ?? 0;
+  // Older tech packs still have the removed Colorways page, so count this pack's own pages.
+  const pageTotal = techPack?.pages.length || MASTER_PAGE_DEFINITIONS.length;
 
   if (techPack === undefined) return <p className="text-sm text-zinc-400">Loading tech pack…</p>;
 
@@ -403,17 +404,17 @@ export function TechPackMasterPanel({ projectId, onChanged }: { projectId: strin
       {/* Header / actions */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-violet-200 bg-gradient-to-r from-violet-50 to-fuchsia-50 p-4 dark:border-violet-900 dark:from-violet-950/30 dark:to-fuchsia-950/20">
         <div>
-          <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">7-Page AI Tech Pack</p>
+          <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{pageTotal}-Page AI Tech Pack</p>
           <p className="text-xs text-zinc-500">
             {!techPack
-              ? "Analyses the current design with the master prompt, then generates all 7 tech pack pages as images."
+              ? `Analyses the current design with the master prompt, then generates all ${pageTotal} tech pack pages as images.`
               : techPack.status === "IN_PROGRESS"
                 ? "Analysing the garment…"
                 : techPack.status === "FAILED"
                   ? `Last attempt failed: ${techPack.errorMessage ?? "unknown error"}`
                   : generating
-                    ? `Generating page images… ${doneCount} of 7 done`
-                    : `${doneCount} of 7 pages generated.`}
+                    ? `Generating page images… ${doneCount} of ${pageTotal} done`
+                    : `${doneCount} of ${pageTotal} pages generated.`}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -436,7 +437,7 @@ export function TechPackMasterPanel({ projectId, onChanged }: { projectId: strin
         </div>
       </div>
 
-      {busy === "generate" && <p className="text-xs text-zinc-500">The master-prompt analysis takes about a minute; the 7 page images then render in the background (a few minutes).</p>}
+      {busy === "generate" && <p className="text-xs text-zinc-500">The master-prompt analysis takes about a minute; the page images then render in the background (a few minutes).</p>}
 
       {techPack?.status === "SUCCESS" && (
         <>
@@ -448,7 +449,7 @@ export function TechPackMasterPanel({ projectId, onChanged }: { projectId: strin
                 ↻ Regenerate all pages
               </button>
             </div>
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
               {techPack.pages.map((p) => {
                 const hybrid = pageMode(p.pageNumber) === "HYBRID";
                 return (
@@ -467,7 +468,7 @@ export function TechPackMasterPanel({ projectId, onChanged }: { projectId: strin
                     </button>
                     <div className="p-1.5">
                       <p className="truncate text-[10px] font-semibold text-zinc-700 dark:text-zinc-200">
-                        {p.pageNumber}. {p.pageTitle}
+                        {displayPageNumber(p.pageNumber, techPack.pages.map((x) => x.pageNumber))}. {p.pageTitle}
                       </p>
                       {hybrid && (
                         <div className="mt-1 rounded border border-emerald-200 bg-emerald-50/60 p-1 dark:border-emerald-900 dark:bg-emerald-950/20">
@@ -530,56 +531,7 @@ export function TechPackMasterPanel({ projectId, onChanged }: { projectId: strin
                   onChange={(v) => update("seamCallouts", v)}
                 />
               </Section>
-              <Section title="E. Colors & Colorways">
-                <p className="mb-1 text-[11px] font-medium text-zinc-500">Colors</p>
-                <RowTable
-                  rows={draft.colors}
-                  blank={{ name: "", pantone: "", hex: "", panel: "" }}
-                  columns={[
-                    { key: "name", label: "Color" },
-                    { key: "pantone", label: "Pantone" },
-                    { key: "hex", label: "HEX" },
-                    { key: "panel", label: "Panel" },
-                  ]}
-                  onChange={(v) => update("colors", v)}
-                />
-                <p className="mb-1 mt-3 text-[11px] font-medium text-zinc-500">Colorways</p>
-                <RowTable
-                  rows={draft.colorways}
-                  blank={{ code: "", name: "", main: "", contrast: "", trim: "", artwork: "", notes: "" }}
-                  columns={[
-                    { key: "code", label: "Code" },
-                    { key: "name", label: "Name" },
-                    { key: "main", label: "Main" },
-                    { key: "contrast", label: "Contrast" },
-                    { key: "trim", label: "Trim" },
-                    { key: "artwork", label: "Artwork" },
-                    { key: "notes", label: "Notes" },
-                  ]}
-                  onChange={(v) => update("colorways", v)}
-                />
-              </Section>
-              <Section title="F. Artwork & Graphics">
-                <RowTable
-                  rows={draft.artwork}
-                  blank={{ type: "", placement: "", scale: "", dimensions: "", method: "", fromHps: "", fromCf: "", alignment: "" }}
-                  columns={[
-                    { key: "type", label: "Type" },
-                    { key: "placement", label: "Placement" },
-                    { key: "scale", label: "Scale" },
-                    { key: "dimensions", label: "Dimensions" },
-                    { key: "method", label: "Method" },
-                    { key: "fromHps", label: "From HPS" },
-                    { key: "fromCf", label: "From CF" },
-                    { key: "alignment", label: "Alignment" },
-                  ]}
-                  onChange={(v) => update("artwork", v)}
-                />
-              </Section>
-              <Section title="G. Pattern / Print" count={unconfirmed?.patternPrint}>
-                <FieldList fields={draft.patternPrint} onChange={(v) => update("patternPrint", v)} />
-              </Section>
-              <Section title="H. Bill of Materials" count={unconfirmed?.bom}>
+              <Section title="E. Bill of Materials" count={unconfirmed?.bom}>
                 <RowTable
                   rows={draft.bom}
                   blank={{ item: "", description: "", composition: "", gsm: "", color: "", consumption: "", supplier: "TBD", notes: "", status: "CONFIRMED" as const }}
@@ -597,7 +549,7 @@ export function TechPackMasterPanel({ projectId, onChanged }: { projectId: strin
                   onChange={(v) => update("bom", v)}
                 />
               </Section>
-              <Section title="I. Measurements & Grading" count={unconfirmed?.measurements}>
+              <Section title="F. Measurements & Grading" count={unconfirmed?.measurements}>
                 <div className="mb-2 flex flex-wrap items-center gap-3 text-xs">
                   <label className="flex items-center gap-1">
                     Sizes
@@ -668,7 +620,7 @@ export function TechPackMasterPanel({ projectId, onChanged }: { projectId: strin
                   </table>
                 </div>
               </Section>
-              <Section title="J. Labels & Packaging" count={unconfirmed?.labelsPackaging}>
+              <Section title="G. Labels & Packaging" count={unconfirmed?.labelsPackaging}>
                 <FieldList fields={draft.labelsPackaging} onChange={(v) => update("labelsPackaging", v)} />
               </Section>
               <Section title="Garment description (used in every page prompt)">

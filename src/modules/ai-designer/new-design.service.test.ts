@@ -14,6 +14,7 @@ vi.mock("@/modules/products/product.repository", () => ({
 }));
 vi.mock("@/modules/products/product.service", () => ({ createMaterial: vi.fn(), setProductMainImage: vi.fn() }));
 vi.mock("./ai-designer.service", () => ({
+  applyEditVariation: vi.fn(),
   bumpVersion: vi.fn(),
   createProject: vi.fn(),
   generateDesign: vi.fn(),
@@ -26,7 +27,16 @@ vi.mock("./ai-designer.repository", () => ({
   AiDesignerProjectRepository: { findAnyById: vi.fn(), update: vi.fn(), findByIdWithDetails: vi.fn() },
   AiDesignerPromptRepository: { create: vi.fn(), markSuccess: vi.fn(), markSuccessWithProvider: vi.fn(), markFailed: vi.fn(), findActiveSince: vi.fn() },
   AiDesignerGenerationRepository: { create: vi.fn(), markSuccess: vi.fn(), markFailed: vi.fn(), findManyByProjectAndPromptType: vi.fn() },
-  AiDesignerImageRepository: { createMany: vi.fn(), findByGenerationId: vi.fn(), findById: vi.fn(), update: vi.fn() },
+  AiDesignerImageRepository: {
+    createMany: vi.fn(),
+    findByGenerationId: vi.fn(),
+    findById: vi.fn(),
+    update: vi.fn(),
+    findSketchFor: vi.fn(),
+    findWithProjectOwner: vi.fn(),
+    unlinkSketchFor: vi.fn(),
+    findByProjectAndAttachment: vi.fn(),
+  },
 }));
 
 const { PermissionService } = await import("@/core/rbac/PermissionService");
@@ -173,7 +183,7 @@ describe("generateNewDesign", () => {
       const out = (await params.call({ name: "openai", replicateWithNewMaterial: replicate })) as { images: unknown[] };
       return { ...out, providerName: "openai", model: "gpt-image-1" };
     }) as never);
-    vi.mocked(repos.AiDesignerImageRepository.findByGenerationId).mockResolvedValue([{ id: "img-1" }] as never);
+    vi.mocked(repos.AiDesignerImageRepository.findByGenerationId).mockResolvedValue([{ id: "img-1", imageAttachmentId: "att-new" }] as never);
 
     await svc.generateNewDesign(actor, "proj-1", { imageCount: 1 });
 
@@ -274,31 +284,182 @@ describe("generateColorVariants", () => {
   });
 });
 
-describe("generateNewDesign with SKETCH outputFormat", () => {
-  it("generates technical CAD flat sketch and updates sketchImageAttachmentId", async () => {
+describe("generateNewDesign — every garment gets its own linked sketch", () => {
+  function mockProviders(opts: { failSketchFor?: string } = {}) {
+    let uploadCount = 0;
+    vi.mocked(uploadAttachment).mockImplementation((async () => ({ id: `att-${++uploadCount}` })) as never);
+    // Rows mirror whatever was "uploaded" so persistImages can map attachments back to rows.
+    const rows: { id: string; imageAttachmentId: string }[] = [];
+    vi.mocked(repos.AiDesignerImageRepository.createMany).mockImplementation((async (data: { imageAttachmentId: string }[]) => {
+      for (const d of data) rows.push({ id: `img-${d.imageAttachmentId}`, imageAttachmentId: d.imageAttachmentId });
+      return { count: data.length };
+    }) as never);
+    vi.mocked(repos.AiDesignerImageRepository.findByGenerationId).mockImplementation((async () => [...rows]) as never);
+
+    const replicate = vi.fn().mockResolvedValue({
+      images: [
+        { buffer: Buffer.from("garment-A"), mimeType: "image/png" },
+        { buffer: Buffer.from("garment-B"), mimeType: "image/png" },
+      ],
+    });
+    const generateTechnicalFlat = vi.fn(async (args: { baseImage: { buffer: Buffer } }) => {
+      if (opts.failSketchFor && args.baseImage.buffer.toString() === opts.failSketchFor) throw new Error("credits exhausted");
+      return { images: [{ buffer: Buffer.from(`sketch-of-${args.baseImage.buffer.toString()}`), mimeType: "image/png" }] };
+    });
+    vi.mocked(runWithFailover).mockImplementation((async (params: { call: (p: unknown) => unknown }) => {
+      const out = (await params.call({ name: "openai", replicateWithNewMaterial: replicate, generateTechnicalFlat })) as { images: unknown[] };
+      return { ...out, providerName: "openai", model: "gpt-image-1" };
+    }) as never);
+    return { replicate, generateTechnicalFlat, rows };
+  }
+
+  it("draws one sketch per garment from that garment's own photo and links it", async () => {
     vi.mocked(repos.AiDesignerProjectRepository.findAnyById).mockResolvedValue(project() as never);
     vi.mocked(readFile).mockResolvedValue(Buffer.from("template") as never);
-    const generateTechnicalFlat = vi.fn().mockResolvedValue({ images: [{ buffer: Buffer.from("cad-sketch"), mimeType: "image/png" }] });
-    vi.mocked(runWithFailover).mockImplementation((async (params: { call: (p: unknown) => unknown }) => {
-      const out = (await params.call({ name: "gemini", generateTechnicalFlat })) as { images: unknown[] };
-      return { ...out, providerName: "gemini", model: "imagen-3" };
-    }) as never);
-    vi.mocked(repos.AiDesignerImageRepository.findByGenerationId).mockResolvedValue([
-      { id: "img-sketch", imageAttachmentId: "att-sketch" },
+    const { generateTechnicalFlat } = mockProviders();
+
+    const result = await svc.generateNewDesign(actor, "proj-1", { imageCount: 3 });
+
+    expect(generateTechnicalFlat).toHaveBeenCalledTimes(2);
+    expect(generateTechnicalFlat.mock.calls.map((c) => c[0].baseImage.buffer.toString()).sort()).toEqual(["garment-A", "garment-B"]);
+    expect(result.images).toHaveLength(2);
+    expect(result.sketches).toHaveLength(2);
+    expect(result.sketchFailures).toBe(0);
+
+    const created = vi.mocked(repos.AiDesignerImageRepository.createMany).mock.calls.flatMap((c) => c[0]);
+    const garments = created.filter((r) => r.kind === "GARMENT");
+    const sketches = created.filter((r) => r.kind === "SKETCH");
+    expect(garments).toHaveLength(2);
+    expect(sketches).toHaveLength(2);
+    // Each sketch points at a different garment row.
+    expect(new Set(sketches.map((s) => s.sketchForImageId))).toEqual(new Set(garments.map((g) => `img-${g.imageAttachmentId}`)));
+  });
+
+  it("keeps the designs when one sketch fails, and reports it", async () => {
+    vi.mocked(repos.AiDesignerProjectRepository.findAnyById).mockResolvedValue(project() as never);
+    vi.mocked(readFile).mockResolvedValue(Buffer.from("template") as never);
+    mockProviders({ failSketchFor: "garment-B" });
+
+    const result = await svc.generateNewDesign(actor, "proj-1", { imageCount: 3 });
+
+    expect(result.images).toHaveLength(2);
+    expect(result.sketches).toHaveLength(1);
+    expect(result.sketchFailures).toBe(1);
+    expect(result.sketchError).toMatch(/credits exhausted/);
+    expect(repos.AiDesignerGenerationRepository.markFailed).not.toHaveBeenCalled();
+  });
+
+  it("also sketches every garment on the classic (no template) path", async () => {
+    vi.mocked(repos.AiDesignerProjectRepository.findAnyById).mockResolvedValue(
+      project({ garmentTemplateKey: "women-skirt", productCategory: "Skirt" }) as never
+    );
+    vi.mocked(designer.generateDesign).mockResolvedValue({
+      generation: { id: "gen-classic" },
+      images: [
+        { id: "g-1", imageAttachmentId: "att-g1" },
+        { id: "g-2", imageAttachmentId: "att-g2" },
+      ],
+    } as never);
+    const { generateTechnicalFlat } = mockProviders();
+
+    const result = await svc.generateNewDesign(actor, "proj-1", { imageCount: 3 });
+
+    expect(generateTechnicalFlat).toHaveBeenCalledTimes(2);
+    expect(result.sketches).toHaveLength(2);
+    const sketchRows = vi.mocked(repos.AiDesignerImageRepository.createMany).mock.calls.flatMap((c) => c[0]);
+    expect(sketchRows.map((r) => r.sketchForImageId).sort()).toEqual(["g-1", "g-2"]);
+    expect(sketchRows.every((r) => r.kind === "SKETCH" && r.generationId === "gen-classic")).toBe(true);
+  });
+});
+
+describe("garment / sketch pairing", () => {
+  it("lists only garments, each with its own sketch", async () => {
+    vi.mocked(repos.AiDesignerProjectRepository.findAnyById).mockResolvedValue(project() as never);
+    vi.mocked(repos.AiDesignerGenerationRepository.findManyByProjectAndPromptType).mockResolvedValue([
+      {
+        images: [
+          { id: "g-1", kind: "GARMENT", decision: "PENDING", imageAttachmentId: "att-g1", sketch: { id: "s-1", imageAttachmentId: "att-s1", decision: "PENDING" } },
+          { id: "s-1", kind: "SKETCH", decision: "PENDING", imageAttachmentId: "att-s1", sketch: null },
+          { id: "g-2", kind: "GARMENT", decision: "PENDING", imageAttachmentId: "att-g2", sketch: { id: "s-old", imageAttachmentId: "att-old", decision: "REJECTED" } },
+          { id: "g-3", kind: "GARMENT", decision: "REJECTED", imageAttachmentId: "att-g3", sketch: null },
+        ],
+      },
     ] as never);
 
-    const result = await svc.generateNewDesign(actor, "proj-1", { imageCount: 1, outputFormat: "SKETCH" });
+    const list = await svc.listGeneratedDesigns(actor, "proj-1");
 
-    expect(result.outputFormat).toBe("SKETCH");
-    expect(generateTechnicalFlat).toHaveBeenCalledTimes(1);
-    expect(runWithFailover).toHaveBeenCalledWith(expect.objectContaining({ capability: "TECHNICAL_FLAT" }));
-    expect(repos.AiDesignerPromptRepository.create).toHaveBeenCalledWith(
-      expect.objectContaining({ promptType: "IMAGE_GENERATE", promptText: expect.stringContaining("CAD technical flat sketch") })
-    );
-    expect(repos.AiDesignerProjectRepository.update).toHaveBeenCalledWith(
-      "proj-1",
-      expect.objectContaining({ sketchImageAttachmentId: "att-sketch", newDesignStep: "DESIGNS" })
-    );
+    expect(list.map((i) => i.id)).toEqual(["g-1", "g-2"]);
+    expect(list[0].sketch).toEqual({ id: "s-1", imageAttachmentId: "att-s1" });
+    expect(list[1].sketch).toBeNull();
+  });
+
+  it("making a garment current points the working sketch at that garment's own sketch", async () => {
+    vi.mocked(designer.getProjectById).mockResolvedValue({ currentVersionId: "v-1", currentVersion: { currentImageId: "g-1" } } as never);
+    vi.mocked(repos.AiDesignerImageRepository.findById).mockResolvedValue({ id: "g-2", projectId: "proj-1", kind: "GARMENT", decision: "PENDING" } as never);
+    vi.mocked(repos.AiDesignerImageRepository.findSketchFor).mockResolvedValue({ id: "s-2", imageAttachmentId: "att-s2" } as never);
+
+    await svc.makeImageCurrent(actor, "proj-1", "g-2");
+
+    expect(designer.bumpVersion).toHaveBeenCalledWith(actor, "proj-1", "g-2", expect.any(String), expect.any(Object));
+    expect(repos.AiDesignerProjectRepository.update).toHaveBeenCalledWith("proj-1", { sketchImageAttachmentId: "att-s2" });
+  });
+
+  it("clears the working sketch when the chosen garment has none, and refuses a sketch image", async () => {
+    vi.mocked(designer.getProjectById).mockResolvedValue({ currentVersionId: "v-1", currentVersion: { currentImageId: "g-1" } } as never);
+    vi.mocked(repos.AiDesignerImageRepository.findById).mockResolvedValueOnce({ id: "g-2", projectId: "proj-1", kind: "GARMENT", decision: "SELECTED" } as never);
+    vi.mocked(repos.AiDesignerImageRepository.findSketchFor).mockResolvedValue(null as never);
+
+    await svc.makeImageCurrent(actor, "proj-1", "g-2");
+    expect(repos.AiDesignerProjectRepository.update).toHaveBeenCalledWith("proj-1", { sketchImageAttachmentId: null });
+
+    vi.mocked(repos.AiDesignerImageRepository.findById).mockResolvedValueOnce({ id: "s-1", projectId: "proj-1", kind: "SKETCH" } as never);
+    await expect(svc.makeImageCurrent(actor, "proj-1", "s-1")).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("generateSketchForImage unlinks the garment's old sketch and links the new one", async () => {
+    vi.mocked(repos.AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue({
+      ...project(),
+      currentVersionId: "v-1",
+      currentVersion: { currentImageId: "g-1" },
+    } as never);
+    vi.mocked(repos.AiDesignerImageRepository.findById).mockResolvedValue({ id: "g-2", projectId: "proj-1", kind: "GARMENT", imageAttachmentId: "att-g2" } as never);
+    vi.mocked(uploadAttachment).mockResolvedValue({ id: "att-new-sketch" } as never);
+    vi.mocked(repos.AiDesignerImageRepository.findByGenerationId).mockResolvedValue([{ id: "s-new", imageAttachmentId: "att-new-sketch" }] as never);
+    const generateTechnicalFlat = vi.fn().mockResolvedValue({ images: [{ buffer: Buffer.from("sk"), mimeType: "image/png" }] });
+    vi.mocked(runWithFailover).mockImplementation((async (params: { call: (p: unknown) => unknown }) => {
+      const out = (await params.call({ name: "gemini", generateTechnicalFlat })) as { images: unknown[] };
+      return { ...out, providerName: "gemini", model: "m" };
+    }) as never);
+
+    const result = await svc.generateSketchForImage(actor, "proj-1", "g-2");
+
+    expect(repos.AiDesignerImageRepository.unlinkSketchFor).toHaveBeenCalledWith("g-2");
+    expect(repos.AiDesignerImageRepository.createMany).toHaveBeenCalledWith([
+      expect.objectContaining({ kind: "SKETCH", sketchForImageId: "g-2", imageAttachmentId: "att-new-sketch" }),
+    ]);
+    expect(result.sketchAttachmentId).toBe("att-new-sketch");
+    // g-2 is not the current design, so the working sketch is left alone.
+    expect(repos.AiDesignerProjectRepository.update).not.toHaveBeenCalledWith("proj-1", { sketchImageAttachmentId: "att-new-sketch" });
+  });
+
+  it("generateSketchForImage refuses a sketch image", async () => {
+    vi.mocked(repos.AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(project() as never);
+    vi.mocked(repos.AiDesignerImageRepository.findById).mockResolvedValue({ id: "s-1", projectId: "proj-1", kind: "SKETCH" } as never);
+    await expect(svc.generateSketchForImage(actor, "proj-1", "s-1")).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("setCurrentSketch restores an earlier sketch of the same project only", async () => {
+    vi.mocked(repos.AiDesignerProjectRepository.findAnyById).mockResolvedValue(project({ sketchImageAttachmentId: "att-now" }) as never);
+    vi.mocked(repos.AiDesignerImageRepository.findByProjectAndAttachment).mockResolvedValueOnce({ id: "s-1", kind: "SKETCH" } as never);
+
+    await svc.setCurrentSketch(actor, "proj-1", "att-earlier");
+    expect(repos.AiDesignerProjectRepository.update).toHaveBeenCalledWith("proj-1", { sketchImageAttachmentId: "att-earlier" });
+
+    vi.mocked(repos.AiDesignerImageRepository.findByProjectAndAttachment).mockResolvedValueOnce(null as never);
+    await expect(svc.setCurrentSketch(actor, "proj-1", "att-other")).rejects.toMatchObject({ code: "NOT_FOUND" });
+
+    vi.mocked(repos.AiDesignerImageRepository.findByProjectAndAttachment).mockResolvedValueOnce({ id: "g-1", kind: "GARMENT" } as never);
+    await expect(svc.setCurrentSketch(actor, "proj-1", "att-garment")).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
 });
 
@@ -306,9 +467,10 @@ describe("generateSketchForProject", () => {
   it("generates a CAD flat sketch from current garment image and sets sketchImageAttachmentId", async () => {
     vi.mocked(repos.AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue({
       ...project(),
-      currentVersion: { currentImage: { id: "img-garment", imageAttachmentId: "att-garment" } },
+      currentVersion: { currentImageId: "img-garment", currentImage: { id: "img-garment", kind: "GARMENT", imageAttachmentId: "att-garment" } },
       currentVersionId: "v-1",
     } as never);
+    vi.mocked(uploadAttachment).mockResolvedValue({ id: "att-sketch-flat" } as never);
     const generateVariation = vi.fn().mockResolvedValue({ images: [{ buffer: Buffer.from("sketch-buf"), mimeType: "image/png" }] });
     vi.mocked(runWithFailover).mockImplementation((async (params: { call: (p: unknown) => unknown }) => {
       const out = (await params.call({ name: "gemini", generateVariation })) as { images: unknown[] };
@@ -321,6 +483,10 @@ describe("generateSketchForProject", () => {
     const result = await svc.generateSketchForProject(actor, "proj-1", { viewAngle: "BOTH", notes: "French darts and puff sleeves" });
 
     expect(result.sketchAttachmentId).toBe("att-sketch-flat");
+    expect(repos.AiDesignerImageRepository.unlinkSketchFor).toHaveBeenCalledWith("img-garment");
+    expect(repos.AiDesignerImageRepository.createMany).toHaveBeenCalledWith([
+      expect.objectContaining({ kind: "SKETCH", sketchForImageId: "img-garment" }),
+    ]);
     expect(repos.AiDesignerPromptRepository.create).toHaveBeenCalledWith(
       expect.objectContaining({ promptType: "IMAGE_GENERATE", promptText: expect.stringContaining("technical flat sketch") })
     );
@@ -344,6 +510,7 @@ describe("executeSketchEdit", () => {
       const out = (await params.call({ name: "gemini", generateVariation })) as { images: unknown[] };
       return { ...out, providerName: "gemini", model: "imagen-3" };
     }) as never);
+    vi.mocked(uploadAttachment).mockResolvedValue({ id: "att-revised-sketch" } as never);
     vi.mocked(repos.AiDesignerImageRepository.findByGenerationId).mockResolvedValue([
       { id: "img-revised-sketch", imageAttachmentId: "att-revised-sketch" },
     ] as never);
@@ -374,7 +541,7 @@ describe("executeSketchEdit", () => {
       sketchImageAttachmentId: "att-existing-sketch",
       currentVersion: { currentImage: { id: "img-garment", imageAttachmentId: "att-garment" }, currentImageId: "img-garment" },
     } as never);
-    vi.mocked(uploadAttachment).mockResolvedValue({ id: "att-markup" } as never);
+    vi.mocked(uploadAttachment).mockResolvedValueOnce({ id: "att-markup" } as never).mockResolvedValueOnce({ id: "att-clean" } as never);
     vi.mocked(getAttachmentForDownload).mockClear();
     const generateVariation = vi.fn().mockResolvedValue({ images: [{ buffer: Buffer.from("clean-sketch"), mimeType: "image/png" }] });
     vi.mocked(runWithFailover).mockImplementation((async (params: { call: (p: unknown) => unknown }) => {
@@ -408,5 +575,112 @@ describe("executeSketchEdit", () => {
     await expect(
       svc.executeSketchEdit(actor, "proj-1", { instruction: "  ", viewAngle: "FRONT", imageCount: 1 })
     ).rejects.toThrow(/Draw your changes/);
+  });
+});
+
+describe("applying an edit keeps garment and sketch in step", () => {
+  function mockRender() {
+    vi.mocked(uploadAttachment).mockResolvedValue({ id: "att-rendered" } as never);
+    vi.mocked(repos.AiDesignerImageRepository.findByGenerationId).mockResolvedValue([{ id: "g-rendered", imageAttachmentId: "att-rendered" }] as never);
+    const replicate = vi.fn().mockResolvedValue({ images: [{ buffer: Buffer.from("garment"), mimeType: "image/png" }] });
+    vi.mocked(runWithFailover).mockImplementation((async (params: { call: (p: unknown) => unknown }) => {
+      const out = (await params.call({ name: "gemini", replicateWithNewMaterial: replicate })) as { images: unknown[] };
+      return { ...out, providerName: "gemini", model: "m" };
+    }) as never);
+    return replicate;
+  }
+
+  it("garment preview: applies it and gives the new garment its own sketch", async () => {
+    vi.mocked(repos.AiDesignerImageRepository.findWithProjectOwner).mockResolvedValue({
+      id: "g-new", kind: "GARMENT", decision: "PENDING", projectId: "proj-1", project: { companyId: "co-1" },
+    } as never);
+    vi.mocked(designer.applyEditVariation).mockResolvedValue({ id: "v-2" } as never);
+    vi.mocked(repos.AiDesignerImageRepository.findSketchFor).mockResolvedValue({ id: "s-new", imageAttachmentId: "att-s-new" } as never);
+
+    const result = await svc.applyEditWithPairedSketch(actor, "g-new", { confirmed: true });
+
+    expect(designer.applyEditVariation).toHaveBeenCalledWith(actor, "g-new", { confirmed: true });
+    expect(repos.AiDesignerProjectRepository.update).toHaveBeenCalledWith("proj-1", { sketchImageAttachmentId: "att-s-new" });
+    expect(result).toMatchObject({ id: "v-2", sketchError: null });
+  });
+
+  it("garment preview: reports (not fails) when its sketch can't be generated, and clears the stale sketch", async () => {
+    vi.mocked(repos.AiDesignerImageRepository.findWithProjectOwner).mockResolvedValue({
+      id: "g-new", kind: "GARMENT", decision: "PENDING", projectId: "proj-1", project: { companyId: "co-1" },
+    } as never);
+    vi.mocked(designer.applyEditVariation).mockResolvedValue({ id: "v-2" } as never);
+    vi.mocked(repos.AiDesignerImageRepository.findSketchFor).mockResolvedValue(null as never);
+    vi.mocked(repos.AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue({ ...project(), currentVersion: { currentImageId: "g-new" } } as never);
+    vi.mocked(repos.AiDesignerImageRepository.findById).mockResolvedValue({ id: "g-new", projectId: "proj-1", kind: "GARMENT", imageAttachmentId: "att-g" } as never);
+    vi.mocked(runWithFailover).mockRejectedValue(new Error("credits exhausted"));
+
+    const result = await svc.applyEditWithPairedSketch(actor, "g-new", { confirmed: true });
+
+    expect(result.sketchError).toMatch(/credits exhausted/);
+    expect(repos.AiDesignerProjectRepository.update).toHaveBeenCalledWith("proj-1", { sketchImageAttachmentId: null });
+  });
+
+  it("sketch preview with a rendered garment: the garment becomes the design, the sketch the working sketch", async () => {
+    vi.mocked(repos.AiDesignerImageRepository.findWithProjectOwner).mockResolvedValue({
+      id: "s-1", kind: "SKETCH", decision: "PENDING", sketchForImageId: "g-1", imageAttachmentId: "att-s1", projectId: "proj-1", generationId: "gen-e", project: { companyId: "co-1" },
+    } as never);
+    vi.mocked(designer.applyEditVariation).mockResolvedValue({ id: "v-3" } as never);
+
+    await svc.applyEditWithPairedSketch(actor, "s-1", { confirmed: true });
+
+    expect(designer.applyEditVariation).toHaveBeenCalledWith(actor, "g-1", { confirmed: true });
+    expect(repos.AiDesignerImageRepository.update).toHaveBeenCalledWith("s-1", { decision: "SELECTED" });
+    expect(repos.AiDesignerProjectRepository.update).toHaveBeenCalledWith("proj-1", { sketchImageAttachmentId: "att-s1" });
+    expect(runWithFailover).not.toHaveBeenCalled();
+  });
+
+  it("sketch preview with no garment: renders the garment from the sketch first, then applies it", async () => {
+    vi.mocked(repos.AiDesignerImageRepository.findWithProjectOwner).mockResolvedValue({
+      id: "s-2", kind: "SKETCH", decision: "PENDING", sketchForImageId: null, imageAttachmentId: "att-s2", projectId: "proj-1", generationId: "gen-e", project: { companyId: "co-1" },
+    } as never);
+    vi.mocked(repos.AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(project() as never);
+    vi.mocked(designer.applyEditVariation).mockResolvedValue({ id: "v-4" } as never);
+    const replicate = mockRender();
+
+    await svc.applyEditWithPairedSketch(actor, "s-2", { confirmed: true });
+
+    expect(replicate).toHaveBeenCalledTimes(1);
+    expect(repos.AiDesignerImageRepository.createMany).toHaveBeenCalledWith([
+      expect.objectContaining({ kind: "GARMENT", generationId: "gen-e", imageAttachmentId: "att-rendered" }),
+    ]);
+    expect(repos.AiDesignerImageRepository.update).toHaveBeenCalledWith("s-2", { sketchForImageId: "g-rendered" });
+    expect(designer.applyEditVariation).toHaveBeenCalledWith(actor, "g-rendered", { confirmed: true });
+  });
+
+  it("refuses an apply without confirmation, or a preview from another company", async () => {
+    await expect(svc.applyEditWithPairedSketch(actor, "x", { confirmed: false })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    vi.mocked(repos.AiDesignerImageRepository.findWithProjectOwner).mockResolvedValue({ id: "x", kind: "GARMENT", project: { companyId: "other" } } as never);
+    await expect(svc.applyEditWithPairedSketch(actor, "x", { confirmed: true })).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("applyWorkingSketchToGarment renders the garment from the edited sketch as a new version", async () => {
+    vi.mocked(repos.AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue({
+      ...project(),
+      sketchImageAttachmentId: "att-edited",
+      currentVersion: { currentImage: { id: "g-old" }, designSnapshotJson: {} },
+    } as never);
+    vi.mocked(repos.AiDesignerImageRepository.findByProjectAndAttachment).mockResolvedValue({ id: "s-edited", kind: "SKETCH", sketchForImageId: null } as never);
+    mockRender();
+    vi.mocked(designer.bumpVersion).mockResolvedValue({ id: "v-new", versionNumber: 5 } as never);
+
+    await svc.applyWorkingSketchToGarment(actor, "proj-1");
+
+    expect(repos.AiDesignerImageRepository.update).toHaveBeenCalledWith("s-edited", { sketchForImageId: "g-rendered" });
+    expect(designer.bumpVersion).toHaveBeenCalledWith(actor, "proj-1", "g-rendered", expect.any(String), {}, expect.objectContaining({ approvalStatus: "AI_MODIFIED" }));
+  });
+
+  it("applyWorkingSketchToGarment refuses when the garment already matches the sketch", async () => {
+    vi.mocked(repos.AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue({
+      ...project(),
+      sketchImageAttachmentId: "att-s",
+      currentVersion: { currentImage: { id: "g-1" } },
+    } as never);
+    vi.mocked(repos.AiDesignerImageRepository.findByProjectAndAttachment).mockResolvedValue({ id: "s", kind: "SKETCH", sketchForImageId: "g-1" } as never);
+    await expect(svc.applyWorkingSketchToGarment(actor, "proj-1")).rejects.toThrow(/already matches/);
   });
 });

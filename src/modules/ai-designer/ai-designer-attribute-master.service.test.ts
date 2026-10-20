@@ -9,6 +9,7 @@ vi.mock("@/core/attachments/AttachmentService", () => ({
 vi.mock("@/core/ai-designer/catalogs/reference-image-thumbnail", () => ({
   toReferenceImageThumbnail: vi.fn(async (buf: Buffer) => buf),
 }));
+vi.mock("@/core/ai/provider-manager/AIProviderManager", () => ({ runWithFailover: vi.fn() }));
 vi.mock("./ai-designer.repository", () => ({
   AiDesignerProductDesignAttributeRepository: {
     findMany: vi.fn(),
@@ -28,6 +29,8 @@ vi.mock("./ai-designer.repository", () => ({
 
 const { AiDesignerProductDesignAttributeRepository, AiDesignerOptionReferenceImageRepository } = await import("./ai-designer.repository");
 const { uploadAttachment, deleteAttachment } = await import("@/core/attachments/AttachmentService");
+const { runWithFailover } = await import("@/core/ai/provider-manager/AIProviderManager");
+const { listSketchStructureOptions } = await import("@/core/ai-designer/catalogs/sketch-structure-catalog");
 const {
   createProductDesignAttribute,
   updateProductDesignAttribute,
@@ -36,6 +39,7 @@ const {
   listOptionReferenceImages,
   uploadOptionReferenceImage,
   deleteOptionReferenceImage,
+  generateMissingOptionFlats,
 } = await import("./ai-designer-attribute-master.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
@@ -223,7 +227,55 @@ describe("deleteOptionReferenceImage", () => {
 
     await deleteOptionReferenceImage(actor, "Deep Back Cut-Out");
 
-    expect(AiDesignerOptionReferenceImageRepository.deleteByValue).toHaveBeenCalledWith("co-1", "Deep Back Cut-Out");
+    expect(AiDesignerOptionReferenceImageRepository.deleteByValue).toHaveBeenCalledWith("co-1", "Deep Back Cut-Out", "PHOTO");
     expect(deleteAttachment).toHaveBeenCalledWith(actor, "att-1");
+  });
+});
+
+describe("construction option CAD flats", () => {
+  const actor = { companyId: "co-1", userId: "u-1" };
+
+  it("stores an uploaded flat under the CAD_FLAT variant, separate from the Product Design photo", async () => {
+    vi.mocked(AiDesignerOptionReferenceImageRepository.findByValue).mockResolvedValue(null as never);
+    vi.mocked(uploadAttachment).mockResolvedValue({ id: "att-flat" } as never);
+    vi.mocked(AiDesignerOptionReferenceImageRepository.upsert).mockResolvedValue({ id: "row-1" } as never);
+
+    await uploadOptionReferenceImage(actor, "A-Line", { buffer: Buffer.from("x"), fileName: "a.png", mimeType: "image/png" }, "CAD_FLAT");
+
+    expect(AiDesignerOptionReferenceImageRepository.findByValue).toHaveBeenCalledWith("co-1", "A-Line", "CAD_FLAT");
+    expect(AiDesignerOptionReferenceImageRepository.upsert).toHaveBeenCalledWith(expect.objectContaining({ optionValue: "A-Line", variant: "CAD_FLAT" }));
+  });
+
+  it("generates only missing flats, at most a batch at a time, and reports what remains", async () => {
+    const all = listSketchStructureOptions();
+    // The first two options already have a flat.
+    vi.mocked(AiDesignerOptionReferenceImageRepository.findMany).mockResolvedValue([
+      { optionValue: all[0].value, attachmentId: "a0" },
+      { optionValue: all[1].value, attachmentId: "a1" },
+    ] as never);
+    vi.mocked(AiDesignerOptionReferenceImageRepository.findByValue).mockResolvedValue(null as never);
+    vi.mocked(uploadAttachment).mockResolvedValue({ id: "att-gen" } as never);
+    vi.mocked(AiDesignerOptionReferenceImageRepository.upsert).mockResolvedValue({ id: "row" } as never);
+    const generate = vi.fn().mockResolvedValue({ images: [{ buffer: Buffer.from("flat"), mimeType: "image/png" }] });
+    vi.mocked(runWithFailover).mockImplementation((async (params: { call: (p: unknown) => unknown }) => {
+      const out = (await params.call({ name: "gemini", generate })) as { images: unknown[] };
+      return { ...out, providerName: "gemini", model: "m" };
+    }) as never);
+
+    const result = await generateMissingOptionFlats(actor, { limit: 3 });
+
+    expect(AiDesignerOptionReferenceImageRepository.findMany).toHaveBeenCalledWith("co-1", "CAD_FLAT");
+    expect(generate).toHaveBeenCalledTimes(3);
+    expect(result.generated).toEqual([all[2].value, all[3].value, all[4].value]);
+    expect(result.remaining).toBe(all.length - 2 - 3);
+    expect(result.total).toBe(all.length);
+    expect(runWithFailover).toHaveBeenCalledWith(expect.objectContaining({ capability: "TEXT_TO_IMAGE" }));
+  });
+
+  it("fails clearly when every option in the batch fails (e.g. the provider is out of credits)", async () => {
+    vi.mocked(AiDesignerOptionReferenceImageRepository.findMany).mockResolvedValue([] as never);
+    vi.mocked(runWithFailover).mockRejectedValue(new Error("credits exhausted"));
+
+    await expect(generateMissingOptionFlats(actor, { limit: 2 })).rejects.toMatchObject({ code: "AI_SERVICE_ERROR" });
   });
 });

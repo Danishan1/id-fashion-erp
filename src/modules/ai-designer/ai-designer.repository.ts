@@ -127,7 +127,12 @@ export const AiDesignerGenerationRepository = {
     prisma.aiDesignerGeneration.findMany({
       where: { projectId, status: "SUCCESS", prompt: { promptType } },
       orderBy: { createdAt: "desc" },
-      include: { images: { orderBy: { createdAt: "asc" } } },
+      include: {
+        images: {
+          orderBy: { createdAt: "asc" },
+          include: { sketch: { select: { id: true, imageAttachmentId: true, decision: true, createdAt: true } } },
+        },
+      },
     }),
 };
 
@@ -148,6 +153,19 @@ export const AiDesignerImageRepository = {
 
   update: (id: string, data: Prisma.AiDesignerImageUncheckedUpdateInput) =>
     prisma.aiDesignerImage.update({ where: { id }, data }),
+
+  /** The CAD sketch currently linked to a garment image (at most one — unique FK). */
+  findSketchFor: (garmentImageId: string) => prisma.aiDesignerImage.findUnique({ where: { sketchForImageId: garmentImageId } }),
+
+  /** Retires a garment's current sketch so a new one can take its (unique) link. */
+  unlinkSketchFor: (garmentImageId: string) =>
+    prisma.aiDesignerImage.updateMany({
+      where: { sketchForImageId: garmentImageId },
+      data: { sketchForImageId: null, decision: "REJECTED" },
+    }),
+
+  findByProjectAndAttachment: (projectId: string, imageAttachmentId: string) =>
+    prisma.aiDesignerImage.findFirst({ where: { projectId, imageAttachmentId } }),
 };
 
 export const AiDesignerVersionRepository = {
@@ -399,20 +417,26 @@ export const AiDesignerSketchAnalysisRunRepository = {
     }),
 };
 
+/** PHOTO = Product Design on-model photos; CAD_FLAT = edit-page construction option sketches. */
+export type OptionImageVariant = "PHOTO" | "CAD_FLAT";
+
 export const AiDesignerOptionReferenceImageRepository = {
-  findMany: (companyId: string) => prisma.aiDesignerOptionReferenceImage.findMany({ where: { companyId } }),
+  findMany: (companyId: string, variant: OptionImageVariant = "PHOTO") =>
+    prisma.aiDesignerOptionReferenceImage.findMany({ where: { companyId, variant } }),
 
-  findByValue: (companyId: string, optionValue: string) =>
-    prisma.aiDesignerOptionReferenceImage.findFirst({ where: { companyId, optionValue } }),
+  findByValue: (companyId: string, optionValue: string, variant: OptionImageVariant = "PHOTO") =>
+    prisma.aiDesignerOptionReferenceImage.findFirst({ where: { companyId, variant, optionValue } }),
 
-  /** Replaces the attachmentId if a row for this (companyId, optionValue) already exists, else creates one. */
-  upsert: (data: { companyId: string; optionValue: string; attachmentId: string; createdByUserId: string }) =>
-    prisma.aiDesignerOptionReferenceImage.upsert({
-      where: { companyId_optionValue: { companyId: data.companyId, optionValue: data.optionValue } },
-      create: data,
+  /** Replaces the attachmentId if a row for this (companyId, variant, optionValue) already exists, else creates one. */
+  upsert: (data: { companyId: string; optionValue: string; attachmentId: string; createdByUserId: string; variant?: OptionImageVariant }) => {
+    const variant = data.variant ?? "PHOTO";
+    return prisma.aiDesignerOptionReferenceImage.upsert({
+      where: { companyId_variant_optionValue: { companyId: data.companyId, variant, optionValue: data.optionValue } },
+      create: { ...data, variant },
       update: { attachmentId: data.attachmentId },
-    }),
+    });
+  },
 
-  deleteByValue: (companyId: string, optionValue: string) =>
-    prisma.aiDesignerOptionReferenceImage.delete({ where: { companyId_optionValue: { companyId, optionValue } } }),
+  deleteByValue: (companyId: string, optionValue: string, variant: OptionImageVariant = "PHOTO") =>
+    prisma.aiDesignerOptionReferenceImage.delete({ where: { companyId_variant_optionValue: { companyId, variant, optionValue } } }),
 };

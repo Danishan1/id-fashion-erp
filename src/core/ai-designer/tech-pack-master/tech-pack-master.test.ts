@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AI_PAGE_NUMBERS, gradedValue, isMasterTechPackJson, pageMode, validateMasterAnalysis, type MasterAnalysis } from "./schema";
+import { AI_PAGE_NUMBERS, displayPageNumber, gradedValue, isMasterTechPackJson, pageMode, validateMasterAnalysis, type MasterAnalysis } from "./schema";
 import { buildTechPackPagePrompts } from "./page-prompts";
 
 function analysis(overrides: Partial<MasterAnalysis> = {}): MasterAnalysis {
@@ -79,9 +79,28 @@ describe("master tech pack schema", () => {
     expect(validateMasterAnalysis(analysis({ measurements: measurementsWithZeroGrade, artwork: [] }))).toMatchObject({ success: true });
   });
 
-  it("keeps pages 1/2/4/7 as full AI images and pages 3/5/6 as an AI illustration plus the real typeset table", () => {
-    expect(AI_PAGE_NUMBERS).toEqual([1, 2, 4, 7]);
-    expect([3, 5, 6].map(pageMode)).toEqual(["HYBRID", "HYBRID", "HYBRID"]);
+  it("keeps pages 1/2/7 as full AI images and pages 3/6 as an AI illustration plus the real typeset table", () => {
+    expect(AI_PAGE_NUMBERS).toEqual([1, 2, 7]);
+    expect([3, 6].map(pageMode)).toEqual(["HYBRID", "HYBRID"]);
+    // Older tech packs' removed pages keep rendering as before: Colorways full image, Spec Table typeset.
+    expect(pageMode(4)).toBe("AI");
+    expect(pageMode(5)).toBe("HYBRID");
+  });
+
+  it("numbers pages by position, so the header reads 1-5 without the removed pages", () => {
+    expect([1, 2, 3, 6, 7].map((n) => displayPageNumber(n))).toEqual([1, 2, 3, 4, 5]);
+    // An older 7-page pack keeps its own numbering.
+    expect(displayPageNumber(5, [1, 2, 3, 4, 5, 6, 7])).toBe(5);
+  });
+
+  it("still parses an older analysis that carries colours/artwork, and a new one without them", () => {
+    const withoutColour = analysis() as Record<string, unknown>;
+    delete withoutColour.colors;
+    delete withoutColour.colorways;
+    delete withoutColour.artwork;
+    delete withoutColour.patternPrint;
+    expect(validateMasterAnalysis(withoutColour)).toMatchObject({ success: true });
+    expect(validateMasterAnalysis(analysis())).toMatchObject({ success: true });
   });
 
   it("tags the stored JSON so older table-based tech packs are distinguishable", () => {
@@ -92,29 +111,25 @@ describe("master tech pack schema", () => {
 });
 
 describe("buildTechPackPagePrompts", () => {
-  it("builds exactly 7 pages sharing the same header data", () => {
+  it("builds 5 pages (no Colorways or Spec Table page) sharing the same header data", () => {
     const pages = buildTechPackPagePrompts(analysis());
-    expect(pages.map((p) => p.pageNumber)).toEqual([1, 2, 3, 4, 5, 6, 7]);
-    for (const p of pages) {
-      expect(p.promptText).toContain(`"PAGE ${p.pageNumber} — ${p.pageTitle}"`);
-      expect(p.promptText).toContain(`"${p.pageNumber} of 7"`);
+    expect(pages.map((p) => p.pageNumber)).toEqual([1, 2, 3, 6, 7]);
+    expect(pages.some((p) => /COLORWAYS|SPEC TABLE/.test(p.pageTitle))).toBe(false);
+    pages.forEach((p, i) => {
+      expect(p.promptText).toContain(`"PAGE ${i + 1} — ${p.pageTitle}"`);
+      expect(p.promptText).toContain(`"${i + 1} of 5"`);
       expect(p.promptText).toContain("AID-2026-00020");
       expect(p.promptText).toContain("pure white background");
       expect(p.promptText).toContain("ALL MEASUREMENTS IN CENTIMETERS (CM) UNLESS OTHERWISE SPECIFIED. TOLERANCES APPLY.");
-    }
+    });
   });
 
-  it("asks the AI for an illustration only on pages 3/5/6, never the real BOM/measurement/grade numbers (so the image can't scramble them)", () => {
+  it("asks the AI for an illustration only on pages 3/6, never the real BOM/grade numbers (so the image can't scramble them)", () => {
     const pages = buildTechPackPagePrompts(analysis());
-    expect(pages[4].promptText).toContain("BLACK-AND-WHITE line-art measurement diagram");
-    expect(pages[4].promptText).not.toMatch(/±\s*\d/);
-    expect(pages[4].promptText).not.toMatch(/\d+\s*\(cm\)/);
-    expect(pages[2].promptText).not.toMatch(/\| \d+ \| Item/);
-    expect(pages[5].promptText).not.toMatch(/±\s*\d/);
-    expect(pages[5].promptText).not.toMatch(/\| Grade Rule \|/);
+    const page = (n: number) => pages.find((p) => p.pageNumber === n)!;
+    expect(page(3).promptText).not.toMatch(/\| \d+ \| Item/);
+    expect(page(6).promptText).not.toMatch(/±\s*\d/);
+    expect(page(6).promptText).not.toMatch(/\| Grade Rule \|/);
   });
 
-  it("states NO ARTWORK when the garment has none", () => {
-    expect(buildTechPackPagePrompts(analysis())[3].promptText).toContain("NO ARTWORK APPLIED");
-  });
 });

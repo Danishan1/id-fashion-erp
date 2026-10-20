@@ -955,18 +955,29 @@ export function optionReferenceImageOverrideUrl(attachmentId: string): string {
  * is optional so every existing caller (which has no override map to check)
  * keeps working unchanged.
  */
-export function DesignOptionImage({ value, overrideAttachmentId }: { value: string; overrideAttachmentId?: string | null }) {
+export function DesignOptionImage({
+  value,
+  overrideAttachmentId,
+  variant = "PHOTO",
+  className = "h-16 w-16 rounded object-cover sm:h-20 sm:w-20",
+}: {
+  value: string;
+  overrideAttachmentId?: string | null;
+  /** CAD_FLAT = construction-option sketch: no static on-model photo tier, so it goes straight to the icon. */
+  variant?: "PHOTO" | "CAD_FLAT";
+  className?: string;
+}) {
   const [imageFailed, setImageFailed] = useState(false);
+  const src = overrideAttachmentId
+    ? optionReferenceImageOverrideUrl(overrideAttachmentId)
+    : variant === "PHOTO"
+      ? referenceImageUrlForValue(value)
+      : null;
 
-  if (imageFailed) return <DesignOptionIcon value={value} />;
+  if (imageFailed || !src) return <DesignOptionIcon value={value} />;
 
   return (
     // eslint-disable-next-line @next/next/no-img-element -- a small, per-option reference thumbnail from a growing generated/uploaded set, not a Next-optimizable static asset.
-    <img
-      src={overrideAttachmentId ? optionReferenceImageOverrideUrl(overrideAttachmentId) : referenceImageUrlForValue(value)}
-      alt={value}
-      className="h-16 w-16 rounded object-cover sm:h-20 sm:w-20"
-      onError={() => setImageFailed(true)}
-    />
+    <img src={src} alt={value} className={className} onError={() => setImageFailed(true)} />
   );
 }

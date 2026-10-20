@@ -38,6 +38,7 @@ import {
   AiDesignerPromptRepository,
 } from "./ai-designer.repository";
 import {
+  applyEditVariation,
   bumpVersion,
   createProject,
   generateDesign,
@@ -451,13 +452,21 @@ function buildDesignBrief(project: AiDesignerProject): string | null {
   return parts.length ? parts.join("; ") : null;
 }
 
+/**
+ * Stores generated images and returns ONLY the rows just created (in order).
+ * `kind` is stored on the row; SKETCH rows may be linked to the garment they
+ * were drawn from via `sketchForImageId`.
+ */
 async function persistImages(
   actor: ActorContext,
   projectId: string,
   generationId: string,
   images: { buffer: Buffer; mimeType: string }[],
-  contextLabel: string
+  contextLabel: string,
+  options: { kind?: "GARMENT" | "SKETCH"; sketchForImageId?: string | null } = {}
 ) {
+  const kind = options.kind ?? (contextLabel === "GENERATED_SKETCH_IMAGE" ? "SKETCH" : "GARMENT");
+  const attachmentIds: string[] = [];
   const rows: Prisma.AiDesignerImageUncheckedCreateInput[] = [];
   for (let i = 0; i < images.length; i++) {
     const attachment = await uploadAttachment(
@@ -467,16 +476,91 @@ async function persistImages(
       { buffer: images[i].buffer, fileName: `ai-designer-${Date.now()}-${i + 1}.png`, mimeType: images[i].mimeType },
       contextLabel
     );
-    rows.push({ companyId: actor.companyId, projectId, generationId, imageAttachmentId: attachment.id, createdByUserId: actor.userId });
+    attachmentIds.push(attachment.id);
+    rows.push({
+      companyId: actor.companyId,
+      projectId,
+      generationId,
+      imageAttachmentId: attachment.id,
+      kind,
+      // Only one sketch can be linked to a garment, so only the first image of a batch takes the link.
+      sketchForImageId: i === 0 ? options.sketchForImageId ?? null : null,
+      createdByUserId: actor.userId,
+    });
   }
   await AiDesignerImageRepository.createMany(rows);
-  return AiDesignerImageRepository.findByGenerationId(generationId);
+  const all = await AiDesignerImageRepository.findByGenerationId(generationId);
+  return attachmentIds.map((id) => all.find((img) => img.imageAttachmentId === id)).filter((img) => img !== undefined);
+}
+
+function buildProjectSketchPrompt(project: AiDesignerProject) {
+  return buildTechnicalSketchGenerationPrompt({
+    garmentType: project.productCategory || "Garment",
+    targetCustomer: TARGET_CUSTOMER_LABELS[project.targetCustomer as TargetCustomer] ?? "Women",
+    ageGroup: project.ageGroup || "Adult",
+    designBrief: buildDesignBrief(project),
+    fabricDetails: project.fabricName ? `${project.fabricName}${project.fabricComposition ? ` (${project.fabricComposition})` : ""}` : null,
+    viewAngle: "BOTH",
+  });
+}
+
+const SKETCH_CONCURRENCY = 2;
+
+/**
+ * Draws one CAD flat sketch per garment, each from that garment's own photo,
+ * and links it to the garment. A failed sketch never fails the garments —
+ * it is counted so the UI can offer "Generate sketch" for that design.
+ */
+async function generatePairedSketches(
+  actor: ActorContext,
+  project: AiDesignerProject,
+  generationId: string,
+  garments: { imageId: string; image: ImageInput }[]
+) {
+  const prompt = buildProjectSketchPrompt(project);
+  const sketches: Awaited<ReturnType<typeof persistImages>> = [];
+  let failures = 0;
+  let lastError: string | null = null;
+
+  for (let i = 0; i < garments.length; i += SKETCH_CONCURRENCY) {
+    const batch = garments.slice(i, i + SKETCH_CONCURRENCY);
+    const settled = await Promise.allSettled(
+      batch.map(async (g) => {
+        const result = await runWithFailover({
+          companyId: actor.companyId,
+          userId: actor.userId,
+          generationContext: `AI Designer / Technical Sketch ${project.projectNumber}`,
+          aiDesignerProjectId: project.id,
+          inputImagePresent: true,
+          ...technicalSketchRun(prompt, 1, g.image),
+        });
+        if (result.images.length === 0) throw new Error("The provider returned no sketch image.");
+        return persistImages(actor, project.id, generationId, result.images.slice(0, 1), "GENERATED_SKETCH_IMAGE", {
+          kind: "SKETCH",
+          sketchForImageId: g.imageId,
+        });
+      })
+    );
+    for (const outcome of settled) {
+      if (outcome.status === "fulfilled") sketches.push(...outcome.value);
+      else {
+        failures++;
+        lastError = outcome.reason instanceof Error ? outcome.reason.message : "Sketch generation failed.";
+      }
+    }
+  }
+  return { sketches, failures, lastError };
+}
+
+async function loadImageBuffer(companyId: string, attachmentId: string): Promise<ImageInput> {
+  const { attachment, buffer } = await getAttachmentForDownload(companyId, attachmentId);
+  return { buffer, mimeType: attachment.mimeType };
 }
 
 export async function generateNewDesign(
   actor: ActorContext,
   projectId: string,
-  input: { imageCount: 1 | 3 | 4; outputFormat?: "GARMENT" | "SKETCH" | "BOTH" }
+  input: { imageCount: 1 | 3 | 4 }
 ) {
   const project = await getOwnedNewDesignProject(actor.companyId, projectId);
 
@@ -487,98 +571,7 @@ export async function generateNewDesign(
     throw new BusinessRuleError("VALIDATION_ERROR", `Complete the following before generating: ${missing.join(", ")}.`, { missing });
   }
 
-  const format = input.outputFormat ?? "GARMENT";
   const template = await loadGarmentTemplateImage(actor.companyId, project);
-
-  // If SKETCH output is selected, generate technical CAD flat sketches
-  if (format === "SKETCH") {
-    await assertNoActiveRun(projectId, "IMAGE_GENERATE");
-    const sketchPrompt = buildTechnicalSketchGenerationPrompt({
-      garmentType: project.productCategory!,
-      targetCustomer: TARGET_CUSTOMER_LABELS[project.targetCustomer as TargetCustomer] ?? "Women",
-      ageGroup: project.ageGroup || "Adult",
-      designBrief: buildDesignBrief(project),
-      fabricDetails: project.fabricName ? `${project.fabricName}${project.fabricComposition ? ` (${project.fabricComposition})` : ""}` : null,
-      viewAngle: "BOTH",
-    });
-
-    const specJson = {
-      newDesign: true,
-      outputFormat: "SKETCH",
-      designSource: project.designSource,
-      garmentTemplateKey: project.garmentTemplateKey,
-      fabric: { name: project.fabricName, productId: project.fabricProductId },
-      customer: { targetCustomer: project.targetCustomer, ageGroup: project.ageGroup },
-      product: { category: project.productCategory },
-      viewAngle: "BOTH",
-    };
-
-    const promptRow = await AiDesignerPromptRepository.create({
-      companyId: actor.companyId,
-      projectId,
-      promptType: "IMAGE_GENERATE",
-      promptVersion: NEW_DESIGN_PROMPT_VERSION,
-      specJson: specJson as Prisma.InputJsonValue,
-      promptText: sketchPrompt,
-      provider: "pending",
-      model: "pending",
-      status: "IN_PROGRESS",
-      createdByUserId: actor.userId,
-    });
-    const generation = await AiDesignerGenerationRepository.create({
-      companyId: actor.companyId,
-      projectId,
-      promptId: promptRow.id,
-      requestedImageCount: input.imageCount,
-      status: "IN_PROGRESS",
-      createdByUserId: actor.userId,
-    });
-
-    try {
-      let refImage: { buffer: Buffer; mimeType: string } | null = null;
-      if (project.sourceImageAttachmentId) {
-        const { attachment, buffer } = await getAttachmentForDownload(actor.companyId, project.sourceImageAttachmentId);
-        refImage = { buffer, mimeType: attachment.mimeType };
-      } else if (template) {
-        refImage = template;
-      }
-
-      const result = await runWithFailover({
-        companyId: actor.companyId,
-        userId: actor.userId,
-        generationContext: `AI Designer / Technical Sketch ${project.projectNumber}`,
-        aiDesignerProjectId: projectId,
-        inputImagePresent: Boolean(refImage),
-        ...technicalSketchRun(sketchPrompt, input.imageCount, refImage),
-      });
-
-      const images = await persistImages(actor, projectId, generation.id, result.images, "GENERATED_SKETCH_IMAGE");
-      await AiDesignerGenerationRepository.markSuccess(generation.id);
-      await AiDesignerPromptRepository.markSuccessWithProvider(promptRow.id, result.providerName, result.model);
-      if (images.length > 0) {
-        await bumpVersion(actor, projectId, images[0].id, "Technical CAD flat sketch generated.", specJson);
-      }
-
-      await AiDesignerProjectRepository.update(projectId, {
-        status: "IN_PROGRESS",
-        newDesignStep: "DESIGNS",
-        ...(images[0] ? { sketchImageAttachmentId: images[0].imageAttachmentId } : {}),
-      });
-      await writeAuditLog({
-        companyId: actor.companyId,
-        userId: actor.userId,
-        tableName: "ai_generations",
-        recordId: generation.id,
-        action: "CREATE",
-        newValues: { imageCount: images.length, outputFormat: "SKETCH", provider: result.providerName, model: result.model },
-      });
-      return { generation, images, usedTemplate: false as const, outputFormat: "SKETCH" as const };
-    } catch (err) {
-      await AiDesignerGenerationRepository.markFailed(generation.id);
-      await AiDesignerPromptRepository.markFailed(promptRow.id, "PROVIDER_ERROR", err instanceof Error ? err.message : "Unknown error.");
-      throw err;
-    }
-  }
 
   // Which two-image capability can this company actually use? Prefer Design
   // Replication; Multi-Fabric (applyFabric — "apply this swatch onto this
@@ -597,8 +590,19 @@ export async function generateNewDesign(
     // No model photo for this garment type, or no provider enabled for a
     // two-image dress swap — the classic fabric-reference generation.
     const result = await generateDesign(actor, projectId, { imageCount: input.imageCount, viewAngle: "FRONT" });
+    const garments = await Promise.all(
+      result.images.map(async (img) => ({ imageId: img.id, image: await loadImageBuffer(actor.companyId, img.imageAttachmentId) }))
+    );
+    const paired = await generatePairedSketches(actor, project, result.generation.id, garments);
+    await syncProjectSketchToCurrent(actor.companyId, projectId);
     await AiDesignerProjectRepository.update(projectId, { newDesignStep: "DESIGNS" });
-    return { ...result, usedTemplate: false as const, outputFormat: "GARMENT" as const };
+    return {
+      ...result,
+      sketches: paired.sketches,
+      sketchFailures: paired.failures,
+      sketchError: paired.lastError,
+      usedTemplate: false as const,
+    };
   }
 
   await assertNoActiveRun(projectId, "IMAGE_GENERATE");
@@ -618,7 +622,6 @@ export async function generateNewDesign(
 
   const specJson = {
     newDesign: true,
-    outputFormat: format,
     designSource: project.designSource,
     garmentTemplateKey: project.garmentTemplateKey,
     customTemplate: Boolean(project.customTemplateAttachmentId),
@@ -681,37 +684,14 @@ export async function generateNewDesign(
     await AiDesignerPromptRepository.markSuccessWithProvider(promptRow.id, result.providerName, result.model);
     if (images.length > 0) await bumpVersion(actor, projectId, images[0].id, "Design generated on catalogue model.", specJson);
 
-    // If format is BOTH, also generate matching technical flat sketch in background
-    if (format === "BOTH") {
-      try {
-        const sketchPrompt = buildTechnicalSketchGenerationPrompt({
-          garmentType: project.productCategory!,
-          targetCustomer: TARGET_CUSTOMER_LABELS[project.targetCustomer as TargetCustomer] ?? "Women",
-          ageGroup: project.ageGroup || "Adult",
-          designBrief: buildDesignBrief(project),
-          fabricDetails: project.fabricName,
-          viewAngle: "BOTH",
-        });
-
-        const firstImg = { buffer: result.images[0].buffer, mimeType: result.images[0].mimeType };
-        const sketchResult = await runWithFailover({
-          companyId: actor.companyId,
-          userId: actor.userId,
-          generationContext: `AI Designer / Technical Sketch for ${project.projectNumber}`,
-          aiDesignerProjectId: projectId,
-          inputImagePresent: true,
-          ...technicalSketchRun(sketchPrompt, 1, firstImg),
-        });
-
-        if (sketchResult.images.length > 0) {
-          const sketchImages = await persistImages(actor, projectId, generation.id, sketchResult.images, "GENERATED_SKETCH_IMAGE");
-          await AiDesignerProjectRepository.update(projectId, { sketchImageAttachmentId: sketchImages[0].imageAttachmentId });
-          images.push(...sketchImages);
-        }
-      } catch {
-        // Soft fail on secondary sketch creation so main garment generation succeeds
-      }
-    }
+    // Every garment gets its own CAD sketch, drawn from that garment's photo.
+    const paired = await generatePairedSketches(
+      actor,
+      project,
+      generation.id,
+      images.map((img, i) => ({ imageId: img.id, image: { buffer: result.images[i].buffer, mimeType: result.images[i].mimeType } }))
+    );
+    await syncProjectSketchToCurrent(actor.companyId, projectId);
 
     await AiDesignerProjectRepository.update(projectId, { status: "IN_PROGRESS", newDesignStep: "DESIGNS" });
     await writeAuditLog({
@@ -720,9 +700,23 @@ export async function generateNewDesign(
       tableName: "ai_generations",
       recordId: generation.id,
       action: "CREATE",
-      newValues: { imageCount: images.length, provider: result.providerName, model: result.model, template: project.garmentTemplateKey },
+      newValues: {
+        imageCount: images.length,
+        sketchCount: paired.sketches.length,
+        sketchFailures: paired.failures,
+        provider: result.providerName,
+        model: result.model,
+        template: project.garmentTemplateKey,
+      },
     });
-    return { generation, images, usedTemplate: true as const, outputFormat: format };
+    return {
+      generation,
+      images,
+      sketches: paired.sketches,
+      sketchFailures: paired.failures,
+      sketchError: paired.lastError,
+      usedTemplate: true as const,
+    };
   } catch (err) {
     await AiDesignerGenerationRepository.markFailed(generation.id);
     await AiDesignerPromptRepository.markFailed(promptRow.id, "PROVIDER_ERROR", err instanceof Error ? err.message : "Unknown error.");
@@ -731,7 +725,9 @@ export async function generateNewDesign(
 }
 
 /**
- * Generates a technical CAD flat sketch directly for any AI Designer project.
+ * Generates a technical CAD flat sketch for the project's CURRENT design
+ * (View/Edit "Re-generate"). When the current design is a garment photo the
+ * sketch is linked to it, replacing that garment's previous sketch.
  */
 export async function generateSketchForProject(
   actor: ActorContext,
@@ -741,25 +737,46 @@ export async function generateSketchForProject(
   const project = await AiDesignerProjectRepository.findByIdWithDetails(actor.companyId, projectId);
   if (!project) throw new BusinessRuleError("NOT_FOUND", "AI Designer project not found.", { id: projectId });
 
-  let refImage: { buffer: Buffer; mimeType: string } | null = null;
-  if (project.currentVersion?.currentImage) {
-    const { attachment, buffer } = await getAttachmentForDownload(actor.companyId, project.currentVersion.currentImage.imageAttachmentId);
-    refImage = { buffer, mimeType: attachment.mimeType };
-  } else if (project.sourceImageAttachmentId) {
-    const { attachment, buffer } = await getAttachmentForDownload(actor.companyId, project.sourceImageAttachmentId);
-    refImage = { buffer, mimeType: attachment.mimeType };
-  } else if (project.fabricImageAttachmentId) {
-    const { attachment, buffer } = await getAttachmentForDownload(actor.companyId, project.fabricImageAttachmentId);
-    refImage = { buffer, mimeType: attachment.mimeType };
-  }
+  const current = project.currentVersion?.currentImage ?? null;
+  let refImage: ImageInput | null = null;
+  if (current) refImage = await loadImageBuffer(actor.companyId, current.imageAttachmentId);
+  else if (project.sourceImageAttachmentId) refImage = await loadImageBuffer(actor.companyId, project.sourceImageAttachmentId);
+  else if (project.fabricImageAttachmentId) refImage = await loadImageBuffer(actor.companyId, project.fabricImageAttachmentId);
 
-  const prompt = buildTechnicalFlatPrompt({ additionalNotes: options?.notes });
+  const garmentImageId = current && current.kind === "GARMENT" ? current.id : null;
+  return runStandaloneSketch(actor, project, { refImage, garmentImageId, notes: options?.notes, viewAngle: options?.viewAngle });
+}
+
+/**
+ * (Re)draws the CAD sketch for ONE generated garment — used by the Designs
+ * grid's "Generate sketch" (retry after a failure, or an older design that
+ * never had one). The garment's previous sketch is unlinked, never deleted.
+ */
+export async function generateSketchForImage(actor: ActorContext, projectId: string, imageId: string) {
+  const project = await AiDesignerProjectRepository.findByIdWithDetails(actor.companyId, projectId);
+  if (!project) throw new BusinessRuleError("NOT_FOUND", "AI Designer project not found.", { id: projectId });
+  const image = await AiDesignerImageRepository.findById(imageId);
+  if (!image || image.projectId !== projectId) throw new BusinessRuleError("NOT_FOUND", "Design image not found.", { id: imageId });
+  if (image.kind !== "GARMENT") throw new BusinessRuleError("VALIDATION_ERROR", "A sketch can only be generated for a garment design.");
+
+  const refImage = await loadImageBuffer(actor.companyId, image.imageAttachmentId);
+  const result = await runStandaloneSketch(actor, project, { refImage, garmentImageId: image.id });
+  return { ...result, garmentImageId: image.id };
+}
+
+async function runStandaloneSketch(
+  actor: ActorContext,
+  project: NonNullable<Awaited<ReturnType<typeof AiDesignerProjectRepository.findByIdWithDetails>>>,
+  input: { refImage: ImageInput | null; garmentImageId: string | null; notes?: string; viewAngle?: "FRONT" | "BACK" | "BOTH" }
+) {
+  const projectId = project.id;
+  const prompt = input.notes ? buildTechnicalFlatPrompt({ additionalNotes: input.notes }) : buildProjectSketchPrompt(project);
   const promptRow = await AiDesignerPromptRepository.create({
     companyId: actor.companyId,
     projectId,
     promptType: "IMAGE_GENERATE",
     promptVersion: NEW_DESIGN_PROMPT_VERSION,
-    specJson: { generateSketch: true, projectId, viewAngle: options?.viewAngle ?? "BOTH" },
+    specJson: { generateSketch: true, projectId, garmentImageId: input.garmentImageId, viewAngle: input.viewAngle ?? "BOTH" },
     promptText: prompt,
     provider: "pending",
     model: "pending",
@@ -782,18 +799,26 @@ export async function generateSketchForProject(
       userId: actor.userId,
       generationContext: `AI Designer / Generate CAD Sketch ${project.projectNumber}`,
       aiDesignerProjectId: projectId,
-      inputImagePresent: Boolean(refImage),
-      ...technicalSketchRun(prompt, 1, refImage),
+      inputImagePresent: Boolean(input.refImage),
+      ...technicalSketchRun(prompt, 1, input.refImage),
     });
+    if (result.images.length === 0) throw new Error("The provider returned no sketch image.");
 
-    const images = await persistImages(actor, projectId, generation.id, result.images, "GENERATED_SKETCH_IMAGE");
+    if (input.garmentImageId) await AiDesignerImageRepository.unlinkSketchFor(input.garmentImageId);
+    const images = await persistImages(actor, projectId, generation.id, result.images.slice(0, 1), "GENERATED_SKETCH_IMAGE", {
+      kind: "SKETCH",
+      sketchForImageId: input.garmentImageId,
+    });
     await AiDesignerGenerationRepository.markSuccess(generation.id);
     await AiDesignerPromptRepository.markSuccessWithProvider(promptRow.id, result.providerName, result.model);
-    if (images.length > 0) {
+
+    // Only the CURRENT design's sketch is the working sketch the edit page uses.
+    const isCurrent = !input.garmentImageId || input.garmentImageId === project.currentVersion?.currentImageId;
+    if (images.length > 0 && isCurrent) {
       await AiDesignerProjectRepository.update(projectId, { sketchImageAttachmentId: images[0].imageAttachmentId });
-      if (!project.currentVersionId) {
-        await bumpVersion(actor, projectId, images[0].id, "Technical CAD flat sketch generated.", { sketchOnly: true });
-      }
+    }
+    if (images.length > 0 && !project.currentVersionId) {
+      await bumpVersion(actor, projectId, images[0].id, "Technical CAD flat sketch generated.", { sketchOnly: true });
     }
     return { generation, images, sketchAttachmentId: images[0]?.imageAttachmentId ?? null };
   } catch (err) {
@@ -801,6 +826,242 @@ export async function generateSketchForProject(
     await AiDesignerPromptRepository.markFailed(promptRow.id, "PROVIDER_ERROR", err instanceof Error ? err.message : "Unknown error.");
     throw err;
   }
+}
+
+/**
+ * Renders the realistic garment, in the project's fabric, that matches a
+ * CAD sketch (sketch = reference image, fabric = material image).
+ */
+async function renderGarmentFromSketch(
+  actor: ActorContext,
+  project: Pick<
+    AiDesignerProject,
+    "id" | "projectNumber" | "fabricImageAttachmentId" | "productCategory" | "targetCustomer" | "ageGroup" | "environmentLabel" | "isCustomEnvironment"
+  >,
+  sketch: ImageInput,
+  designBrief: string | null
+) {
+  if (!project.fabricImageAttachmentId) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "Add a fabric photo to this design before rendering the garment from its sketch.");
+  }
+  const swatch = await loadImageBuffer(actor.companyId, project.fabricImageAttachmentId);
+  const garmentPrompt = buildTemplateDressSwapPrompt({
+    garmentType: project.productCategory || "Garment",
+    targetCustomer: TARGET_CUSTOMER_LABELS[project.targetCustomer as TargetCustomer] ?? "Women",
+    ageGroup: project.ageGroup || "Adult",
+    designBrief: designBrief ?? "Follow the supplied technical flat sketch exactly",
+    environmentLabel: project.environmentLabel || "Studio White",
+    environmentHint: project.isCustomEnvironment ? project.environmentLabel : null,
+    keepTemplateBackground: true,
+  });
+
+  return runWithFailover({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    capability: "DESIGN_REPLICATION",
+    generationContext: `AI Designer / Render Garment from Sketch ${project.projectNumber}`,
+    aiDesignerProjectId: project.id,
+    inputImagePresent: true,
+    call: (provider) => {
+      if (provider.replicateWithNewMaterial) {
+        return provider.replicateWithNewMaterial({ prompt: garmentPrompt, count: 1, referenceImage: sketch, materialImage: swatch });
+      }
+      if (provider.applyFabric) {
+        return provider.applyFabric({ prompt: garmentPrompt, count: 1, baseImage: sketch, swatchImage: swatch });
+      }
+      if (provider.generateVariation) {
+        return provider.generateVariation({ prompt: garmentPrompt, count: 1, parentImage: sketch });
+      }
+      return provider.generate({ prompt: garmentPrompt, count: 1 });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Applying an edit keeps the garment and its sketch in step
+// ---------------------------------------------------------------------------
+
+/**
+ * "Select & Apply" on an edit preview. Whatever was edited, the new version
+ * always ends up with a garment photo AND its matching sketch:
+ *   - garment preview: becomes the design, and gets its own sketch;
+ *   - sketch preview: the garment rendered with it (or rendered now) becomes
+ *     the design, and the sketch becomes the working sketch.
+ */
+export async function applyEditWithPairedSketch(actor: ActorContext, imageId: string, input: { confirmed: boolean }) {
+  if (!input.confirmed) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "Applying an edit as the new current design requires explicit confirmation.");
+  }
+  const image = await AiDesignerImageRepository.findWithProjectOwner(imageId);
+  if (!image || image.project.companyId !== actor.companyId) {
+    throw new BusinessRuleError("NOT_FOUND", "Previewed image not found.", { id: imageId });
+  }
+
+  if (image.kind === "GARMENT") {
+    const version = await applyEditVariation(actor, imageId, input);
+    const sketchError = await ensureSketchForGarment(actor, image.projectId, imageId);
+    return { ...version, sketchError };
+  }
+
+  // A sketch preview: the design must be a garment, so find or render the garment for it.
+  if (image.decision !== "PENDING") {
+    throw new BusinessRuleError("INVALID_STATE_TRANSITION", "This preview has already been decided — generate a new preview to try again.");
+  }
+  let garmentId = image.sketchForImageId;
+  if (!garmentId) {
+    const project = await AiDesignerProjectRepository.findByIdWithDetails(actor.companyId, image.projectId);
+    if (!project) throw new BusinessRuleError("NOT_FOUND", "AI Designer project not found.", { id: image.projectId });
+    const sketch = await loadImageBuffer(actor.companyId, image.imageAttachmentId);
+    const rendered = await renderGarmentFromSketch(actor, project, sketch, null);
+    if (rendered.images.length === 0) throw new BusinessRuleError("AI_SERVICE_ERROR", "The garment could not be rendered from this sketch.");
+    // Same generation as the sketch, so it is a preview of the same edit of the current design.
+    const [garment] = await persistImages(actor, image.projectId, image.generationId, rendered.images.slice(0, 1), "GENERATED_DESIGN_IMAGE", {
+      kind: "GARMENT",
+    });
+    await AiDesignerImageRepository.update(imageId, { sketchForImageId: garment.id });
+    garmentId = garment.id;
+  }
+
+  const version = await applyEditVariation(actor, garmentId, input);
+  // applyEditVariation rejects the other previews of the edit — this sketch is the garment's own, so keep it.
+  await AiDesignerImageRepository.update(imageId, { decision: "SELECTED" });
+  await AiDesignerProjectRepository.update(image.projectId, { sketchImageAttachmentId: image.imageAttachmentId });
+  return { ...version, sketchError: null };
+}
+
+/**
+ * Makes sure a (now current) garment has its own sketch, generating one if
+ * needed, and makes it the working sketch. Returns an error message instead
+ * of throwing — the garment edit itself has already been applied.
+ */
+async function ensureSketchForGarment(actor: ActorContext, projectId: string, garmentId: string): Promise<string | null> {
+  const existing = await AiDesignerImageRepository.findSketchFor(garmentId);
+  if (existing) {
+    await AiDesignerProjectRepository.update(projectId, { sketchImageAttachmentId: existing.imageAttachmentId });
+    return null;
+  }
+  try {
+    await generateSketchForImage(actor, projectId, garmentId);
+    return null;
+  } catch (err) {
+    // Never leave the previous design's sketch showing next to the new garment.
+    await AiDesignerProjectRepository.update(projectId, { sketchImageAttachmentId: null });
+    return err instanceof Error ? err.message : "The sketch could not be generated.";
+  }
+}
+
+/**
+ * "Apply sketch to garment" (edit page, Options tab): renders the garment
+ * from the current working sketch and records it as a new version, so the
+ * garment catches up with the construction options applied to the sketch.
+ */
+export async function applyWorkingSketchToGarment(actor: ActorContext, projectId: string) {
+  const project = await AiDesignerProjectRepository.findByIdWithDetails(actor.companyId, projectId);
+  if (!project) throw new BusinessRuleError("NOT_FOUND", "AI Designer project not found.", { id: projectId });
+  if (!project.sketchImageAttachmentId) throw new BusinessRuleError("VALIDATION_ERROR", "This design has no sketch yet.");
+
+  const sketchImage = await AiDesignerImageRepository.findByProjectAndAttachment(projectId, project.sketchImageAttachmentId);
+  const current = project.currentVersion?.currentImage ?? null;
+  if (sketchImage?.sketchForImageId && sketchImage.sketchForImageId === current?.id) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "The garment already matches this sketch — apply a construction option first.");
+  }
+
+  const promptRow = await AiDesignerPromptRepository.create({
+    companyId: actor.companyId,
+    projectId,
+    promptType: "IMAGE_EDIT",
+    promptVersion: NEW_DESIGN_PROMPT_VERSION,
+    specJson: { sketchToGarment: true, sourceSketchAttachmentId: project.sketchImageAttachmentId } as Prisma.InputJsonValue,
+    promptText: "Render the garment from the edited technical flat sketch.",
+    provider: "pending",
+    model: "pending",
+    status: "IN_PROGRESS",
+    createdByUserId: actor.userId,
+  });
+  const generation = await AiDesignerGenerationRepository.create({
+    companyId: actor.companyId,
+    projectId,
+    promptId: promptRow.id,
+    parentImageId: current?.id ?? null,
+    editedFeature: "Sketch → Garment",
+    requestedImageCount: 1,
+    status: "IN_PROGRESS",
+    createdByUserId: actor.userId,
+  });
+
+  try {
+    const sketch = await loadImageBuffer(actor.companyId, project.sketchImageAttachmentId);
+    const rendered = await renderGarmentFromSketch(actor, project, sketch, null);
+    if (rendered.images.length === 0) throw new Error("The provider returned no garment image.");
+    const [garment] = await persistImages(actor, projectId, generation.id, rendered.images.slice(0, 1), "GENERATED_DESIGN_IMAGE", {
+      kind: "GARMENT",
+    });
+    // Link the sketch to its new garment (a sketch already paired with an older garment keeps that pairing).
+    if (sketchImage && !sketchImage.sketchForImageId) {
+      await AiDesignerImageRepository.update(sketchImage.id, { sketchForImageId: garment.id });
+    }
+    await AiDesignerImageRepository.update(garment.id, { decision: "SELECTED" });
+    await AiDesignerGenerationRepository.markSuccess(generation.id);
+    await AiDesignerPromptRepository.markSuccessWithProvider(promptRow.id, rendered.providerName, rendered.model);
+
+    const version = await bumpVersion(
+      actor,
+      projectId,
+      garment.id,
+      "Garment updated from the edited sketch.",
+      (project.currentVersion?.designSnapshotJson as Record<string, unknown> | undefined) ?? {},
+      { approvalStatus: "AI_MODIFIED", aiPromptId: promptRow.id }
+    );
+    await writeAuditLog({
+      companyId: actor.companyId,
+      userId: actor.userId,
+      tableName: "ai_versions",
+      recordId: version.id,
+      action: "CREATE",
+      newValues: { versionNumber: version.versionNumber, imageId: garment.id, fromSketchAttachmentId: project.sketchImageAttachmentId },
+    });
+    return version;
+  } catch (err) {
+    await AiDesignerGenerationRepository.markFailed(generation.id);
+    await AiDesignerPromptRepository.markFailed(promptRow.id, "PROVIDER_ERROR", err instanceof Error ? err.message : "Unknown error.");
+    throw err;
+  }
+}
+
+/** Points the project's working sketch at the CURRENT garment's own sketch (or clears it). */
+async function syncProjectSketchToCurrent(companyId: string, projectId: string) {
+  const project = await AiDesignerProjectRepository.findByIdWithDetails(companyId, projectId);
+  const current = project?.currentVersion?.currentImage;
+  if (!project || !current || current.kind !== "GARMENT") return;
+  const sketch = await AiDesignerImageRepository.findSketchFor(current.id);
+  await AiDesignerProjectRepository.update(projectId, { sketchImageAttachmentId: sketch?.imageAttachmentId ?? null });
+}
+
+/**
+ * Undo on the edit page: makes an earlier sketch of THIS project the working
+ * sketch again. Accepts a generated SKETCH image's attachment, or the
+ * project's own uploaded source sketch.
+ */
+export async function setCurrentSketch(actor: ActorContext, projectId: string, attachmentId: string) {
+  const project = await AiDesignerProjectRepository.findAnyById(actor.companyId, projectId);
+  if (!project) throw new BusinessRuleError("NOT_FOUND", "AI Designer project not found.", { id: projectId });
+  const isSourceSketch = project.designSource === "SKETCH" && project.sourceImageAttachmentId === attachmentId;
+  if (!isSourceSketch) {
+    const image = await AiDesignerImageRepository.findByProjectAndAttachment(projectId, attachmentId);
+    if (!image) throw new BusinessRuleError("NOT_FOUND", "Sketch not found for this design.", { attachmentId });
+    if (image.kind !== "SKETCH") throw new BusinessRuleError("VALIDATION_ERROR", "Only a sketch can be restored as the working sketch.");
+  }
+  await AiDesignerProjectRepository.update(projectId, { sketchImageAttachmentId: attachmentId });
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "ai_projects",
+    recordId: projectId,
+    action: "UPDATE",
+    oldValues: { sketchImageAttachmentId: project.sketchImageAttachmentId },
+    newValues: { sketchImageAttachmentId: attachmentId },
+  });
+  return getProjectById(actor.companyId, projectId);
 }
 
 /**
@@ -919,55 +1180,31 @@ export async function executeSketchEdit(
       },
     });
 
-    const sketchImages = await persistImages(actor, projectId, generation.id, result.images, "GENERATED_SKETCH_IMAGE");
+    const sketchImages = await persistImages(actor, projectId, generation.id, result.images, "GENERATED_SKETCH_IMAGE", { kind: "SKETCH" });
     const allImages = [...sketchImages];
 
     // If generateGarment is requested (default true) and fabric exists, also generate garment matching revised sketch
     if (input.generateGarment !== false && project.fabricImageAttachmentId && sketchImages.length > 0) {
       try {
-        const { attachment: fabricAttachment, buffer: fabricBuffer } = await getAttachmentForDownload(actor.companyId, project.fabricImageAttachmentId);
-        const garmentPrompt = buildTemplateDressSwapPrompt({
-          garmentType: project.productCategory || "Garment",
-          targetCustomer: TARGET_CUSTOMER_LABELS[project.targetCustomer as TargetCustomer] ?? "Women",
-          ageGroup: project.ageGroup || "Adult",
-          designBrief:
-            [
-              markupImage ? "Follow the revised technical flat sketch exactly (designer's pen-marked construction changes applied)" : null,
-              input.instruction?.trim() || null,
-              input.structuralFields ? Object.entries(input.structuralFields).map(([k, v]) => `${k}: ${v}`).join(", ") : null,
-            ]
-              .filter(Boolean)
-              .join(". ") || null,
-          environmentLabel: project.environmentLabel || "Studio White",
-          environmentHint: project.isCustomEnvironment ? project.environmentLabel : null,
-          keepTemplateBackground: true,
-        });
-
-        const garmentResult = await runWithFailover({
-          companyId: actor.companyId,
-          userId: actor.userId,
-          capability: "DESIGN_REPLICATION",
-          generationContext: `AI Designer / Render Garment from Sketch ${project.projectNumber}`,
-          aiDesignerProjectId: projectId,
-          inputImagePresent: true,
-          call: (provider) => {
-            const swatch = { buffer: fabricBuffer, mimeType: fabricAttachment.mimeType };
-            const newSketchRef = { buffer: result.images[0].buffer, mimeType: result.images[0].mimeType };
-            if (provider.replicateWithNewMaterial) {
-              return provider.replicateWithNewMaterial({ prompt: garmentPrompt, count: 1, referenceImage: newSketchRef, materialImage: swatch });
-            }
-            if (provider.applyFabric) {
-              return provider.applyFabric({ prompt: garmentPrompt, count: 1, baseImage: newSketchRef, swatchImage: swatch });
-            }
-            if (provider.generateVariation) {
-              return provider.generateVariation({ prompt: garmentPrompt, count: 1, parentImage: newSketchRef });
-            }
-            return provider.generate({ prompt: garmentPrompt, count: 1 });
-          },
-        }).catch(() => null);
+        const garmentResult = await renderGarmentFromSketch(
+          actor,
+          project,
+          { buffer: result.images[0].buffer, mimeType: result.images[0].mimeType },
+          [
+            markupImage ? "Follow the revised technical flat sketch exactly (designer's pen-marked construction changes applied)" : null,
+            input.instruction?.trim() || null,
+            input.structuralFields ? Object.entries(input.structuralFields).map(([k, v]) => `${k}: ${v}`).join(", ") : null,
+          ]
+            .filter(Boolean)
+            .join(". ") || null
+        ).catch(() => null);
 
         if (garmentResult && garmentResult.images.length > 0) {
-          const garmentImages = await persistImages(actor, projectId, generation.id, garmentResult.images, "GENERATED_DESIGN_IMAGE");
+          const garmentImages = await persistImages(actor, projectId, generation.id, garmentResult.images, "GENERATED_DESIGN_IMAGE", { kind: "GARMENT" });
+          // The revised sketch is this new garment's own sketch.
+          if (garmentImages[0]) {
+            await AiDesignerImageRepository.update(sketchImages[0].id, { sketchForImageId: garmentImages[0].id });
+          }
           allImages.unshift(...garmentImages);
         }
       } catch {
@@ -1088,23 +1325,37 @@ export async function generateColorVariants(actor: ActorContext, projectId: stri
 // Step 4 — the designs list, and making one design the current version
 // ---------------------------------------------------------------------------
 
-/** Only the Generate step's own images (never colour variants or edit previews), newest first. */
+/**
+ * The Designs grid: only GARMENT images from the Generate step (never colour
+ * variants or edit previews), newest first — each with its own linked sketch.
+ * Sketches are no longer separate cards.
+ */
 export async function listGeneratedDesigns(actor: ActorContext, projectId: string) {
   const project = await AiDesignerProjectRepository.findAnyById(actor.companyId, projectId);
   if (!project) throw new BusinessRuleError("NOT_FOUND", "AI Designer project not found.", { id: projectId });
   const generations = await AiDesignerGenerationRepository.findManyByProjectAndPromptType(projectId, "IMAGE_GENERATE");
-  return generations.flatMap((g) => g.images).filter((img) => img.decision !== "REJECTED");
+  return generations
+    .flatMap((g) => g.images)
+    .filter((img) => img.kind === "GARMENT" && img.decision !== "REJECTED")
+    .map((img) => ({
+      ...img,
+      sketch: img.sketch && img.sketch.decision !== "REJECTED" ? { id: img.sketch.id, imageAttachmentId: img.sketch.imageAttachmentId } : null,
+    }));
 }
 
 /**
  * Opening a specific design in the View/Edit pages works on the project's
  * CURRENT version — so choosing a design that isn't current records it as a
  * new version (full history kept, nothing overwritten) and marks it SELECTED.
+ * The project's working sketch follows: it becomes THIS garment's own sketch.
  */
 export async function makeImageCurrent(actor: ActorContext, projectId: string, imageId: string) {
   const full = await getProjectById(actor.companyId, projectId);
   const image = await AiDesignerImageRepository.findById(imageId);
   if (!image || image.projectId !== projectId) throw new BusinessRuleError("NOT_FOUND", "Design image not found.", { id: imageId });
+  if (image.kind !== "GARMENT") {
+    throw new BusinessRuleError("VALIDATION_ERROR", "Open the garment design — its sketch opens with it.");
+  }
 
   if (full.currentVersion?.currentImageId !== imageId) {
     await bumpVersion(actor, projectId, imageId, "Design chosen from generated set.", {
@@ -1113,5 +1364,7 @@ export async function makeImageCurrent(actor: ActorContext, projectId: string, i
     });
   }
   if (image.decision !== "SELECTED") await AiDesignerImageRepository.update(imageId, { decision: "SELECTED" });
+  const sketch = await AiDesignerImageRepository.findSketchFor(imageId);
+  await AiDesignerProjectRepository.update(projectId, { sketchImageAttachmentId: sketch?.imageAttachmentId ?? null });
   return getProjectById(actor.companyId, projectId);
 }

@@ -19,7 +19,7 @@ interface ActorContext {
   userId: string;
 }
 
-/** A full 7-page run can take several minutes; an IN_PROGRESS page older than this is treated as abandoned. */
+/** A full page run can take several minutes; an IN_PROGRESS page older than this is treated as abandoned. */
 const PAGE_RUN_STALE_MS = 10 * 60 * 1000;
 /** Pages generated at the same time — keeps within provider rate limits while not taking 7× as long. */
 const PAGE_CONCURRENCY = 2;
@@ -48,12 +48,12 @@ async function getMasterTechPack(companyId: string, projectId: string, techPackI
 }
 
 // ---------------------------------------------------------------------------
-// Step 1 — master-prompt analysis + 7 page prompts
+// Step 1 — master-prompt analysis + page prompts
 // ---------------------------------------------------------------------------
 
 /**
- * Runs the master-prompt analysis (one vision call), builds the 7 page
- * prompts and creates the 7 page rows as PENDING. Page images are generated
+ * Runs the master-prompt analysis (one vision call), builds the page
+ * prompts and creates one page row per page as PENDING. Page images are generated
  * separately (generateTechPackPageImages) so this returns in about a minute
  * while the images render in the background.
  */
@@ -281,9 +281,9 @@ export async function updatePagePrompt(actor: ActorContext, projectId: string, t
   const page = techPack.pages.find((p) => p.pageNumber === input.pageNumber);
   if (!page) throw new BusinessRuleError("NOT_FOUND", "Tech pack page not found.", { pageNumber: input.pageNumber });
 
-  const promptText = input.reset
-    ? buildTechPackPagePrompts(json.analysis).find((p) => p.pageNumber === input.pageNumber)!.promptText
-    : (input.promptText ?? "").trim();
+  // A page that is no longer built (the removed Colorways page 4 on an older pack) keeps its stored prompt on reset.
+  const rebuilt = buildTechPackPagePrompts(json.analysis).find((p) => p.pageNumber === input.pageNumber);
+  const promptText = input.reset ? (rebuilt?.promptText ?? page.promptText ?? "") : (input.promptText ?? "").trim();
   if (!promptText) throw new BusinessRuleError("VALIDATION_ERROR", "The page prompt cannot be empty.");
 
   await prisma.aiDesignerTechPackPage.update({ where: { id: page.id }, data: { promptText, promptEdited: !input.reset } });
