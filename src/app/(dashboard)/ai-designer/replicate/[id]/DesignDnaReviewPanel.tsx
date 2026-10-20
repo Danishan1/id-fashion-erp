@@ -190,7 +190,7 @@ export function DesignDnaReviewPanel({ projectId, hasReferenceImage, analysis, b
                   </div>
                 )}
                 {obs.userEdited && editingId !== obs.id && (
-                  <p className="mt-1 text-[11px] text-zinc-400">
+                  <p className="mt-1 text-xs text-zinc-400">
                     Manually corrected — AI originally said: &quot;{obs.aiObservation}&quot;
                   </p>
                 )}

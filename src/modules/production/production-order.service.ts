@@ -12,6 +12,7 @@ import { createMaterialRequest } from "@/modules/inventory/material-request.serv
 import { ProductRepository } from "@/modules/products/product.repository";
 import { ProductionOrderStatus, type Prisma } from "@prisma/client";
 import { attachDispatchReadiness } from "./dispatch-readiness.service";
+import { assignedLotWhere, assignedProductionOrderWhere, getProductionRecordScope } from "./production-scope";
 import { LotRepository, ProductionOrderRepository } from "./production.repository";
 import { getProductionOrderProgress } from "./production-progress.service";
 import { materialRequestScopeForOrder } from "./material-request-scope";
@@ -105,9 +106,11 @@ const VALID_PRODUCTION_ORDER_STATUSES = new Set<string>(Object.values(Production
 
 export async function listProductionOrders(actor: { companyId: string; userId: string }, query: ListQuery) {
   const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
+  const recordScope = await getProductionRecordScope(actor.userId);
   const where: Prisma.ProductionOrderWhereInput = {
     companyId: actor.companyId,
     ...branchScopeWhere(allowedBranchIds),
+    ...assignedProductionOrderWhere(recordScope),
     ...(query.search ? { orderNumber: { contains: query.search, mode: "insensitive" as const } } : {}),
     ...(query.status && VALID_PRODUCTION_ORDER_STATUSES.has(query.status)
       ? { status: query.status as ProductionOrderStatus }
@@ -134,6 +137,31 @@ export async function getProductionOrderById(actor: { companyId: string; userId:
   const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
   if (allowedBranchIds !== null && (!order.branchId || !allowedBranchIds.has(order.branchId))) {
     throw new BusinessRuleError("NOT_FOUND", "Production order not found.", { id });
+  }
+
+  // P1: an assigned-only user (e.g. a worker) sees the order only if one of
+  // its lots carries their assignment, and only those lots -- none of the
+  // order-level planning numbers (sales commitment, quantity changes).
+  const recordScope = await getProductionRecordScope(actor.userId);
+  if (recordScope.mode === "ASSIGNED") {
+    const visibleLots = recordScope.employeeId
+      ? await prisma.lot.findMany({
+          where: { productionOrderId: id, companyId: actor.companyId, ...assignedLotWhere(recordScope) },
+          select: { id: true },
+        })
+      : [];
+    if (visibleLots.length === 0) throw new BusinessRuleError("NOT_FOUND", "Production order not found.", { id });
+    const visibleIds = new Set(visibleLots.map((l) => l.id));
+    const progress = await getProductionOrderProgress(actor.companyId, id);
+    const [withReadiness] = await attachDispatchReadiness(actor.companyId, [order]);
+    return {
+      ...order,
+      lots: order.lots.filter((l) => visibleIds.has(l.id)),
+      salesOrderContext: null,
+      progress,
+      quantityChanges: [],
+      dispatchReadiness: withReadiness.dispatchReadiness,
+    };
   }
 
   const salesOrderContext = order.salesOrderItemId

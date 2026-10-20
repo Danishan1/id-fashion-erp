@@ -10,6 +10,7 @@ import type { CreateLotInput, MergeLotsInput, SplitLotInput } from "./production
 import type { ActorContext } from "./production-order.service";
 import { computeAvailableToCommit, sumAssignmentConsumed } from "./assignment-capacity";
 import { assertLotMaterialReady } from "./lot-readiness.service";
+import { assertProductionBranchScope, getProductionRecordScope } from "./production-scope";
 import {
   assertStageAccess,
   findFirstActiveStage,
@@ -52,8 +53,24 @@ export async function getLotById(companyId: string, id: string, userId: string) 
   }
 
   const allowedStageIds = await PermissionService.getAllowedProductionStageIds(userId);
-  const visibleJobOrders =
+  const stageVisible =
     allowedStageIds === null ? lot.jobOrders : lot.jobOrders.filter((jo) => allowedStageIds.has(jo.productionStage.id));
+
+  // P1: an assigned-only user (e.g. a worker) sees only the job-order cards
+  // they're assigned to, and only their own assignment rows -- never other
+  // workers' names or quantities. A lot with none of their work is "not found".
+  const recordScope = await getProductionRecordScope(userId);
+  const ownEmployeeId = recordScope.mode === "ASSIGNED" ? recordScope.employeeId : null;
+  const isOwn = (a: { employeeId: string; status: string }) => a.employeeId === ownEmployeeId && a.status !== "CANCELLED";
+  const visibleJobOrders =
+    recordScope.mode === "ALL"
+      ? stageVisible
+      : stageVisible
+          .filter((jo) => ownEmployeeId !== null && jo.assignments.some(isOwn))
+          .map((jo) => ({ ...jo, assignments: jo.assignments.filter(isOwn) }));
+  if (recordScope.mode === "ASSIGNED" && visibleJobOrders.length === 0) {
+    throw new BusinessRuleError("NOT_FOUND", "Lot not found.", { id });
+  }
 
   // Worker-assignment figures for the Assign Worker / Log Process screens,
   // computed with the exact same helpers the write paths enforce — so a UI
@@ -96,6 +113,7 @@ export async function getLotGenealogy(companyId: string, id: string) {
 export async function createLot(actor: ActorContext, productionOrderId: string, input: CreateLotInput) {
   const order = await ProductionOrderRepository.findAnyById(actor.companyId, productionOrderId);
   if (!order) throw new BusinessRuleError("NOT_FOUND", "Production order not found.", { id: productionOrderId });
+  await assertProductionBranchScope(actor, order.branchId, { label: "Production order", id: productionOrderId });
 
   if (order.status === "CANCELLED" || order.status === "CLOSED") {
     throw new BusinessRuleError("INVALID_STATE_TRANSITION", `Cannot create a lot on a production order in "${order.status}" status.`, {
@@ -292,6 +310,7 @@ async function assertLotAtRest(lotId: string, action: string) {
 export async function splitLot(actor: ActorContext, parentLotId: string, input: SplitLotInput) {
   const parent = await LotRepository.findAnyById(actor.companyId, parentLotId);
   if (!parent) throw new BusinessRuleError("NOT_FOUND", "Lot not found.", { id: parentLotId });
+  await assertProductionBranchScope(actor, parent.branchId, { label: "Lot", id: parentLotId });
 
   if (parent.status !== "PLANNED" && parent.status !== "IN_PROGRESS") {
     throw new BusinessRuleError("LOT_GENEALOGY_INVALID", `Cannot split a lot in "${parent.status}" status.`, { currentStatus: parent.status });
@@ -374,6 +393,9 @@ export async function mergeLots(actor: ActorContext, input: MergeLotsInput) {
     throw new BusinessRuleError("NOT_FOUND", "Lot not found.", { id: input.parentLotIds[missingIndex] });
   }
   const validParents = parents as NonNullable<(typeof parents)[number]>[];
+  for (const p of validParents) {
+    await assertProductionBranchScope(actor, p.branchId, { label: "Lot", id: p.id });
+  }
 
   const firstOrderId = validParents[0].productionOrderId;
   const firstUomId = validParents[0].uomId;

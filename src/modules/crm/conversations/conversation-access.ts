@@ -1,6 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import type { CrmActor } from "../core/crm-actor";
-import { crmOwnerWhere, type CrmRecordScope } from "../core/crm-visibility";
+import { crmOwnerWhere, crmScopeUserFilter, type CrmRecordScope } from "../core/crm-visibility";
 
 /**
  * Who can see a conversation (Phase 11). Kept free of service imports so the
@@ -20,7 +20,7 @@ export function conversationScopeWhere(actor: CrmActor, scope: CrmRecordScope): 
   const owned = crmOwnerWhere(scope);
   return {
     OR: [
-      { assignedToUserId: actor.userId },
+      { assignedToUserId: crmScopeUserFilter(scope) },
       {
         assignedToUserId: null,
         OR: [

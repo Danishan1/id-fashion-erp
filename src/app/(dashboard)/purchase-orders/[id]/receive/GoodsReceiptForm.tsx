@@ -296,12 +296,12 @@ export function GoodsReceiptForm({ purchaseOrderId, lines }: { purchaseOrderId: 
                 <p className="text-sm font-medium text-zinc-900 dark:text-zinc-50">
                   {line.styleName} <span className="text-xs text-zinc-400">({line.styleCode})</span>
                   {isFabric && (
-                    <span className="ml-1 rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-300">
+                    <span className="ml-1 rounded bg-indigo-50 px-1.5 py-0.5 text-xs font-medium text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-300">
                       Fabric — roll tracking required
                     </span>
                   )}
                   {(line.colorName || line.shadeName) && (
-                    <span className="ml-1 rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                    <span className="ml-1 rounded bg-zinc-100 px-1.5 py-0.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
                       {[line.colorName, line.shadeName].filter(Boolean).join(" / ")}
                     </span>
                   )}

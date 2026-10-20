@@ -1,6 +1,9 @@
 import { notFound } from "next/navigation";
 import { auth } from "@/core/auth/auth";
-import { getEmployeeById } from "@/modules/employees/employee.service";
+import { getEmployeeById, getEmployeeLogin } from "@/modules/employees/employee.service";
+import { PermissionService } from "@/core/rbac/PermissionService";
+import { EmployeeLoginSection } from "../EmployeeLoginSection";
+import { ReportingLinesSection } from "../ReportingLinesSection";
 import { EmployeeEditFormClient } from "./EmployeeEditFormClient";
 import { EmployeeAttachmentsSection } from "../EmployeeAttachmentsSection";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
@@ -11,6 +14,11 @@ export default async function EditEmployeePage({ params }: { params: Promise<{ i
 
   const employee = await getEmployeeById(session!.user.companyId, id).catch(() => null);
   if (!employee) notFound();
+  const [login, canCreateLogin, canEditEmployee] = await Promise.all([
+    getEmployeeLogin(session!.user.companyId, id),
+    PermissionService.can(session!.user.id, "administration_users", "create"),
+    PermissionService.can(session!.user.id, "masters_core", "edit"),
+  ]);
 
   return (
     <div className="space-y-8">
@@ -47,6 +55,22 @@ export default async function EditEmployeePage({ params }: { params: Promise<{ i
           isActive: employee.isActive,
           workSkillStageIds: employee.workSkills.map((w) => w.productionStageId),
         }}
+      />
+
+      <EmployeeLoginSection
+        key={`login-${id}`}
+        employeeId={id}
+        employeeEmail={employee.email}
+        employeeActive={employee.isActive}
+        login={login}
+        canCreateLogin={canCreateLogin}
+      />
+
+      <ReportingLinesSection
+        key={`reporting-${id}`}
+        employeeId={id}
+        generalManagerName={employee.reportsTo?.fullName ?? null}
+        canEdit={canEditEmployee}
       />
 
       <div className="max-w-xl">

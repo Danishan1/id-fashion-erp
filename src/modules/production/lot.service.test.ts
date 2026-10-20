@@ -7,6 +7,7 @@ const mockPrismaClient = vi.hoisted(() => ({
   productVariant: { count: vi.fn(), findMany: vi.fn() },
   lotVariantBreakdown: { groupBy: vi.fn() },
   salesOrderItem: { findFirst: vi.fn() },
+  user: { findUnique: vi.fn() },
 }));
 vi.mock("@/core/db/client", () => ({
   prisma: { ...mockPrismaClient, $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(mockTx)) },
@@ -23,7 +24,11 @@ vi.mock("./production.repository", () => ({
   ProductionOrderRepository: { findAnyById: vi.fn(), incrementLotSequenceInTx: vi.fn() },
 }));
 vi.mock("@/core/rbac/PermissionService", () => ({
-  PermissionService: { getAllowedBranchIds: vi.fn(), getAllowedProductionStageIds: vi.fn() },
+  PermissionService: { getAllowedBranchIds: vi.fn(), getAllowedProductionStageIds: vi.fn(), can: vi.fn().mockResolvedValue(true) },
+}));
+vi.mock("./assignment-capacity", () => ({
+  computeAvailableToCommit: vi.fn().mockResolvedValue({ available: 0 }),
+  sumAssignmentConsumed: vi.fn().mockResolvedValue(0),
 }));
 vi.mock("./lot-readiness.service", () => ({ assertLotMaterialReady: vi.fn() }));
 vi.mock("./job-order.service", () => ({
@@ -348,5 +353,76 @@ describe("getVariantBreakdownSuggestions", () => {
     expect(rows).toEqual([
       { productVariantId: "pv-1", colorName: "Black", sizeName: "L", skuCode: "SKU-1", orderedQuantity: null, alreadyInLots: 0, remaining: null },
     ]);
+  });
+});
+
+describe("getLotById — P1 assigned-only workers", () => {
+  const jobOrderAt = (id: string, assignments: Array<{ id: string; employeeId: string; status: string }>) => ({
+    id,
+    productionStage: { id: "stage-1" },
+    plannedQuantity: "10",
+    completedQuantity: "0",
+    rejectedQuantity: "0",
+    damagedQuantity: "0",
+    extraQuantity: "0",
+    assignments: assignments.map((a) => ({ ...a, assignedQuantity: "5" })),
+  });
+
+  beforeEach(() => {
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(null);
+    vi.mocked(PermissionService.getAllowedProductionStageIds).mockResolvedValue(null);
+    vi.mocked(PermissionService.can).mockResolvedValue(false); // no production.view_all
+    vi.mocked(mockPrismaClient.user.findUnique).mockResolvedValue({ employeeId: "emp-me" } as never);
+  });
+
+  it("shows only my job-order cards, and only my assignment rows", async () => {
+    vi.mocked(LotRepository.findByIdWithDetails).mockResolvedValue({
+      id: "lot-1",
+      branchId: "branch-1",
+      jobOrders: [
+        jobOrderAt("jo-mine", [
+          { id: "a1", employeeId: "emp-me", status: "IN_PROGRESS" },
+          { id: "a2", employeeId: "emp-other", status: "ASSIGNED" },
+        ]),
+        jobOrderAt("jo-theirs", [{ id: "a3", employeeId: "emp-other", status: "ASSIGNED" }]),
+      ],
+    } as never);
+
+    const lot = await getLotById("co-1", "lot-1", "user-1");
+    expect(lot.jobOrders.map((jo) => jo.id)).toEqual(["jo-mine"]);
+    expect(lot.jobOrders[0].assignments.map((a) => a.id)).toEqual(["a1"]);
+  });
+
+  it("is 'not found' when the lot has none of my work (or only a cancelled assignment)", async () => {
+    vi.mocked(LotRepository.findByIdWithDetails).mockResolvedValue({
+      id: "lot-1",
+      branchId: "branch-1",
+      jobOrders: [jobOrderAt("jo-1", [{ id: "a1", employeeId: "emp-me", status: "CANCELLED" }])],
+    } as never);
+    await expect(getLotById("co-1", "lot-1", "user-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("is 'not found' for a worker login with no linked employee", async () => {
+    vi.mocked(mockPrismaClient.user.findUnique).mockResolvedValue({ employeeId: null } as never);
+    vi.mocked(LotRepository.findByIdWithDetails).mockResolvedValue({
+      id: "lot-1",
+      branchId: "branch-1",
+      jobOrders: [jobOrderAt("jo-1", [{ id: "a1", employeeId: "emp-me", status: "ASSIGNED" }])],
+    } as never);
+    await expect(getLotById("co-1", "lot-1", "user-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("leaves everything visible for a production.view_all holder", async () => {
+    vi.mocked(PermissionService.can).mockResolvedValue(true);
+    vi.mocked(LotRepository.findByIdWithDetails).mockResolvedValue({
+      id: "lot-1",
+      branchId: "branch-1",
+      jobOrders: [
+        jobOrderAt("jo-1", [{ id: "a1", employeeId: "emp-x", status: "ASSIGNED" }]),
+        jobOrderAt("jo-2", [{ id: "a2", employeeId: "emp-y", status: "ASSIGNED" }]),
+      ],
+    } as never);
+    const lot = await getLotById("co-1", "lot-1", "user-1");
+    expect(lot.jobOrders).toHaveLength(2);
   });
 });

@@ -73,7 +73,7 @@ export function VariablePicker({ meta, onPick, disabled }: { meta: TemplateMetaD
             if (!vars.length) return null;
             return (
               <div key={ent.key} className="mb-2">
-                <p className="px-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">{ent.label}</p>
+                <p className="px-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">{ent.label}</p>
                 <ul>
                   {vars.map((v) => (
                     <li key={v.key}>
@@ -87,7 +87,7 @@ export function VariablePicker({ meta, onPick, disabled }: { meta: TemplateMetaD
                         }}
                       >
                         <span className="text-zinc-800 dark:text-zinc-100">{v.label}</span>
-                        <code className="truncate text-[10px] text-zinc-400">{`{{${v.key}}}`}</code>
+                        <code className="truncate text-xs text-zinc-400">{`{{${v.key}}}`}</code>
                       </button>
                     </li>
                   ))}
@@ -95,7 +95,7 @@ export function VariablePicker({ meta, onPick, disabled }: { meta: TemplateMetaD
               </div>
             );
           })}
-          <p className="border-t border-zinc-100 px-1 pt-2 text-[11px] text-zinc-500 dark:border-zinc-800">
+          <p className="border-t border-zinc-100 px-1 pt-2 text-xs text-zinc-500 dark:border-zinc-800">
             Missing values print nothing. Add a fallback after a bar: <code>{"{{contact.first_name|there}}"}</code>
             {meta.unavailable.map((u) => (
               <span key={u.key} className="mt-1 block">

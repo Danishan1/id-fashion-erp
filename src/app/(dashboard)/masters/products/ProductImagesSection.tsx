@@ -256,7 +256,7 @@ export function ProductImagesSection({ productId, onClose }: ProductImagesSectio
                           type="button"
                           onClick={() => setMainImage(img.id)}
                           disabled={isBusy}
-                          className="block w-full rounded border border-zinc-300 px-1.5 py-0.5 text-[10px] font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                          className="block w-full rounded border border-zinc-300 px-1.5 py-0.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
                         >
                           Set as Main
                         </button>
@@ -264,7 +264,7 @@ export function ProductImagesSection({ productId, onClose }: ProductImagesSectio
                           type="button"
                           onClick={() => removeImage(img.id)}
                           disabled={isBusy}
-                          className="block w-full text-center text-[10px] font-medium text-red-600 hover:text-red-500 disabled:opacity-50"
+                          className="block w-full text-center text-xs font-medium text-red-600 hover:text-red-500 disabled:opacity-50"
                         >
                           Remove
                         </button>

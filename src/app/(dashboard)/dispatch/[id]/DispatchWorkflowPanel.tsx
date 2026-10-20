@@ -777,7 +777,7 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
                   <div className="flex items-center gap-2">
                     <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Carton {cartonIndex + 1}</p>
                     {activeCartonIndex === cartonIndex && (
-                      <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-semibold text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300">
+                      <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-semibold text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300">
                         Active Scan Target
                       </span>
                     )}
@@ -909,7 +909,7 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
                       href={`/api/v1/barcodes/${dispatch.dispatchNumber}-C${carton.cartonNumber}/label.pdf`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 rounded border border-zinc-200 px-1.5 py-0.5 text-[11px] font-medium text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                      className="inline-flex items-center gap-1 rounded border border-zinc-200 px-1.5 py-0.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
                     >
                       Print Label (PDF)
                     </a>

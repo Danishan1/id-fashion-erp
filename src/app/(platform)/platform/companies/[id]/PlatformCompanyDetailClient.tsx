@@ -395,7 +395,7 @@ export function PlatformCompanyDetailClient({
                     <td className="py-2.5 pr-3">
                       <div className="font-medium text-zinc-900 dark:text-zinc-100">{u.fullName}</div>
                       <div className="text-zinc-500">{u.email}</div>
-                      {u.phone && <div className="text-[11px] text-zinc-400">{u.phone}</div>}
+                      {u.phone && <div className="text-xs text-zinc-400">{u.phone}</div>}
                     </td>
                     <td className="py-2.5 px-3">
                       <div className="flex flex-wrap gap-1">
@@ -405,7 +405,7 @@ export function PlatformCompanyDetailClient({
                           u.roles.map((r, i) => (
                             <span
                               key={i}
-                              className="inline-flex items-center rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"
+                              className="inline-flex items-center rounded bg-zinc-100 px-1.5 py-0.5 text-xs font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"
                               title={`${r.roleName} (${r.branchName})`}
                             >
                               {r.roleName}
@@ -416,7 +416,7 @@ export function PlatformCompanyDetailClient({
                     </td>
                     <td className="py-2.5 px-3">
                       <span
-                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
                           u.status === "ACTIVE"
                             ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300"
                             : "bg-red-100 text-red-800 dark:bg-red-950/70 dark:text-red-300"
@@ -682,7 +682,7 @@ export function PlatformCompanyDetailClient({
                 {showNewPassword ? <EyeOffIcon /> : <EyeIcon />}
               </button>
             </div>
-            <p className="mt-1 text-[11px] text-zinc-400">Must be at least 8 characters. Give this to the user to sign in.</p>
+            <p className="mt-1 text-xs text-zinc-400">Must be at least 8 characters. Give this to the user to sign in.</p>
           </div>
 
           {userModalError && <p className="text-xs font-medium text-red-600">{userModalError}</p>}

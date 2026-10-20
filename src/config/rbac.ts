@@ -169,8 +169,8 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     // used for crm/marketing above), including leave approval.
     // Approve/reject added for the Attendance Correction Request workflow —
     // same "MANAGEMENT is the checkpoint" shape as hrms_leave just below.
-    hrms_attendance: ["view", "create", "edit", "approve", "reject", "export"],
-    hrms_leave: ["view", "create", "edit", "approve", "reject", "export"],
+    hrms_attendance: ["view", "view_all", "create", "edit", "approve", "reject", "export"],
+    hrms_leave: ["view", "view_all", "create", "edit", "approve", "reject", "export"],
     sampling: ["view", "approve", "reject"],
     buyer_enquiries: ["view", "reject"],
     sales_orders: ["view", "approve", "export"],
@@ -181,7 +181,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     // "approve" here gates Lot restructure (split/merge) and forward
     // stage-skip overrides (see PRODUCTION_MODULE_DESIGN.md §7/§9) — reuses
     // the existing action rather than inventing new production-specific verbs.
-    production: ["view", "approve", "export"],
+    production: ["view", "view_all", "approve", "export"],
     qc: ["view", "export"],
     // Earning approval checkpoint — same shape as production's own
     // view/approve/export above.
@@ -234,7 +234,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     buyer_enquiries: ["view", "create", "edit", "reject", "export", "print"],
     sales_orders: ["view", "create", "edit", "cancel", "export", "print"],
     bom_mrp: ["view", "create", "edit"],
-    production: ["view"],
+    production: ["view", "view_all"],
     qc: ["view"],
     inventory: ["view"],
     // Full control over their own Material Requests — including triggering
@@ -257,7 +257,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     buyer_enquiries: ["view"],
     sales_orders: ["view"],
     bom_mrp: ["view"],
-    production: ["view"],
+    production: ["view", "view_all"],
     qc: ["view", "create"],
     reports: ["view", "export", "print"],
   },
@@ -272,7 +272,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     bom_mrp: ["view", "create", "edit", "approve", "export"],
     // "approve" gates Lot restructure (split/merge) and forward stage-skip
     // overrides — see PRODUCTION_MODULE_DESIGN.md §7/§9.
-    production: ["view", "create", "edit", "approve", "cancel", "export", "print"],
+    production: ["view", "view_all", "create", "edit", "approve", "cancel", "export", "print"],
     qc: ["view"],
     // Can assign workers / trigger rate resolution and authorize an
     // assignment-time rate override. Master Rate Card CRUD is now its own
@@ -312,7 +312,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     // "approve" added for the worker self-entry approval queue (2026-09-02) —
     // a Supervisor approves/rejects a worker's own submitted progress entry
     // before it counts toward the Job Order's real quantities.
-    production: ["view", "create", "edit", "approve"],
+    production: ["view", "view_all", "create", "edit", "approve"],
     qc: ["view", "create"],
     // Can assign workers/trigger rate resolution but NOT override an
     // authorized rate without escalating to Production Manager, and
@@ -338,7 +338,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
   // narrowed per-company via RoleProductionStageAccess, same as any role.
   PRODUCTION_WORKER: {
     dashboard: ["view"],
-    production: ["view", "create"],
+    production: ["view"],
     // Granted at the RBAC layer; whether a worker actually SEES their own
     // rate is additionally gated by ProductionSettings.workersCanViewOwnRate
     // and scoped to their own Employee — see piece-rate-card routes.
@@ -364,7 +364,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     sampling: ["view"],
     buyer_enquiries: ["view"],
     bom_mrp: ["view"],
-    production: ["view"],
+    production: ["view", "view_all"],
     qc: ["view", "create", "edit", "approve", "reject", "export", "print"],
     inventory: ["view"],
     fg_inventory: ["view"],
@@ -375,7 +375,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     dashboard: ["view"],
     masters_core: ["view", "create", "edit"],
     bom_mrp: ["view"],
-    production: ["view"],
+    production: ["view", "view_all"],
     inventory: ["view", "create", "edit", "delete", "export", "print"],
     // Full day-to-day Finished Goods Inventory ownership — mirrors their
     // existing broadest "inventory" grant above. "post" confirms a Transfer
@@ -433,7 +433,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     dashboard: ["view"],
     masters_core: ["view"],
     sales_orders: ["view"],
-    production: ["view"],
+    production: ["view", "view_all"],
     inventory: ["view"],
     // View-only — picking itself stays gated under "dispatch" above (post
     // already covers confirmDispatch(), which is where picking actually
@@ -450,7 +450,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     dashboard: ["view"],
     masters_core: ["view"],
     bom_mrp: ["view"],
-    production: ["view"],
+    production: ["view", "view_all"],
     qc: ["view"],
     inventory: ["view", "create", "edit"],
     // Can raise/edit a Transfer, Adjustment, or Putaway action, but not
@@ -466,5 +466,10 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     // DISPATCH_MANAGER's own reservation of that to the manager tier.
     barcodes: ["view", "scan"],
   },
-  VIEWER: Object.fromEntries(MODULES.map((m) => [m, ["view"] as Action[]])) as Record<Module, Action[]>,
+  // Company-wide read-only: keeps full production visibility (view_all) so the
+  // P1 assigned-only rule for workers doesn't narrow it.
+  VIEWER: {
+    ...(Object.fromEntries(MODULES.map((m) => [m, ["view"] as Action[]])) as Record<Module, Action[]>),
+    production: ["view", "view_all"],
+  },
 };

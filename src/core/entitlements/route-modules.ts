@@ -37,3 +37,15 @@ export function isPathDisabled(pathname: string, disabledModules: Set<Module>): 
 }
 
 export const MODULE_UNAVAILABLE_PATH = "/module-unavailable";
+export const NO_ACCESS_PATH = "/no-access";
+
+/**
+ * P6: true when the page belongs to one or more modules and the user can
+ * view none of them. Pages no sidebar link covers (or with no modules) are
+ * left to the page's own checks.
+ */
+export function isPathForbidden(pathname: string, viewableModules: Set<Module>): boolean {
+  const modules = modulesForPath(pathname);
+  if (!modules || modules.length === 0) return false;
+  return !modules.some((m) => viewableModules.has(m));
+}

@@ -226,7 +226,7 @@ export function Sidebar({
                     return (
                       <div key={child.href}>
                         {showGroupHeading && (
-                          <div className="px-3 pt-2 pb-0.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 first:pt-0 dark:text-zinc-500">
+                          <div className="px-3 pt-2 pb-0.5 text-xs font-semibold uppercase tracking-wide text-zinc-400 first:pt-0 dark:text-zinc-500">
                             {child.group}
                           </div>
                         )}

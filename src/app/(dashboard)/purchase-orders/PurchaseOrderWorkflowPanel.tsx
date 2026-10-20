@@ -293,7 +293,7 @@ export function PurchaseOrderWorkflowPanel({
                   {item.product.styleName}{" "}
                   <span className="text-xs text-zinc-400">({item.product.styleCode})</span>
                   {item.product.materialCategory === "FABRIC" && (
-                    <span className="ml-1 rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-300">
+                    <span className="ml-1 rounded bg-indigo-50 px-1.5 py-0.5 text-xs font-medium text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-300">
                       Fabric
                     </span>
                   )}

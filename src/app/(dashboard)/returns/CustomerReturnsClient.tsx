@@ -361,7 +361,7 @@ export function CustomerReturnsClient() {
                 <p className="font-semibold text-zinc-800 dark:text-zinc-200">
                   {provenance.productVariant.color.name} / {provenance.productVariant.size.name}
                 </p>
-                <span className="font-mono text-[11px] text-zinc-400">
+                <span className="font-mono text-xs text-zinc-400">
                   SKU: {provenance.productVariant.skuCode}
                 </span>
               </div>
@@ -409,7 +409,7 @@ export function CustomerReturnsClient() {
               </h3>
               <div className="space-y-1.5 max-h-36 overflow-y-auto">
                 {provenance.events.map((ev) => (
-                  <div key={ev.id} className="flex items-center justify-between text-[11px] text-zinc-600 dark:text-zinc-400">
+                  <div key={ev.id} className="flex items-center justify-between text-xs text-zinc-600 dark:text-zinc-400">
                     <span className="font-medium text-zinc-800 dark:text-zinc-200">
                       {ev.eventType} ({ev.fromStatus ?? "NONE"} → {ev.toStatus})
                     </span>
@@ -581,7 +581,7 @@ export function CustomerReturnsClient() {
                       </td>
                       <td className="px-3 py-2 text-xs">
                         <span
-                          className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${
+                          className={`rounded px-1.5 py-0.5 text-xs font-medium ${
                             item.condition === "GOOD"
                               ? "bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300"
                               : "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300"

@@ -31,6 +31,20 @@ beforeEach(() => {
   platformUserFindUniqueMock.mockReset().mockResolvedValue(activePlatformUser);
 });
 
+describe("requireSession -- P2 forced password change", () => {
+  it("refuses API calls while a temporary password is still in use", async () => {
+    authMock.mockResolvedValue(session({ userType: "TENANT" }));
+    userFindUniqueMock.mockResolvedValue({ ...activeTenantUser, mustChangePassword: true });
+    await expect(requireSession()).rejects.toMatchObject({ code: "PASSWORD_CHANGE_REQUIRED" });
+  });
+
+  it("allows the change-password route through", async () => {
+    authMock.mockResolvedValue(session({ userType: "TENANT" }));
+    userFindUniqueMock.mockResolvedValue({ ...activeTenantUser, mustChangePassword: true });
+    await expect(requireSession({ allowPendingPasswordChange: true })).resolves.toBeDefined();
+  });
+});
+
 describe("requireSession", () => {
   it("throws PERMISSION_DENIED when there is no session at all", async () => {
     authMock.mockResolvedValue(null);

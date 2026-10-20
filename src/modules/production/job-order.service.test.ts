@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
+const { teamScopeMock } = vi.hoisted(() => ({ teamScopeMock: vi.fn() }));
+vi.mock("@/core/hierarchy/team-scope", () => ({ getTeamScope: teamScopeMock }));
 vi.mock("@/core/rbac/PermissionService", () => ({
-  PermissionService: { assert: vi.fn(), getAllowedProductionStageIds: vi.fn(), getAllowedBranchIds: vi.fn() },
+  PermissionService: { assert: vi.fn(), getAllowedProductionStageIds: vi.fn(), getAllowedBranchIds: vi.fn(), can: vi.fn().mockResolvedValue(true) },
 }));
 vi.mock("@/modules/inventory/inventory.service", () => ({ recordInventoryTransaction: vi.fn() }));
 // Finished Goods Inventory module (FGI-021) -- mocked at the module boundary;
@@ -70,7 +72,7 @@ vi.mock("./production.repository", () => ({
     findAnyById: vi.fn(),
     findByJobOrderAndEmployee: vi.fn(),
   },
-  JobOrderProgressEntryRepository: { createInTx: vi.fn() },
+  JobOrderProgressEntryRepository: { createInTx: vi.fn(), findAnyById: vi.fn(), findPendingForCompany: vi.fn() },
   ProductionOrderRepository: { findAnyById: vi.fn() },
   LotRepository: { findAnyById: vi.fn(), updateInTx: vi.fn() },
   ProductionStageTransactionRepository: { createInTx: vi.fn() },
@@ -110,7 +112,7 @@ const {
 const { resolvePieceRate } = await import("./piece-rate-resolution.service");
 const { generateEarningForJobOrderProgress, generateEarningsForQcAcceptance } = await import("./piece-rate-earning.service");
 const { computeAvailableToCommit, assertEntryWithinAssignmentInTx, syncAssignmentStatusInTx } = await import("./assignment-capacity");
-const { computeJobOrderStatus, assignWorker, recordProgressEntry, forwardJobOrder, revertJobOrder, recordQcInspection, recordAdjustmentEntry, getJobOrderById, prepareLotStartAssignments, submitSelfProgressEntry, cascadeReceivedThroughStagesInTx } = await import("./job-order.service");
+const { computeJobOrderStatus, assignWorker, recordProgressEntry, forwardJobOrder, revertJobOrder, recordQcInspection, recordAdjustmentEntry, getJobOrderById, prepareLotStartAssignments, submitSelfProgressEntry, cascadeReceivedThroughStagesInTx, approveProgressEntry, rejectProgressEntry, listPendingProgressEntries } = await import("./job-order.service");
 const { createFinishedGoodsReceiptInTx } = await import("@/modules/finished-goods-inventory/finished-goods-receipt.service");
 const { recordInventoryTransaction } = await import("@/modules/inventory/inventory.service");
 
@@ -166,6 +168,7 @@ beforeEach(() => {
     .mockResolvedValue({ id: "asg-1", jobOrderId: "jo-1", employeeId: "emp-1", status: "ASSIGNED" } as never);
   vi.mocked(ProductionOrderRepository.findAnyById).mockReset();
   vi.mocked(PermissionService.assert).mockReset().mockResolvedValue(undefined);
+  teamScopeMock.mockReset().mockResolvedValue({ employeeId: null, teamEmployeeIds: [], teamUserIds: [] });
   vi.mocked(PermissionService.getAllowedProductionStageIds).mockReset().mockResolvedValue(null);
   vi.mocked(PermissionService.getAllowedBranchIds).mockReset().mockResolvedValue(null);
   vi.mocked(JobOrderRepository.findForGuardedUpdateInTx).mockReset();
@@ -1438,5 +1441,87 @@ describe("cascadeReceivedThroughStagesInTx — colour/size breakdown at a final 
       })
     );
     expect(recordInventoryTransaction).not.toHaveBeenCalled();
+  });
+});
+
+describe("P0 — branch and stage scope on production writes and approvals", () => {
+  const pendingEntry = (overrides: Record<string, unknown> = {}) => ({
+    id: "entry-1",
+    jobOrderId: "jo-1",
+    jobOrderAssignmentId: null,
+    approvalStatus: "PENDING",
+    recordedByUserId: "user-9",
+    completedQuantity: "5",
+    rejectedQuantity: "0",
+    damagedQuantity: "0",
+    extraQuantity: "0",
+    jobOrder: {
+      id: "jo-1",
+      companyId: "co-1",
+      productionStageId: "stage-1",
+      productionStage: { name: "Cutting", allowsExtraQuantity: false },
+      lot: { branchId: "branch-2" },
+    },
+    ...overrides,
+  });
+
+  it("refuses a job-order write when the lot is outside the user's branches (deny as not-found)", async () => {
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(
+      jobOrder({ lot: { id: "lot-1", lotNumber: "L01", productionOrderId: "po-1", branchId: "branch-2" } }) as never
+    );
+    await expect(forwardJobOrder(actor, "jo-1", { quantity: 1 })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(revertJobOrder(actor, "jo-1", { quantity: 1, toStageId: "stage-0", reason: "x" } as never)).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
+  });
+
+  it("refuses to approve an entry whose lot is outside the approver's branches", async () => {
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+    vi.mocked(JobOrderProgressEntryRepository.findAnyById).mockResolvedValue(pendingEntry() as never);
+    await expect(approveProgressEntry(actor, "entry-1", {} as never)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(rejectProgressEntry(actor, "entry-1", { approvalRemark: "no" } as never)).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
+    expect(PermissionService.assert).not.toHaveBeenCalled();
+  });
+
+  it("refuses to approve an entry at a stage the approver isn't allowed", async () => {
+    vi.mocked(PermissionService.getAllowedProductionStageIds).mockResolvedValue(new Set(["stage-9"]));
+    vi.mocked(JobOrderProgressEntryRepository.findAnyById).mockResolvedValue(pendingEntry() as never);
+    await expect(approveProgressEntry(actor, "entry-1", {} as never)).rejects.toMatchObject({
+      code: "PRODUCTION_STAGE_ACCESS_DENIED",
+    });
+  });
+
+  it("filters the Pending Approvals list by the approver's branches and stages", async () => {
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+    vi.mocked(PermissionService.getAllowedProductionStageIds).mockResolvedValue(new Set(["stage-1"]));
+    vi.mocked(JobOrderProgressEntryRepository.findPendingForCompany).mockResolvedValue([] as never);
+    await listPendingProgressEntries(actor);
+    const scope = vi.mocked(JobOrderProgressEntryRepository.findPendingForCompany).mock.calls[0][1]!;
+    expect([...scope.allowedBranchIds!]).toEqual(["branch-1"]);
+    expect([...scope.allowedStageIds!]).toEqual(["stage-1"]);
+  });
+
+  it("passes an unrestricted (null) scope through for an unrestricted approver", async () => {
+    vi.mocked(JobOrderProgressEntryRepository.findPendingForCompany).mockResolvedValue([] as never);
+    await listPendingProgressEntries(actor);
+    expect(JobOrderProgressEntryRepository.findPendingForCompany).toHaveBeenCalledWith("co-1", {
+      allowedBranchIds: null,
+      allowedStageIds: null,
+      teamEmployeeIds: null,
+    });
+  });
+
+  it("P3: an approver with a Production team only sees and decides that team's entries", async () => {
+    teamScopeMock.mockResolvedValue({ employeeId: "emp-sup", teamEmployeeIds: ["emp-1", "emp-2"], teamUserIds: [] });
+    vi.mocked(JobOrderProgressEntryRepository.findPendingForCompany).mockResolvedValue([] as never);
+    await listPendingProgressEntries(actor);
+    const scope = vi.mocked(JobOrderProgressEntryRepository.findPendingForCompany).mock.lastCall![1]!;
+    expect([...scope.teamEmployeeIds!]).toEqual(["emp-1", "emp-2"]);
+
+    vi.mocked(JobOrderProgressEntryRepository.findAnyById).mockResolvedValue(pendingEntry({ employeeId: "emp-outside" }) as never);
+    await expect(approveProgressEntry(actor, "entry-1", {} as never)).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 });

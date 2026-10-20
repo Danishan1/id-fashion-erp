@@ -144,7 +144,7 @@ export function DashboardShell({
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {topBanner}
         <Topbar userName={userName} onMenuClick={() => setMobileNavOpen((open) => !open)} />
-        <main className="min-h-0 flex-1 overflow-y-auto bg-zinc-50 p-6 dark:bg-zinc-950">{children}</main>
+        <main className="min-h-0 flex-1 overflow-y-auto bg-zinc-50 p-4 sm:p-6 dark:bg-zinc-950">{children}</main>
       </div>
     </div>
   );

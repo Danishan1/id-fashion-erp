@@ -18,6 +18,9 @@ export const TENANT_HOME_PATH = "/dashboard";
 export const PLATFORM_HOME_PATH = "/platform";
 /** Shown when a support session is revoked, expired or ended (Phase 2). */
 export const SUPPORT_ENDED_PATH = "/support-ended";
+/** Where a user with a temporary password is sent until they change it (P2). */
+export const ACCOUNT_PATH = "/account";
+export const FORCED_PASSWORD_CHANGE_PATH = "/account?changePassword=required";
 
 export type RouteDecision =
   | { kind: "allow" }
@@ -34,7 +37,12 @@ export function isPlatformPath(pathname: string): boolean {
  * change has no userType claim; it can only have come from the tenant login,
  * so it's treated as TENANT.
  */
-export function decideRouteAccess(pathname: string, signedIn: boolean, userType: UserType | undefined): RouteDecision {
+export function decideRouteAccess(
+  pathname: string,
+  signedIn: boolean,
+  userType: UserType | undefined,
+  mustChangePassword = false
+): RouteDecision {
   const onPlatformPath = isPlatformPath(pathname);
 
   // Reachable in any state: a support session may already be gone by the
@@ -71,6 +79,12 @@ export function decideRouteAccess(pathname: string, signedIn: boolean, userType:
   }
 
   // TENANT
+  // P2: a temporary password (new login from Employee Master, or an admin
+  // reset) must be changed first -- every ERP page goes to /account until then.
+  if (mustChangePassword) {
+    if (pathname === ACCOUNT_PATH || pathname === PLATFORM_LOGIN_PATH) return { kind: "allow" };
+    return { kind: "redirect", to: FORCED_PASSWORD_CHANGE_PATH };
+  }
   if (pathname === TENANT_LOGIN_PATH) return { kind: "redirect", to: TENANT_HOME_PATH };
   // A customer may open the platform login page (to sign in as a platform
   // operator instead), but never any other platform page.

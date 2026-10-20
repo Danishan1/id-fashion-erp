@@ -4,6 +4,7 @@ import { prisma } from "@/core/db/client";
 import type { ListQuery } from "@/lib/list-query";
 import type { Prisma } from "@prisma/client";
 import { AttendanceRepository } from "./attendance.repository";
+import { assertHrmsEmployeeInScope, getHrmsEmployeeScope, hrmsEmployeeWhere } from "./hrms-scope";
 import type { RecordAttendanceInput } from "./attendance.schema";
 
 export interface ActorContext {
@@ -37,9 +38,11 @@ function decorateAttendance<T extends { punchIn: Date | string | null; employee:
   return { ...record, isLate: computeIsLate(punchIn, record.employee.shift?.startTime, record.employee.shift?.graceMinutes) };
 }
 
-export async function listAttendance(companyId: string, query: ListQuery, attendanceDate?: string) {
+export async function listAttendance(actor: ActorContext, query: ListQuery, attendanceDate?: string) {
+  const scope = await getHrmsEmployeeScope(actor.userId, "hrms_attendance");
   const where: Prisma.AttendanceRecordWhereInput = {
-    companyId,
+    companyId: actor.companyId,
+    ...hrmsEmployeeWhere(scope),
     ...(attendanceDate ? { attendanceDate: new Date(attendanceDate) } : {}),
     ...(query.search ? { employee: { fullName: { contains: query.search, mode: "insensitive" as const } } } : {}),
   };
@@ -55,6 +58,7 @@ export async function listAttendance(companyId: string, query: ListQuery, attend
 export async function recordAttendance(actor: ActorContext, input: RecordAttendanceInput) {
   const employee = await prisma.employee.findFirst({ where: { id: input.employeeId, companyId: actor.companyId }, select: { id: true } });
   if (!employee) throw new BusinessRuleError("NOT_FOUND", "Employee not found.", { id: input.employeeId });
+  await assertHrmsEmployeeInScope(actor.userId, "hrms_attendance", input.employeeId, { label: "Employee", id: input.employeeId });
 
   const record = await AttendanceRepository.upsert(
     input.employeeId,
@@ -82,9 +86,10 @@ export async function recordAttendance(actor: ActorContext, input: RecordAttenda
 
 /** Mirrors the source's own daily attendance report: present/late/missing
  * counts for one date, company-wide. */
-export async function getAttendanceSummaryForDate(companyId: string, attendanceDate: string) {
-  const records = await AttendanceRepository.findByDate(companyId, new Date(attendanceDate));
-  const decorated = records.map(decorateAttendance);
+export async function getAttendanceSummaryForDate(actor: ActorContext, attendanceDate: string) {
+  const scope = await getHrmsEmployeeScope(actor.userId, "hrms_attendance");
+  const records = await AttendanceRepository.findByDate(actor.companyId, new Date(attendanceDate));
+  const decorated = records.filter((r) => scope === null || scope.includes(r.employeeId)).map(decorateAttendance);
 
   const present = decorated.filter((r) => r.punchIn).length;
   const late = decorated.filter((r) => r.isLate === true).length;

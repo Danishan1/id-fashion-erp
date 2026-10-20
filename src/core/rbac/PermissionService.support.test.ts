@@ -25,6 +25,7 @@ vi.mock("@/core/db/client", () => ({
     userBranchRole: { findMany: ubrFindManyMock, count: vi.fn() },
     roleBranchAccess: { findMany: vi.fn().mockResolvedValue([]) },
     roleProductionStageAccess: { findMany: vi.fn().mockResolvedValue([]) },
+    userPermissionOverride: { findMany: vi.fn().mockResolvedValue([]) },
   },
 }));
 

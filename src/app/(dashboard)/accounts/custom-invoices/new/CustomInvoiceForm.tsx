@@ -643,7 +643,7 @@ export function CustomInvoiceForm({ initialInvoice }: { initialInvoice?: Initial
                 <div className="mt-2 grid grid-cols-2 gap-3 md:grid-cols-3">
                   <div>
                     <div className="mb-1.5 flex items-center gap-1">
-                      <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">Filter:</span>
+                      <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">Filter:</span>
                       {(["ALL", "PRODUCT", "SERVICE"] as const).map((type) => {
                         const active = (item.itemType ?? "ALL") === type;
                         const label = type === "ALL" ? "All" : type === "PRODUCT" ? "Products" : "Services";
@@ -652,7 +652,7 @@ export function CustomInvoiceForm({ initialInvoice }: { initialInvoice?: Initial
                             key={type}
                             type="button"
                             onClick={() => updateItem(index, { itemType: type })}
-                            className={`rounded-full px-2 py-0.5 text-[10px] font-medium transition-colors ${
+                            className={`rounded-full px-2 py-0.5 text-xs font-medium transition-colors ${
                               active
                                 ? "bg-indigo-600 text-white"
                                 : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"

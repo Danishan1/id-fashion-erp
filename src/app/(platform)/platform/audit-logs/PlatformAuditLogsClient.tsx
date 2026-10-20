@@ -205,7 +205,7 @@ export function PlatformAuditLogsClient({ initialLogs, totalCount }: PlatformAud
                           <div className="flex items-center gap-1.5 font-medium text-zinc-900 dark:text-zinc-100">
                             {log.operator.name}
                             {log.operator.isPlatform && (
-                              <span className="rounded bg-purple-100 px-1.5 py-0.2 text-[10px] font-semibold text-purple-700 dark:bg-purple-950 dark:text-purple-300">
+                              <span className="rounded bg-purple-100 px-1.5 py-0.2 text-xs font-semibold text-purple-700 dark:bg-purple-950 dark:text-purple-300">
                                 PLATFORM
                               </span>
                             )}
@@ -274,13 +274,13 @@ export function PlatformAuditLogsClient({ initialLogs, totalCount }: PlatformAud
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               <div>
                 <h4 className="font-semibold text-zinc-700 dark:text-zinc-300 mb-1">Previous State (oldValues)</h4>
-                <pre className="max-h-60 overflow-auto rounded border border-zinc-200 bg-zinc-50 p-2 font-mono text-[11px] text-zinc-800 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200">
+                <pre className="max-h-60 overflow-auto rounded border border-zinc-200 bg-zinc-50 p-2 font-mono text-xs text-zinc-800 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200">
                   {selectedLog.oldValues ? JSON.stringify(selectedLog.oldValues, null, 2) : "null"}
                 </pre>
               </div>
               <div>
                 <h4 className="font-semibold text-zinc-700 dark:text-zinc-300 mb-1">New State (newValues)</h4>
-                <pre className="max-h-60 overflow-auto rounded border border-zinc-200 bg-zinc-50 p-2 font-mono text-[11px] text-zinc-800 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200">
+                <pre className="max-h-60 overflow-auto rounded border border-zinc-200 bg-zinc-50 p-2 font-mono text-xs text-zinc-800 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200">
                   {selectedLog.newValues ? JSON.stringify(selectedLog.newValues, null, 2) : "null"}
                 </pre>
               </div>

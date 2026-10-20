@@ -120,7 +120,7 @@ function NoteItem({ n, onEdit, onDelete }: { n: ThreadNote; onEdit: (n: ThreadNo
         </span>
       </div>
       <p className="whitespace-pre-wrap break-words">{n.body}</p>
-      <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-400">Visible only to your team — never sent to the customer.</p>
+      <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">Visible only to your team — never sent to the customer.</p>
     </li>
   );
 }

@@ -148,7 +148,7 @@ function WizardSection({
     <section ref={sectionRef} className="scroll-mt-20 rounded-lg border border-zinc-200 dark:border-zinc-800">
       <div className="flex items-center gap-3 px-4 py-3">
         <span
-          className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-medium ${
+          className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-medium ${
             isDone
               ? "bg-green-600 text-white"
               : isCurrent
@@ -906,14 +906,14 @@ export function AiDesignerWorkflowPanel({
             <div className="mt-2 flex flex-wrap gap-4">
               {project.sketchImageAttachmentId && (
                 <div>
-                  <p className="text-[11px] text-zinc-500">Sketch</p>
+                  <p className="text-xs text-zinc-500">Sketch</p>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={imageUrl(project.sketchImageAttachmentId)} alt="Sketch" className="mt-1 h-20 w-20 rounded border object-contain bg-white" />
                 </div>
               )}
               {project.fabricImageAttachmentId && (
                 <div>
-                  <p className="text-[11px] text-zinc-500">Fabric</p>
+                  <p className="text-xs text-zinc-500">Fabric</p>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={imageUrl(project.fabricImageAttachmentId)} alt="Fabric" className="mt-1 h-20 w-20 rounded border object-cover" />
                 </div>
@@ -954,7 +954,7 @@ export function AiDesignerWorkflowPanel({
                 });
               return modifications.length > 0 ? (
                 <div className="mt-3">
-                  <p className="text-[11px] font-medium text-zinc-500">Design Modifications (explicit overrides from the sketch)</p>
+                  <p className="text-xs font-medium text-zinc-500">Design Modifications (explicit overrides from the sketch)</p>
                   <ul className="mt-1 list-inside list-disc text-xs text-zinc-800 dark:text-zinc-200">
                     {modifications.map((m) => (
                       <li key={m}>{m}</li>

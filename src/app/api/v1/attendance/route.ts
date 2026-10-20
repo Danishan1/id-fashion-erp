@@ -12,7 +12,7 @@ export async function GET(req: NextRequest) {
 
     const query = parseListQuery(req.nextUrl.searchParams, "attendanceDate");
     const attendanceDate = req.nextUrl.searchParams.get("date") ?? undefined;
-    const { data, totalCount } = await listAttendance(session.user.companyId, query, attendanceDate);
+    const { data, totalCount } = await listAttendance({ companyId: session.user.companyId, userId: session.user.id }, query, attendanceDate);
 
     return NextResponse.json({ data, meta: buildListMeta(totalCount, query.page, query.pageSize) });
   } catch (error) {

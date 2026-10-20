@@ -237,14 +237,14 @@ export function TechnicalSpecificationPanel({
                                   type="button"
                                   disabled={cellBusyId === v.id}
                                   onClick={() => saveValue(v.id)}
-                                  className="rounded bg-indigo-600 px-1.5 py-0.5 text-[10px] text-white hover:bg-indigo-500 disabled:opacity-50"
+                                  className="rounded bg-indigo-600 px-1.5 py-0.5 text-xs text-white hover:bg-indigo-500 disabled:opacity-50"
                                 >
                                   Save
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => setEditingValueId(null)}
-                                  className="rounded border border-zinc-300 px-1.5 py-0.5 text-[10px] dark:border-zinc-700"
+                                  className="rounded border border-zinc-300 px-1.5 py-0.5 text-xs dark:border-zinc-700"
                                 >
                                   Cancel
                                 </button>
@@ -269,7 +269,7 @@ export function TechnicalSpecificationPanel({
                                       e.stopPropagation();
                                       resetValue(v.id);
                                     }}
-                                    className="ml-1 text-[9px] text-zinc-400 underline"
+                                    className="ml-1 text-xs text-zinc-400 underline"
                                   >
                                     reset
                                   </span>
@@ -286,7 +286,7 @@ export function TechnicalSpecificationPanel({
 
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <span
-                  className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                  className={`rounded-full px-2 py-0.5 text-xs font-medium ${
                     spec.decision === "APPROVED"
                       ? "bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-300"
                       : "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"

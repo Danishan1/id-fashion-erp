@@ -3,6 +3,8 @@ import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingService";
 import { recordInventoryTransaction } from "@/modules/inventory/inventory.service";
+import { PermissionService } from "@/core/rbac/PermissionService";
+import { branchScopeWhere } from "@/lib/branch-access";
 import type { ReturnCondition, ReturnDisposition } from "@prisma/client";
 
 export interface ActorContext {
@@ -187,8 +189,9 @@ export async function createCustomerReturn(
  * List returns for company.
  */
 export async function listCustomerReturns(actor: ActorContext) {
+  const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
   return prisma.customerReturn.findMany({
-    where: { companyId: actor.companyId },
+    where: { companyId: actor.companyId, ...branchScopeWhere(allowedBranchIds) },
     include: {
       customer: { select: { id: true, name: true, code: true } },
       salesOrder: { select: { id: true, orderNumber: true } },

@@ -180,7 +180,7 @@ export const MaskCanvas = forwardRef<MaskCanvasHandle, { imageUrl: string; disab
     return (
       <div className="flex h-full flex-col">
         <div className="flex flex-wrap items-center gap-2 border-b border-zinc-200 bg-white px-3 py-1.5 dark:border-zinc-800 dark:bg-zinc-900">
-          <span className="text-[10px] font-medium text-zinc-500">Brush</span>
+          <span className="text-xs font-medium text-zinc-500">Brush</span>
           {BRUSH_SIZES.map((b) => (
             <button
               key={b.label}

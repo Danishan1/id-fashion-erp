@@ -7,7 +7,7 @@ vi.mock("@/core/numbering/DocumentNumberingService", () => ({ generateDocumentNu
 // exercises the INTERNAL path, so getAllowedContractorId defaults to null
 // (unrestricted/internal) unless a test explicitly overrides it.
 vi.mock("@/core/rbac/PermissionService", () => ({
-  PermissionService: { getAllowedContractorId: vi.fn().mockResolvedValue(null), assert: vi.fn() },
+  PermissionService: { getAllowedContractorId: vi.fn().mockResolvedValue(null), assert: vi.fn(), can: vi.fn().mockResolvedValue(true) },
 }));
 vi.mock("@/core/production-settings/ProductionSettingsService", () => ({
   getProductionSettings: vi.fn().mockResolvedValue({
@@ -35,7 +35,7 @@ vi.mock("@/modules/contractors/contractor.repository", () => ({
 }));
 vi.mock("./job-order.service", () => ({
   applyJobOrderQuantityDelta: vi.fn(),
-  assertStageAccess: vi.fn(),
+  assertJobOrderScope: vi.fn(),
   cascadeReceivedThroughStagesInTx: vi.fn(),
 }));
 // Shared worker/contractor capacity pool — real rules in assignment-capacity.test.ts.
@@ -92,7 +92,7 @@ const { ProductRepository } = await import("@/modules/products/product.repositor
 const { LookupRepository } = await import("@/modules/lookups/lookup.repository");
 const { FabricRollRepository } = await import("@/modules/purchasing/fabric-roll.repository");
 const { ContractorRepository } = await import("@/modules/contractors/contractor.repository");
-const { applyJobOrderQuantityDelta, assertStageAccess, cascadeReceivedThroughStagesInTx } = await import("./job-order.service");
+const { applyJobOrderQuantityDelta, assertJobOrderScope, cascadeReceivedThroughStagesInTx } = await import("./job-order.service");
 const { computeAvailableToCommit } = await import("./assignment-capacity");
 const { resolveCostContextForProductionOrder, resolveEffectiveStageCosts } = await import("@/modules/stage-costs/stage-cost.service");
 const { JobOrderRepository, ProductionOrderRepository } = await import("./production.repository");
@@ -110,6 +110,7 @@ const {
   resumeJobWorkOrderFromHold,
   computeJobWorkOrderMetrics,
   listPendingJobWorkReceipts,
+  listJobWorkOrders,
 } = await import("./job-work-order.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
@@ -180,7 +181,7 @@ beforeEach(() => {
   vi.mocked(FabricRollRepository.guardedDecrementRemaining).mockReset().mockResolvedValue({ count: 1 } as never);
   vi.mocked(FabricRollRepository.incrementRemaining).mockReset();
   vi.mocked(applyJobOrderQuantityDelta).mockReset().mockResolvedValue(undefined as never);
-  vi.mocked(assertStageAccess).mockReset().mockResolvedValue(undefined as never);
+  vi.mocked(assertJobOrderScope).mockReset().mockResolvedValue(undefined as never);
   vi.mocked(JobOrderRepository.findAnyById).mockReset();
   vi.mocked(JobOrderRepository.findForGuardedUpdateInTx).mockReset().mockResolvedValue(jobOrder() as never);
   vi.mocked(JobWorkOrderRepository.findAnyById).mockReset();
@@ -910,5 +911,15 @@ describe("approveJobWorkReceipt — multi-stage cascade (2026-10-20)", () => {
     vi.mocked(JobWorkReceiptRepository.findAnyById).mockResolvedValue({ ...receipt, approvalStatus: "APPROVED" } as never);
     await expect(approveJobWorkReceipt(actor, "rcpt-1")).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
     expect(cascadeReceivedThroughStagesInTx).not.toHaveBeenCalled();
+  });
+});
+
+describe("job-work visibility (P1)", () => {
+  it("refuses an internal user without production.view_all (a worker)", async () => {
+    vi.mocked(PermissionService.getAllowedContractorId).mockResolvedValueOnce(null);
+    vi.mocked(PermissionService.can).mockResolvedValueOnce(false);
+    await expect(
+      listJobWorkOrders("co-1", { page: 1, pageSize: 20, skip: 0, take: 20, search: "", sortBy: "createdAt", sortOrder: "desc" } as never, "user-1")
+    ).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
   });
 });

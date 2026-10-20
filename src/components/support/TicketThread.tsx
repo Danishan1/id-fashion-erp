@@ -65,7 +65,7 @@ export function TicketThread({
                 <span className="font-medium text-zinc-700 dark:text-zinc-200">
                   {m.authorLabel}
                   {m.isInternal && (
-                    <span className="ml-2 rounded-full bg-amber-200 px-2 py-0.5 text-[11px] font-medium text-amber-900 dark:bg-amber-500/20 dark:text-amber-200">
+                    <span className="ml-2 rounded-full bg-amber-200 px-2 py-0.5 text-xs font-medium text-amber-900 dark:bg-amber-500/20 dark:text-amber-200">
                       Internal note
                     </span>
                   )}

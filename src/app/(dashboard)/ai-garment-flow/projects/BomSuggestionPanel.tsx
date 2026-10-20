@@ -220,7 +220,7 @@ export function BomSuggestionPanel({
                   <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-500">{s.reasoning}</p>
                 </div>
                 <span
-                  className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                  className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${
                     s.decision === "ADDED"
                       ? "bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-300"
                       : s.decision === "DISMISSED"

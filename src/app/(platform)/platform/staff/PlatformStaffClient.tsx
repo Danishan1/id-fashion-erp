@@ -247,7 +247,7 @@ export function PlatformStaffClient({
                     <div className="flex items-center gap-2">
                       <span className="font-medium text-zinc-900 dark:text-zinc-100">{s.fullName}</span>
                       {isSelf && (
-                        <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
+                        <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-xs font-semibold text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
                           YOU
                         </span>
                       )}

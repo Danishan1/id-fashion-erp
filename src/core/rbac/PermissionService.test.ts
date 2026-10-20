@@ -7,6 +7,7 @@ const { findManyMock, countMock, userFindUniqueMock, roleStageAccessFindManyMock
   roleStageAccessFindManyMock: vi.fn(),
 }));
 
+const { overrideFindManyMock } = vi.hoisted(() => ({ overrideFindManyMock: vi.fn() }));
 const { entitlementMock } = vi.hoisted(() => ({ entitlementMock: { disabled: new Set<string>() } }));
 vi.mock("@/core/entitlements/EntitlementService", () => ({
   EntitlementService: {
@@ -28,6 +29,9 @@ vi.mock("@/core/db/client", () => ({
     roleProductionStageAccess: {
       findMany: roleStageAccessFindManyMock,
     },
+    userPermissionOverride: {
+      findMany: overrideFindManyMock,
+    },
   },
 }));
 
@@ -45,6 +49,7 @@ beforeEach(() => {
   countMock.mockReset();
   userFindUniqueMock.mockReset().mockResolvedValue({ company: { isActive: true }, status: "ACTIVE" });
   roleStageAccessFindManyMock.mockReset();
+  overrideFindManyMock.mockReset().mockResolvedValue([]);
 });
 
 describe("PermissionService.can", () => {
@@ -360,5 +365,36 @@ describe("subscription read-only mode (Platform SaaS Phase 4, PLAT-024/025)", ()
       company: { isActive: true, subscription: { isTrial: true, currentPeriodEndsAt: new Date(Date.now() + 86_400_000) } },
     });
     await expect(PermissionService.can("user-1", "sales_orders", "create")).resolves.toBe(true);
+  });
+});
+
+describe("P6 -- per-user permission overrides", () => {
+  const override = (effect: "GRANT" | "DENY", key: string) => ({ effect, permission: { key } });
+
+  it("a GRANT adds a permission the roles don't give", async () => {
+    mockPermissions(["sales_orders.view"]);
+    overrideFindManyMock.mockResolvedValue([override("GRANT", "sales_orders.export")]);
+    await expect(PermissionService.can("user-1", "sales_orders", "export")).resolves.toBe(true);
+  });
+
+  it("a DENY removes a permission a role gives", async () => {
+    mockPermissions(["sales_orders.view", "sales_orders.edit"]);
+    overrideFindManyMock.mockResolvedValue([override("DENY", "sales_orders.edit")]);
+    await expect(PermissionService.can("user-1", "sales_orders", "edit")).resolves.toBe(false);
+    await expect(PermissionService.can("user-1", "sales_orders", "view")).resolves.toBe(true);
+  });
+
+  it("DENY wins over GRANT for the same permission", async () => {
+    mockPermissions([]);
+    overrideFindManyMock.mockResolvedValue([override("DENY", "crm.view"), override("GRANT", "crm.view")]);
+    await expect(PermissionService.can("user-1", "crm", "view")).resolves.toBe(false);
+  });
+
+  it("overrides also shape the sidebar's viewable modules", async () => {
+    mockPermissions(["crm.view", "production.view"]);
+    overrideFindManyMock.mockResolvedValue([override("DENY", "crm.view")]);
+    const modules = await PermissionService.getViewableModules("user-1");
+    expect(modules.has("crm")).toBe(false);
+    expect(modules.has("production")).toBe(true);
   });
 });

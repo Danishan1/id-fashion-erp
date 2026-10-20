@@ -169,7 +169,7 @@ function DropZone({
           </div>
           <p className="text-sm font-medium text-zinc-800 dark:text-zinc-100">{label}</p>
           <p className="mt-1 text-xs text-zinc-500">{hint}</p>
-          <p className="mt-2 text-[11px] text-zinc-400">JPG, PNG or WEBP · drag & drop or click</p>
+          <p className="mt-2 text-xs text-zinc-400">JPG, PNG or WEBP · drag & drop or click</p>
         </div>
       )}
       {imageUrl && (
@@ -547,7 +547,7 @@ export function NewDesignWorkspace({ initialProject }: { initialProject: NewDesi
                 </span>
                 <span>
                   <span className="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">{s.label}</span>
-                  <span className="block text-[11px] text-zinc-500">{s.hint}</span>
+                  <span className="block text-xs text-zinc-500">{s.hint}</span>
                 </span>
               </button>
             </li>
@@ -688,7 +688,7 @@ export function NewDesignWorkspace({ initialProject }: { initialProject: NewDesi
                       )}
                       <div className="p-2">
                         <p className="truncate text-xs font-semibold text-zinc-800 dark:text-zinc-100">{f.styleName}</p>
-                        <p className="text-[10px] text-zinc-500">{f.styleCode}</p>
+                        <p className="text-xs text-zinc-500">{f.styleCode}</p>
                       </div>
                     </button>
                   );
@@ -732,13 +732,13 @@ export function NewDesignWorkspace({ initialProject }: { initialProject: NewDesi
                     >
                       <TemplateThumb templateKey={s.key} className="h-44 w-full" />
                       {i === 0 && (
-                        <span className="absolute left-2 top-2 rounded-full bg-gradient-to-r from-indigo-600 to-fuchsia-600 px-2 py-0.5 text-[10px] font-semibold text-white">
+                        <span className="absolute left-2 top-2 rounded-full bg-gradient-to-r from-indigo-600 to-fuchsia-600 px-2 py-0.5 text-xs font-semibold text-white">
                           Best match
                         </span>
                       )}
                       <div className="p-2">
                         <p className="text-xs font-semibold text-zinc-800 dark:text-zinc-100">{s.label}</p>
-                        <p className="text-[10px] leading-tight text-zinc-500">{s.reason}</p>
+                        <p className="text-xs leading-tight text-zinc-500">{s.reason}</p>
                       </div>
                     </button>
                   );
@@ -797,7 +797,7 @@ export function NewDesignWorkspace({ initialProject }: { initialProject: NewDesi
                     )}
                     <div className="flex items-center justify-between p-3">
                       <span className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">{t.label}</span>
-                      {!t.templateUrl && <span className="text-[10px] text-zinc-400">AI model</span>}
+                      {!t.templateUrl && <span className="text-xs text-zinc-400">AI model</span>}
                     </div>
                   </button>
                 );
@@ -890,7 +890,7 @@ export function NewDesignWorkspace({ initialProject }: { initialProject: NewDesi
                   ) : (
                     <TemplateThumb templateKey={project.garmentTemplateKey ?? ""} className="h-48 w-full" />
                   )}
-                  <p className="px-2 py-1 text-center text-[11px] text-zinc-500">{selectedTemplate?.label ?? "Garment"}</p>
+                  <p className="px-2 py-1 text-center text-xs text-zinc-500">{selectedTemplate?.label ?? "Garment"}</p>
                 </div>
                 <div className="w-1/2 overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-700">
                   {project.fabricImageAttachmentId ? (
@@ -899,7 +899,7 @@ export function NewDesignWorkspace({ initialProject }: { initialProject: NewDesi
                   ) : (
                     <div className="flex h-48 items-center justify-center text-xs text-zinc-400">No fabric</div>
                   )}
-                  <p className="px-2 py-1 text-center text-[11px] text-zinc-500">Fabric</p>
+                  <p className="px-2 py-1 text-center text-xs text-zinc-500">Fabric</p>
                 </div>
               </div>
               <p className="mt-4 rounded-lg bg-violet-50 px-3 py-2 text-xs text-violet-800 dark:bg-violet-950/40 dark:text-violet-300">
@@ -957,7 +957,7 @@ export function NewDesignWorkspace({ initialProject }: { initialProject: NewDesi
                     <div className="bg-white dark:bg-zinc-900">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img src={attachmentUrl(img.imageAttachmentId)} alt="Garment design" className="h-72 w-full object-cover object-top" />
-                      <p className="py-1 text-center text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Garment</p>
+                      <p className="py-1 text-center text-xs font-semibold uppercase tracking-wide text-zinc-500">Garment</p>
                     </div>
                     <div className="flex flex-col bg-white dark:bg-zinc-900">
                       {img.sketch ? (
@@ -976,10 +976,10 @@ export function NewDesignWorkspace({ initialProject }: { initialProject: NewDesi
                           </button>
                         </div>
                       )}
-                      <p className="py-1 text-center text-[10px] font-semibold uppercase tracking-wide text-zinc-500">CAD Sketch</p>
+                      <p className="py-1 text-center text-xs font-semibold uppercase tracking-wide text-zinc-500">CAD Sketch</p>
                     </div>
                     {img.decision === "SELECTED" && (
-                      <span className="absolute left-2 top-2 rounded-full bg-emerald-500 px-2 py-0.5 text-[10px] font-semibold text-white">Selected</span>
+                      <span className="absolute left-2 top-2 rounded-full bg-emerald-500 px-2 py-0.5 text-xs font-semibold text-white">Selected</span>
                     )}
                   </div>
                   <div className="grid grid-cols-3 gap-2 p-3">
@@ -1009,7 +1009,7 @@ export function NewDesignWorkspace({ initialProject }: { initialProject: NewDesi
                     </button>
                   </div>
                   {img.decision !== "SELECTED" && (
-                    <div className="flex border-t border-zinc-100 text-[11px] dark:border-zinc-800">
+                    <div className="flex border-t border-zinc-100 text-xs dark:border-zinc-800">
                       <button type="button" onClick={() => decide(img.id, "SELECT")} className="flex-1 py-1.5 text-emerald-700 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/30">
                         Select
                       </button>

@@ -3,6 +3,66 @@ import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { generateMasterCodeInTx } from "@/core/numbering/DocumentNumberingService";
 import { registerBarcode } from "@/core/barcode/barcode.service";
 import type { Prisma } from "@prisma/client";
+import { PermissionService } from "@/core/rbac/PermissionService";
+import { assertBranchAccess, branchScopeWhere } from "@/lib/branch-access";
+import { assignedLotWhere, getProductionRecordScope } from "@/modules/production/production-scope";
+
+/**
+ * A unit's branch is its lot's branch — a branch-restricted user only sees
+ * units from lots in their allowed branches (same rule as getLotById).
+ * P1: someone who reaches units only through production.view (a worker, no
+ * view_all, no barcodes/dispatch view) only sees units of lots assigned to them.
+ */
+async function unitBranchScope(userId: string): Promise<Prisma.ProductUnitWhereInput> {
+  const allowed = await PermissionService.getAllowedBranchIds(userId);
+  const lotWhere: Prisma.LotWhereInput = allowed === null ? {} : branchScopeWhere(allowed);
+
+  const [barcodes, dispatch] = await Promise.all([
+    PermissionService.can(userId, "barcodes", "view"),
+    PermissionService.can(userId, "dispatch", "view"),
+  ]);
+  if (!barcodes && !dispatch) Object.assign(lotWhere, assignedLotWhere(await getProductionRecordScope(userId)));
+
+  return Object.keys(lotWhere).length === 0 ? {} : { lot: lotWhere };
+}
+
+const UNIT_LIST_INCLUDE = {
+  product: { select: { styleCode: true, styleName: true } },
+  productVariant: { include: { color: true, size: true } },
+  lot: { select: { lotNumber: true } },
+  carton: { select: { cartonNumber: true } },
+} satisfies Prisma.ProductUnitInclude;
+
+/** Units of one lot, or the 50 most recent — branch-scoped. */
+export async function listProductUnits(actor: ActorContext, filters: { lotId?: string | null }) {
+  const scope = await unitBranchScope(actor.userId);
+  const where: Prisma.ProductUnitWhereInput = {
+    companyId: actor.companyId,
+    ...scope,
+    ...(filters.lotId ? { lotId: filters.lotId } : {}),
+  };
+  if (filters.lotId) {
+    return prisma.productUnit.findMany({ where, include: UNIT_LIST_INCLUDE, orderBy: { unitCode: "asc" } });
+  }
+  return prisma.productUnit.findMany({ where, include: UNIT_LIST_INCLUDE, take: 50, orderBy: { createdAt: "desc" } });
+}
+
+/** Units for garment-tag printing, by lot or by an explicit code list — branch-scoped. */
+export async function listProductUnitsForLabels(
+  actor: ActorContext,
+  filters: { lotId?: string | null; unitCodes?: string[] }
+) {
+  const scope = await unitBranchScope(actor.userId);
+  return prisma.productUnit.findMany({
+    where: {
+      companyId: actor.companyId,
+      ...scope,
+      ...(filters.lotId ? { lotId: filters.lotId } : { unitCode: { in: filters.unitCodes ?? [] } }),
+    },
+    include: UNIT_LIST_INCLUDE,
+    orderBy: { unitCode: "asc" },
+  });
+}
 
 export interface ActorContext {
   companyId: string;
@@ -90,9 +150,11 @@ export async function mintProductUnitsInTx(
  * Style, Variant, Lot, Production Order, Sales Order, Cartons, Dispatches, and Return history.
  */
 export async function resolveProductUnitTraceability(actor: ActorContext, codeOrId: string) {
+  const scope = await unitBranchScope(actor.userId);
   const unit = await prisma.productUnit.findFirst({
     where: {
       companyId: actor.companyId,
+      ...scope,
       OR: [{ unitCode: codeOrId }, { id: codeOrId }],
     },
     include: {
@@ -180,6 +242,7 @@ export async function packUnitIntoCarton(
   if (carton.dispatch.companyId !== actor.companyId) {
     throw new BusinessRuleError("PERMISSION_DENIED", "Carton belongs to a different company.");
   }
+  await assertBranchAccess(actor, carton.dispatch.branchId);
 
   if (carton.dispatch.status !== "DRAFT" && carton.dispatch.status !== "PACKED") {
     throw new BusinessRuleError("INVALID_STATE_TRANSITION", `Cannot pack into a dispatch with status "${carton.dispatch.status}".`);

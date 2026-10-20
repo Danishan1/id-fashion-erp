@@ -34,15 +34,15 @@ export default async function ReportCenterPage() {
               <div className="flex items-center justify-between">
                 <h2 className="font-medium text-zinc-900 dark:text-zinc-50">{cat.label}</h2>
                 {cat.unavailableReason ? (
-                  <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                  <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
                     Not available
                   </span>
                 ) : builtCount > 0 ? (
-                  <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400">
+                  <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400">
                     {builtCount} report{builtCount === 1 ? "" : "s"}
                   </span>
                 ) : (
-                  <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-950 dark:text-amber-400">
+                  <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-950 dark:text-amber-400">
                     Coming soon
                   </span>
                 )}

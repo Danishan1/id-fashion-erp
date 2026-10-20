@@ -1,38 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireSession, handleApiError } from "@/lib/api-route";
-import { prisma } from "@/core/db/client";
+import { PermissionService } from "@/core/rbac/PermissionService";
+import { listProductUnitsForLabels } from "@/modules/product-units/product-unit.service";
 import { getCompanyHeaderLines } from "@/core/documents/company-header";
 import { renderMultiBarcodeLabelPdf, barcodeLabelPdfHeaders, type LabelDescriptor } from "@/core/documents/barcode-label-pdf";
 
 export async function GET(req: NextRequest) {
   try {
     const session = await requireSession();
+    await PermissionService.assert(session.user.id, "barcodes", "print");
+    const actor = { companyId: session.user.companyId, userId: session.user.id };
     const { searchParams } = new URL(req.url);
     const lotId = searchParams.get("lotId");
     const unitCodesParam = searchParams.get("unitCodes");
 
     let units;
     if (lotId) {
-      units = await prisma.productUnit.findMany({
-        where: { companyId: session.user.companyId, lotId },
-        include: {
-          product: { select: { styleCode: true, styleName: true } },
-          productVariant: { include: { color: true, size: true } },
-          lot: { select: { lotNumber: true } },
-        },
-        orderBy: { unitCode: "asc" },
-      });
+      units = await listProductUnitsForLabels(actor, { lotId });
     } else if (unitCodesParam) {
       const codes = unitCodesParam.split(",").map((c) => c.trim());
-      units = await prisma.productUnit.findMany({
-        where: { companyId: session.user.companyId, unitCode: { in: codes } },
-        include: {
-          product: { select: { styleCode: true, styleName: true } },
-          productVariant: { include: { color: true, size: true } },
-          lot: { select: { lotNumber: true } },
-        },
-        orderBy: { unitCode: "asc" },
-      });
+      units = await listProductUnitsForLabels(actor, { unitCodes: codes });
     } else {
       return NextResponse.json({ error: { message: "Provide lotId or unitCodes." } }, { status: 400 });
     }

@@ -371,7 +371,7 @@ export function AdminAiProvidersPanel({ canManage }: { canManage: boolean }) {
                     {row.healthStatus.replace(/_/g, " ")}
                   </span>
                   {row.cooldownUntil && new Date(row.cooldownUntil) > new Date() && (
-                    <div className="mt-0.5 text-[11px] text-zinc-500">until {new Date(row.cooldownUntil).toLocaleTimeString()}</div>
+                    <div className="mt-0.5 text-xs text-zinc-500">until {new Date(row.cooldownUntil).toLocaleTimeString()}</div>
                   )}
                 </td>
                 <td className="px-3 py-2">

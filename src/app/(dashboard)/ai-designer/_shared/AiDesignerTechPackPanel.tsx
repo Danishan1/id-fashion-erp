@@ -145,7 +145,7 @@ function StatusBadge({ status, onClick }: { status: string; onClick?: () => void
       onClick={onClick}
       disabled={!onClick}
       title={onClick ? "Click to change status" : status}
-      className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${cls} ${onClick ? "cursor-pointer hover:opacity-80" : ""}`}
+      className={`shrink-0 rounded-full px-1.5 py-0.5 text-xs font-medium ${cls} ${onClick ? "cursor-pointer hover:opacity-80" : ""}`}
     >
       {status}
     </button>
@@ -245,7 +245,7 @@ function StatusSelect({ status, onSave }: { status: string; onSave: (value: stri
           setSaving(false);
         }
       }}
-      className={`rounded-full border-0 px-1.5 py-0.5 text-[10px] font-medium ${STATUS_STYLES[status] ?? STATUS_STYLES.NOT_VISIBLE}`}
+      className={`rounded-full border-0 px-1.5 py-0.5 text-xs font-medium ${STATUS_STYLES[status] ?? STATUS_STYLES.NOT_VISIBLE}`}
     >
       {CONFIDENCE_STATUSES.map((s) => (
         <option key={s} value={s}>

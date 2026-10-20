@@ -122,7 +122,7 @@ function EventPicker({ value, onChange }: { value: string[]; onChange: (v: strin
                   <label key={e.type} className="flex items-start gap-2 text-sm">
                     <input type="checkbox" className="mt-0.5" checked={set.has(e.type)} onChange={(ev) => toggle([e.type], ev.target.checked)} />
                     <span>
-                      {e.label} <code className="text-[11px] text-zinc-500">{e.type}</code>
+                      {e.label} <code className="text-xs text-zinc-500">{e.type}</code>
                     </span>
                   </label>
                 ))}

@@ -9,7 +9,7 @@ const STEP_TONE: Record<string, CrmBadgeTone> = { COMPLETED: "green", SIMULATED:
 
 function Json({ value }: { value: unknown }) {
   if (value === null || value === undefined || (typeof value === "object" && !Array.isArray(value) && !Object.keys(value as object).length)) return null;
-  return <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-zinc-50 p-2 text-[11px] dark:bg-zinc-900">{JSON.stringify(value, null, 2)}</pre>;
+  return <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-zinc-50 p-2 text-xs dark:bg-zinc-900">{JSON.stringify(value, null, 2)}</pre>;
 }
 
 /** Phase 18 — an execution and its step-by-step trace (input, output, branch, error). */

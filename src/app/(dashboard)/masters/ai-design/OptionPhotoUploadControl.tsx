@@ -79,7 +79,7 @@ export function OptionPhotoUploadControl({
         variant={variant}
         className={variant === "CAD_FLAT" ? "h-16 w-16 rounded bg-white object-contain sm:h-20 sm:w-20" : undefined}
       />
-      <p className="max-w-[6rem] truncate text-[11px] font-medium leading-tight text-zinc-900 dark:text-zinc-100" title={optionValue}>
+      <p className="max-w-[6rem] truncate text-xs font-medium leading-tight text-zinc-900 dark:text-zinc-100" title={optionValue}>
         {optionValue}
       </p>
       <input
@@ -98,17 +98,17 @@ export function OptionPhotoUploadControl({
           type="button"
           disabled={busy}
           onClick={() => fileInput.current?.click()}
-          className="text-[11px] font-medium text-indigo-600 hover:underline disabled:opacity-50"
+          className="text-xs font-medium text-indigo-600 hover:underline disabled:opacity-50"
         >
           {busy ? "…" : attachmentId ? "Replace" : "Upload"}
         </button>
         {attachmentId && (
-          <button type="button" disabled={busy} onClick={reset} className="text-[11px] font-medium text-zinc-500 hover:underline disabled:opacity-50">
+          <button type="button" disabled={busy} onClick={reset} className="text-xs font-medium text-zinc-500 hover:underline disabled:opacity-50">
             Reset
           </button>
         )}
       </div>
-      {error && <p className="text-[10px] text-red-600 dark:text-red-400">{error}</p>}
+      {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
     </div>
   );
 }

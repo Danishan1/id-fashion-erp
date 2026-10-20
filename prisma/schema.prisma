@@ -48,6 +48,9 @@ model Company {
   supplierMaterialCategories          SupplierMaterialCategory[]
   departments                         Department[]
   employees                           Employee[]
+  employeeReportingLines              EmployeeReportingLine[]
+  productionHandbacks                 ProductionHandback[]
+  userPermissionOverrides             UserPermissionOverride[]
   products                            Product[]
   colors                              Color[]
   sizes                               Size[]
@@ -839,6 +842,10 @@ model User {
   // old session survives a password change no better than it survives a
   // suspension.
   passwordChangedAt        DateTime?  @map("password_changed_at")
+  // P2 (2026-10-21): set on a login created from Employee Master (temporary
+  // password) and on an admin password reset. While true, the user can only
+  // change their password; changing it clears the flag.
+  mustChangePassword       Boolean    @default(false) @map("must_change_password")
   // DEPRECATED (Platform SaaS Phase 1, PLAT-001/004, 2026-10-13) — no longer
   // read by any authorization path. Platform operators now live in the
   // separate `PlatformUser` table and sign in at /platform/login; this flag
@@ -1047,6 +1054,9 @@ model User {
   customerReturnsReceived                    CustomerReturn[]                     @relation("CustomerReturnReceivedBy")
   customerReturnItemsInspected               CustomerReturnItem[]                 @relation("CustomerReturnItemInspectedBy")
 
+  productionHandbacks ProductionHandback[] @relation("ProductionHandbackBy")
+  permissionOverrides        UserPermissionOverride[] @relation("UserPermissionOverrideUser")
+  permissionOverridesCreated UserPermissionOverride[] @relation("UserPermissionOverrideCreatedBy")
   @@unique([companyId, supportForPlatformUserId])
   @@map("users")
 }
@@ -1133,6 +1143,7 @@ model Permission {
 
   rolePermissions RolePermission[]
 
+  userOverrides   UserPermissionOverride[]
   @@index([module])
   @@map("permissions")
 }
@@ -1584,6 +1595,11 @@ model Employee {
   employeeCategory EmployeeCategory? @relation(fields: [employeeCategoryId], references: [id])
   reportsTo        Employee?         @relation("EmployeeHierarchy", fields: [reportsToId], references: [id])
   reports          Employee[]        @relation("EmployeeHierarchy")
+  // P3: per-module reporting lines (Production / CRM / HRMS). Where an
+  // employee has no active line for a module, reportsToId is used instead.
+  reportingLines        EmployeeReportingLine[] @relation("ReportingLineEmployee")
+  managedReportingLines EmployeeReportingLine[] @relation("ReportingLineManager")
+  productionHandbacks   ProductionHandback[]
   user             User?
 
   // Production (Phase 5C) — a worker/operator is always tracked here, never
@@ -1607,6 +1623,39 @@ model Employee {
 
   @@unique([companyId, employeeCode])
   @@map("employees")
+}
+
+enum HierarchyModule {
+  PRODUCTION
+  CRM
+  HRMS
+}
+
+/// P3 (2026-10-21): module-specific reporting structure. One active line per
+/// employee per module (partial unique index in the migration). A manager sees
+/// everyone below them in that module (direct reports and all descendants).
+/// Loops are refused by the service. No line for a module = fall back to
+/// Employee.reportsToId.
+model EmployeeReportingLine {
+  id              String          @id @default(uuid()) @db.Uuid
+  companyId       String          @map("company_id") @db.Uuid
+  employeeId      String          @map("employee_id") @db.Uuid
+  managerId       String          @map("manager_id") @db.Uuid
+  module          HierarchyModule
+  startDate       DateTime        @default(now()) @map("start_date") @db.Date
+  endDate         DateTime?       @map("end_date") @db.Date
+  isActive        Boolean         @default(true) @map("is_active")
+  createdByUserId String?         @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+
+  company  Company  @relation(fields: [companyId], references: [id])
+  employee Employee @relation("ReportingLineEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
+  manager  Employee @relation("ReportingLineManager", fields: [managerId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, module, managerId])
+  @@index([employeeId, module])
+  @@map("employee_reporting_lines")
 }
 
 /// An employee's Work Skill = one production stage they are trained for
@@ -4735,6 +4784,7 @@ model JobOrder {
   productionLine       ProductionLine?              @relation(fields: [productionLineId], references: [id])
   assignments          JobOrderAssignment[]
   progressEntries      JobOrderProgressEntry[]
+  handbacks            ProductionHandback[]
   incomingTransactions ProductionStageTransaction[] @relation("StageTransactionTo")
   outgoingTransactions ProductionStageTransaction[] @relation("StageTransactionFrom")
   qcInspections         QcInspection[]
@@ -4811,6 +4861,7 @@ model JobOrderAssignment {
   employee            Employee                @relation("JobOrderAssignmentEmployee", fields: [employeeId], references: [id])
   assignedBy          User                    @relation("JobOrderAssignmentAssignedBy", fields: [assignedByUserId], references: [id])
   progressEntries     JobOrderProgressEntry[]
+  handbacks           ProductionHandback[]
   productionOperation ProductionOperation?    @relation(fields: [productionOperationId], references: [id])
   resolvedRateCard    PieceRateCard?          @relation(fields: [resolvedRateCardId], references: [id])
   overriddenBy        User?                   @relation("JobOrderAssignmentRateOverriddenBy", fields: [overriddenByUserId], references: [id])
@@ -4819,6 +4870,34 @@ model JobOrderAssignment {
   @@index([jobOrderId])
   @@index([employeeId])
   @@map("job_order_assignments")
+}
+
+/// P4 (2026-10-21, decision 4): a worker (or their supervisor) hands back
+/// pieces of an assignment they won't work. Append-only and traceable: the
+/// assignment's assignedQuantity is reduced by the same amount in the same
+/// transaction, freeing those pieces for someone else.
+model ProductionHandback {
+  id                     String   @id @default(uuid()) @db.Uuid
+  companyId              String   @map("company_id") @db.Uuid
+  jobOrderId             String   @map("job_order_id") @db.Uuid
+  jobOrderAssignmentId   String   @map("job_order_assignment_id") @db.Uuid
+  employeeId             String   @map("employee_id") @db.Uuid
+  quantity               Decimal  @db.Decimal(18, 4)
+  reason                 String
+  assignedQuantityBefore Decimal  @map("assigned_quantity_before") @db.Decimal(18, 4)
+  handedBackByUserId     String   @map("handed_back_by_user_id") @db.Uuid
+  createdAt              DateTime @default(now()) @map("created_at")
+
+  company      Company            @relation(fields: [companyId], references: [id])
+  jobOrder     JobOrder           @relation(fields: [jobOrderId], references: [id])
+  assignment   JobOrderAssignment @relation(fields: [jobOrderAssignmentId], references: [id])
+  employee     Employee           @relation(fields: [employeeId], references: [id])
+  handedBackBy User               @relation("ProductionHandbackBy", fields: [handedBackByUserId], references: [id])
+
+  @@index([jobOrderId])
+  @@index([jobOrderAssignmentId])
+  @@index([companyId, createdAt])
+  @@map("production_handbacks")
 }
 
 // Append-only worker-level logging — never edited or deleted. A genuine
@@ -9125,6 +9204,9 @@ model AiGarmentBuyerCommentCategorySummary {
 // ─────────────────────────────────────────────────────────────
 
 enum RelatedModule {
+  // P4 (2026-10-21): slips (generated PDFs or photos/scans of handwritten
+  // slips) uploaded against a job order from the Work Portal.
+  JOB_ORDER
   // Finished Goods Inventory module (2026-10-13, FGI-004) -- Attachment/audit-log
   // polymorphism for FinishedGoodsReceipt.
   FINISHED_GOODS_RECEIPT
@@ -13210,4 +13292,32 @@ model CrmWebhookDelivery {
   @@index([status, nextAttemptAt])
   @@index([subscriptionId, createdAt])
   @@map("crm_webhook_deliveries")
+}
+
+enum PermissionOverrideEffect {
+  GRANT
+  DENY
+}
+
+/// P6 (2026-10-21, decision 11): a per-user exception to their roles' permissions.
+/// GRANT adds one permission, DENY removes one even if a role grants it. A DENY
+/// always wins over a GRANT and over every role. One row per user per permission.
+model UserPermissionOverride {
+  id              String                   @id @default(uuid()) @db.Uuid
+  companyId       String                   @map("company_id") @db.Uuid
+  userId          String                   @map("user_id") @db.Uuid
+  permissionId    String                   @map("permission_id") @db.Uuid
+  effect          PermissionOverrideEffect
+  reason          String
+  createdByUserId String                   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime                 @default(now()) @map("created_at")
+
+  company    Company    @relation(fields: [companyId], references: [id])
+  user       User       @relation("UserPermissionOverrideUser", fields: [userId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  createdBy  User       @relation("UserPermissionOverrideCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@unique([userId, permissionId])
+  @@index([companyId])
+  @@map("user_permission_overrides")
 }

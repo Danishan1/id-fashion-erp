@@ -162,8 +162,8 @@ export function StageTimelinePanel({
                   <td className="px-2 py-1.5 text-zinc-400">{i + 1}</td>
                   <td className="px-2 py-1.5 font-medium text-zinc-800 dark:text-zinc-100">
                     {s.stageName}
-                    {s.isFinal && <span className="ml-1 text-[10px] text-zinc-400">(final)</span>}
-                    {s.extraQuantity > 0 && <span className="ml-1 text-[10px] text-amber-600">+{fmt(s.extraQuantity)} extra</span>}
+                    {s.isFinal && <span className="ml-1 text-xs text-zinc-400">(final)</span>}
+                    {s.extraQuantity > 0 && <span className="ml-1 text-xs text-amber-600">+{fmt(s.extraQuantity)} extra</span>}
                   </td>
                   <Cell value={s.receivedQuantity} />
                   <Cell value={s.assignedQuantity} />
@@ -188,7 +188,7 @@ export function StageTimelinePanel({
                   <Cell value={s.forwardedQuantity} />
                   <Cell value={s.availableForNextStageQuantity} tone="pos" />
                   <td className="px-2 py-1.5">
-                    <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_CLASS[s.status]}`}>{STATUS_LABEL[s.status]}</span>
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_CLASS[s.status]}`}>{STATUS_LABEL[s.status]}</span>
                   </td>
                 </tr>
               ))}

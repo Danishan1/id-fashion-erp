@@ -833,7 +833,7 @@ export function EditDesignWorkspace({
             }`}
           >
             <span>✏️ Edit from Sketch</span>
-            <span className="rounded bg-violet-100 px-1.5 py-0.5 text-[9px] font-bold text-violet-700 dark:bg-violet-950 dark:text-violet-300">Default</span>
+            <span className="rounded bg-violet-100 px-1.5 py-0.5 text-xs font-bold text-violet-700 dark:bg-violet-950 dark:text-violet-300">Default</span>
           </button>
           <button
             type="button"
@@ -896,9 +896,9 @@ export function EditDesignWorkspace({
             </div>
 
             <>
-                <p className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">🖼️ Design Attributes</p>
+                <p className="px-3 pb-1.5 text-xs font-semibold uppercase tracking-wide text-zinc-400">🖼️ Design Attributes</p>
                 {designAttributes.length === 0 ? (
-                  <p className="px-3 pb-2 text-[10px] leading-snug text-zinc-500">
+                  <p className="px-3 pb-2 text-xs leading-snug text-zinc-500">
                     {project.productCategory
                       ? "No visual design attributes configured for this style's category yet — add some in Masters → AI Design → Product Design."
                       : "This project has no product category set, so no visual design attributes are available."}
@@ -919,7 +919,7 @@ export function EditDesignWorkspace({
                           }`}
                         >
                           <span>{attr.label}</span>
-                          {picked && <span className="truncate text-[9px] font-normal text-green-600 dark:text-green-400">✓ {picked}</span>}
+                          {picked && <span className="truncate text-xs font-normal text-green-600 dark:text-green-400">✓ {picked}</span>}
                         </button>
                       );
                     })}
@@ -937,7 +937,7 @@ export function EditDesignWorkspace({
                   </button>
                   {advancedOpen && (
                     <>
-                      <p className="px-3 pb-1 text-[10px] leading-snug text-zinc-500">
+                      <p className="px-3 pb-1 text-xs leading-snug text-zinc-500">
                         Manufacturing-level details (fabric, stitching, trims, …) — plain text fields, no reference images.
                       </p>
                       {EDIT_CATEGORIES.map(({ group, items }) => renderCategoryGroup(group, items))}
@@ -1009,7 +1009,7 @@ export function EditDesignWorkspace({
             >
               Fit
             </button>
-            <span className="hidden text-[10px] text-zinc-400 2xl:inline">Ctrl + scroll to zoom · drag panel edges to resize</span>
+            <span className="hidden text-xs text-zinc-400 2xl:inline">Ctrl + scroll to zoom · drag panel edges to resize</span>
             <button
               type="button"
               onClick={() => setFullscreen((f) => !f)}
@@ -1072,7 +1072,7 @@ export function EditDesignWorkspace({
                         type="button"
                         onClick={generateSketchForCurrentProject}
                         disabled={Boolean(busy)}
-                        className="ml-2 rounded border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] text-violet-600 hover:bg-violet-100 disabled:opacity-50 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-300"
+                        className="ml-2 rounded border border-violet-200 bg-violet-50 px-2 py-0.5 text-xs text-violet-600 hover:bg-violet-100 disabled:opacity-50 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-300"
                       >
                         {busy === "generate-sketch" ? "Generating…" : "Re-generate"}
                       </button>
@@ -1165,7 +1165,7 @@ export function EditDesignWorkspace({
                 {preview && (
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                     <div className="rounded border border-zinc-200 p-1 text-center dark:border-zinc-800">
-                      <p className="mb-1 text-[10px] font-medium text-zinc-500">Original</p>
+                      <p className="mb-1 text-xs font-medium text-zinc-500">Original</p>
                       {currentImage && (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img
@@ -1178,7 +1178,7 @@ export function EditDesignWorkspace({
                     </div>
                     {preview.images.map((img, i) => (
                       <div key={img.id} className="rounded border border-zinc-200 p-1 text-center dark:border-zinc-800">
-                        <p className="mb-1 text-[10px] font-medium text-zinc-500">Variation {String.fromCharCode(65 + i)}</p>
+                        <p className="mb-1 text-xs font-medium text-zinc-500">Variation {String.fromCharCode(65 + i)}</p>
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                           src={imageUrl(img.imageAttachmentId)}
@@ -1192,7 +1192,7 @@ export function EditDesignWorkspace({
                               type="button"
                               disabled={!!busy}
                               onClick={() => setApplyImageId(img.id)}
-                              className="flex-1 rounded bg-indigo-600 px-1 py-0.5 text-[10px] font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+                              className="flex-1 rounded bg-indigo-600 px-1 py-0.5 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
                             >
                               Select &amp; Apply
                             </button>
@@ -1200,14 +1200,14 @@ export function EditDesignWorkspace({
                               type="button"
                               disabled={!!busy}
                               onClick={() => rejectPreviewImage(img.id)}
-                              className="rounded border px-1 py-0.5 text-[10px] disabled:opacity-50"
+                              className="rounded border px-1 py-0.5 text-xs disabled:opacity-50"
                             >
                               Reject
                             </button>
                           </div>
                         )}
                         {img.decision !== "PENDING" && (
-                          <p className={`mt-1 text-[10px] font-medium ${img.decision === "SELECTED" ? "text-green-600" : "text-zinc-400"}`}>
+                          <p className={`mt-1 text-xs font-medium ${img.decision === "SELECTED" ? "text-green-600" : "text-zinc-400"}`}>
                             {img.decision === "SELECTED" ? "Applied" : "Rejected"}
                           </p>
                         )}
@@ -1240,7 +1240,7 @@ export function EditDesignWorkspace({
                 {compareVersion ? (
                   <div className="grid grid-cols-2 gap-4">
                     <div className="text-center">
-                      <p className="mb-1 text-[10px] font-medium text-zinc-500">
+                      <p className="mb-1 text-xs font-medium text-zinc-500">
                         V{compareVersion.versionNumber} — {compareVersion.changeSummary ?? "No description"}
                       </p>
                       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1252,7 +1252,7 @@ export function EditDesignWorkspace({
                       />
                     </div>
                     <div className="text-center">
-                      <p className="mb-1 text-[10px] font-medium text-zinc-500">
+                      <p className="mb-1 text-xs font-medium text-zinc-500">
                         Current — V{project.currentVersion?.versionNumber}
                       </p>
                       {currentImage && (
@@ -1287,24 +1287,24 @@ export function EditDesignWorkspace({
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-xs font-semibold">V{v.versionNumber}</span>
-                        <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${STATUS_BADGE[v.approvalStatus]}`}>{STATUS_LABEL[v.approvalStatus]}</span>
-                        {v.id === project.currentVersion?.id && <span className="text-[10px] text-indigo-500">● current</span>}
+                        <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${STATUS_BADGE[v.approvalStatus]}`}>{STATUS_LABEL[v.approvalStatus]}</span>
+                        {v.id === project.currentVersion?.id && <span className="text-xs text-indigo-500">● current</span>}
                       </div>
                       <p className="truncate text-xs text-zinc-600 dark:text-zinc-400">{v.changeSummary ?? "Initial design."}</p>
-                      <p className="text-[10px] text-zinc-400">
+                      <p className="text-xs text-zinc-400">
                         {v.createdBy.fullName} · {new Date(v.createdAt).toLocaleString()}
                         {v.approvedBy && ` · Approved by ${v.approvedBy.fullName}`}
                       </p>
                       {v.aiPrompt && (
                         <details className="mt-0.5">
-                          <summary className="cursor-pointer text-[10px] text-zinc-400">AI Prompt</summary>
-                          <p className="whitespace-pre-wrap text-[10px] text-zinc-500">{v.aiPrompt.promptText}</p>
+                          <summary className="cursor-pointer text-xs text-zinc-400">AI Prompt</summary>
+                          <p className="whitespace-pre-wrap text-xs text-zinc-500">{v.aiPrompt.promptText}</p>
                         </details>
                       )}
                       {v.technicalChangesJson && Object.keys(v.technicalChangesJson).length > 0 && (
                         <details className="mt-0.5">
-                          <summary className="cursor-pointer text-[10px] text-zinc-400">Technical Changes</summary>
-                          <ul className="text-[10px] text-zinc-500">
+                          <summary className="cursor-pointer text-xs text-zinc-400">Technical Changes</summary>
+                          <ul className="text-xs text-zinc-500">
                             {Object.entries(v.technicalChangesJson).map(([k, val]) => (
                               <li key={k}>
                                 {k}: {val}
@@ -1320,7 +1320,7 @@ export function EditDesignWorkspace({
                         setCompareImageId(v.currentImage.id);
                         setBottomTab("compare");
                       }}
-                      className="shrink-0 text-[10px] text-indigo-600 hover:underline dark:text-indigo-400"
+                      className="shrink-0 text-xs text-indigo-600 hover:underline dark:text-indigo-400"
                     >
                       Compare
                     </button>
@@ -1361,7 +1361,7 @@ export function EditDesignWorkspace({
                     <span>✏️</span>
                     <span>Through Sketch Edit Form</span>
                   </div>
-                  <p className="mt-1 text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-400">
+                  <p className="mt-1 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
                     Modify 2D CAD technical flat lines, seamlines, neckline, sleeves, and garment structure directly on the manufacturing flat.
                   </p>
                 </div>
@@ -1392,26 +1392,26 @@ export function EditDesignWorkspace({
 
                 {sketchTool === "PEN" && (
                   <div className="space-y-2 rounded-xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">Pen markup key</span>
-                    <div className="flex items-start gap-2 text-[11px] text-zinc-700 dark:text-zinc-300">
+                    <span className="text-xs font-bold uppercase tracking-wider text-zinc-400">Pen markup key</span>
+                    <div className="flex items-start gap-2 text-xs text-zinc-700 dark:text-zinc-300">
                       <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: PEN_COLORS.ADD }} />
                       <span>
                         <b>Red — Add / Change.</b> Draw the new line where you want it: neckline, collar, yoke, seam, dart, pocket,
                         placket, slit or hem. A red line drawn over an old line replaces it.
                       </span>
                     </div>
-                    <div className="flex items-start gap-2 text-[11px] text-zinc-700 dark:text-zinc-300">
+                    <div className="flex items-start gap-2 text-xs text-zinc-700 dark:text-zinc-300">
                       <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: PEN_COLORS.REMOVE }} />
                       <span>
                         <b>Blue — Remove.</b> Scribble over any seam, pocket or detail to delete it.
                       </span>
                     </div>
-                    <p className="text-[10px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+                    <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
                       Rough strokes are fine — AI straightens and smooths them into clean CAD lines, and mirrors symmetric changes
                       (armholes, side seams, princess seams) to both sides. Hold Shift for a straight line.
                     </p>
                     {!activeSketchAttachmentId && (
-                      <p className="text-[10px] font-medium text-amber-600 dark:text-amber-400">
+                      <p className="text-xs font-medium text-amber-600 dark:text-amber-400">
                         Generate the CAD flat sketch first — then draw on it.
                       </p>
                     )}
@@ -1422,19 +1422,19 @@ export function EditDesignWorkspace({
                 {sketchTool === "OPTIONS" && (
                   <div className="space-y-2.5">
                     <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">
+                      <span className="text-xs font-bold uppercase tracking-wider text-zinc-400">
                         📐 Construction Architecture
                       </span>
                       <button
                         type="button"
                         onClick={undoConstructionOption}
                         disabled={sketchHistory.length === 0 || Boolean(busy)}
-                        className="rounded border border-zinc-200 px-2 py-0.5 text-[10px] font-semibold text-zinc-600 hover:border-violet-300 hover:text-violet-700 disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-300"
+                        className="rounded border border-zinc-200 px-2 py-0.5 text-xs font-semibold text-zinc-600 hover:border-violet-300 hover:text-violet-700 disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-300"
                       >
                         {busy === "undo-option" ? "Undoing…" : "↶ Undo"}
                       </button>
                     </div>
-                    <p className="text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">
+                    <p className="text-xs leading-snug text-zinc-500 dark:text-zinc-400">
                       Click an option to apply it to the sketch — the updated sketch shows on the canvas.
                     </p>
 
@@ -1443,11 +1443,11 @@ export function EditDesignWorkspace({
                       return (
                         <div key={cat.category} className="rounded-lg border border-zinc-200 bg-zinc-50 p-2 dark:border-zinc-800 dark:bg-zinc-900/50">
                           <div className="flex items-center justify-between pb-1.5">
-                            <span className="flex items-center gap-1 text-[11px] font-semibold text-zinc-700 dark:text-zinc-200">
+                            <span className="flex items-center gap-1 text-xs font-semibold text-zinc-700 dark:text-zinc-200">
                               <span>{cat.icon}</span>
                               <span>{cat.label}</span>
                             </span>
-                            {applied && <span className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400">✓ {applied}</span>}
+                            {applied && <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">✓ {applied}</span>}
                           </div>
                           <div className="grid grid-cols-3 gap-1.5">
                             {cat.options.map((opt) => {
@@ -1474,13 +1474,13 @@ export function EditDesignWorkspace({
                                       className="h-14 w-full object-contain"
                                     />
                                     {isApplying && (
-                                      <span className="absolute inset-0 flex items-center justify-center bg-white/80 text-[10px] font-semibold text-violet-700">
+                                      <span className="absolute inset-0 flex items-center justify-center bg-white/80 text-xs font-semibold text-violet-700">
                                         Applying…
                                       </span>
                                     )}
                                   </span>
                                   <span
-                                    className={`line-clamp-2 text-[10px] font-medium leading-tight ${
+                                    className={`line-clamp-2 text-xs font-medium leading-tight ${
                                       isApplied ? "text-violet-700 dark:text-violet-300" : "text-zinc-700 dark:text-zinc-300"
                                     }`}
                                   >
@@ -1501,7 +1501,7 @@ export function EditDesignWorkspace({
                     >
                       {busy === "sketch-to-garment" ? "✨ Updating garment from sketch…" : "👗 Apply Sketch to Garment"}
                     </button>
-                    <p className="text-[10px] leading-snug text-zinc-500 dark:text-zinc-400">
+                    <p className="text-xs leading-snug text-zinc-500 dark:text-zinc-400">
                       Renders the garment photo from the edited sketch as a new version, so the garment and sketch match. Then approve it.
                     </p>
                   </div>
@@ -1533,7 +1533,7 @@ export function EditDesignWorkspace({
                         onClick={() =>
                           setSketchInstruction((prev) => (prev.trim() ? `${prev.trim()} ${hint}.` : `${hint}.`))
                         }
-                        className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[9px] text-zinc-600 hover:border-violet-300 hover:text-violet-700 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400"
+                        className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-xs text-zinc-600 hover:border-violet-300 hover:text-violet-700 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400"
                       >
                         + {hint}
                       </button>
@@ -1543,7 +1543,7 @@ export function EditDesignWorkspace({
 
                 {/* View angle */}
                 <div>
-                  <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-zinc-400">
+                  <label className="mb-1 block text-xs font-bold uppercase tracking-wider text-zinc-400">
                     CAD View Angle
                   </label>
                   <div className="flex gap-1">
@@ -1583,7 +1583,7 @@ export function EditDesignWorkspace({
                       <span className="text-xs font-semibold text-zinc-900 dark:text-zinc-100">
                         👗 Also render realistic garment
                       </span>
-                      <p className="text-[10px] text-zinc-500 dark:text-zinc-400">
+                      <p className="text-xs text-zinc-500 dark:text-zinc-400">
                         Automatically renders the photorealistic garment dressed in project fabric matching the edited CAD sketch.
                       </p>
                     </div>
@@ -1592,7 +1592,7 @@ export function EditDesignWorkspace({
 
                 {/* Variations count */}
                 <div>
-                  <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-zinc-400">
+                  <label className="mb-1 block text-xs font-bold uppercase tracking-wider text-zinc-400">
                     Variations to Generate
                   </label>
                   <div className="flex gap-1">
@@ -1632,7 +1632,7 @@ export function EditDesignWorkspace({
                       : "✨ Generate from Sketch"}
                 </button>
                 {busy === "sketch-edit" && (
-                  <p className="text-center text-[10px] text-amber-600 dark:text-amber-400">
+                  <p className="text-center text-xs text-amber-600 dark:text-amber-400">
                     Generating technical sketch and garment variations. Candidates appear in AI Variations below.
                   </p>
                 )}
@@ -1652,7 +1652,7 @@ export function EditDesignWorkspace({
                 </p>
 
                 {activeGroup && IMPACT_HINTS[activeGroup] && (
-                  <p className="mb-3 rounded border border-amber-200 bg-amber-50 p-2 text-[10px] text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-400">
+                  <p className="mb-3 rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-400">
                     {IMPACT_HINTS[activeGroup]}
                   </p>
                 )}
@@ -1683,7 +1683,7 @@ export function EditDesignWorkspace({
                 {editMode === "QUICK" && (
                   <div className="space-y-2">
                     <div>
-                      <label className="mb-0.5 block text-[10px] font-medium text-zinc-500">Current Value</label>
+                      <label className="mb-0.5 block text-xs font-medium text-zinc-500">Current Value</label>
                       <input
                         value={currentValue}
                         onChange={(e) => setCurrentValue(e.target.value)}
@@ -1692,7 +1692,7 @@ export function EditDesignWorkspace({
                       />
                     </div>
                     <div>
-                      <label className="mb-0.5 block text-[10px] font-medium text-zinc-500">New Requirement</label>
+                      <label className="mb-0.5 block text-xs font-medium text-zinc-500">New Requirement</label>
                       {matchedDesignAttr && (
                         <div className="mb-1.5 grid grid-cols-3 gap-1.5">
                           {matchedDesignAttr.options.map((opt) => {
@@ -1712,7 +1712,7 @@ export function EditDesignWorkspace({
                                 {designDisplayMode === "CLIPART" && (
                                   <DesignOptionImage value={opt} overrideAttachmentId={optionReferenceImages[opt]} />
                                 )}
-                                <span className="text-[10px] leading-tight">{opt}</span>
+                                <span className="text-xs leading-tight">{opt}</span>
                               </button>
                             );
                           })}
@@ -1740,14 +1740,14 @@ export function EditDesignWorkspace({
                     </div>
                     {Object.keys(designAttrSelections).length > 0 && (
                       <div>
-                        <label className="mb-0.5 block text-[10px] font-medium text-zinc-500">
+                        <label className="mb-0.5 block text-xs font-medium text-zinc-500">
                           Selected Changes ({Object.keys(designAttrSelections).length}) — all applied together
                         </label>
                         <div className="flex flex-wrap gap-1">
                           {Object.entries(designAttrSelections).map(([label, value]) => (
                             <span
                               key={label}
-                              className="inline-flex items-center gap-1 rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-medium text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
+                              className="inline-flex items-center gap-1 rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
                             >
                               {label}: {value}
                               <button
@@ -1770,7 +1770,7 @@ export function EditDesignWorkspace({
                       </div>
                     )}
                     <div>
-                      <label className="mb-0.5 block text-[10px] font-medium text-zinc-500">Additional Instructions (optional)</label>
+                      <label className="mb-0.5 block text-xs font-medium text-zinc-500">Additional Instructions (optional)</label>
                       <textarea
                         value={freeform}
                         onChange={(e) => setFreeform(e.target.value)}
@@ -1783,7 +1783,7 @@ export function EditDesignWorkspace({
 
                 {editMode === "TECHNICAL" && (
                   <div className="space-y-2">
-                    <p className="text-[10px] text-zinc-500">Add exact manufacturing parameters — reflected in the new version&apos;s design specification data.</p>
+                    <p className="text-xs text-zinc-500">Add exact manufacturing parameters — reflected in the new version&apos;s design specification data.</p>
                     {techRows.map((row, i) => (
                       <div key={i} className="flex gap-1">
                         <input
@@ -1803,7 +1803,7 @@ export function EditDesignWorkspace({
                     <button
                       type="button"
                       onClick={() => setTechRows((rows) => [...rows, { key: "", value: "" }])}
-                      className="text-[10px] text-indigo-600 hover:underline dark:text-indigo-400"
+                      className="text-xs text-indigo-600 hover:underline dark:text-indigo-400"
                     >
                       + Add parameter
                     </button>
@@ -1833,7 +1833,7 @@ export function EditDesignWorkspace({
                           key={example}
                           type="button"
                           onClick={() => setFreeform((prev) => (prev.trim() ? `${prev.trim()} ${example}.` : `${example}.`))}
-                          className="rounded-full border border-violet-200 bg-white px-2.5 py-1 text-[11px] text-violet-700 transition hover:bg-violet-100 dark:border-violet-800 dark:bg-zinc-900 dark:text-violet-300"
+                          className="rounded-full border border-violet-200 bg-white px-2.5 py-1 text-xs text-violet-700 transition hover:bg-violet-100 dark:border-violet-800 dark:bg-zinc-900 dark:text-violet-300"
                         >
                           + {example}
                         </button>
@@ -1844,13 +1844,13 @@ export function EditDesignWorkspace({
 
                 {editMode === "MASK" && (
                   <div className="space-y-3">
-                    <p className="text-[10px] text-zinc-500">
+                    <p className="text-xs text-zinc-500">
                       Draw directly on the design (center panel) to highlight the exact area you want changed, then describe
                       the change below — the AI only touches the area you drew.
                     </p>
 
                     <div>
-                      <label className="mb-0.5 block text-[10px] font-medium text-zinc-500">What should change in the drawn area?</label>
+                      <label className="mb-0.5 block text-xs font-medium text-zinc-500">What should change in the drawn area?</label>
                       <textarea
                         value={maskInstruction}
                         onChange={(e) => setMaskInstruction(e.target.value)}
@@ -1861,7 +1861,7 @@ export function EditDesignWorkspace({
                     </div>
 
                     <div>
-                      <label className="mb-0.5 block text-[10px] font-medium text-zinc-500">Variations to generate</label>
+                      <label className="mb-0.5 block text-xs font-medium text-zinc-500">Variations to generate</label>
                       <div className="flex gap-1">
                         {[1, 2, 3, 4].map((n) => (
                           <button
@@ -1887,20 +1887,20 @@ export function EditDesignWorkspace({
                       {busy === "preview" ? "Generating preview…" : "Generate Preview"}
                     </button>
                     {busy === "preview" && (
-                      <p className="mt-1 text-[10px] text-amber-600 dark:text-amber-400">This can take up to a minute. Nothing is applied until you review and select a result below.</p>
+                      <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">This can take up to a minute. Nothing is applied until you review and select a result below.</p>
                     )}
                   </div>
                 )}
 
                 {editMode === "EMBELLISHMENTS" && (
                   <div className="space-y-3">
-                    <p className="text-[10px] text-zinc-500">
+                    <p className="text-xs text-zinc-500">
                       Add a digital applique or embroidery embellishment to the current design — upload a motif reference
                       photo, describe how it should be applied, or both. Applies directly as a new version (no preview step).
                     </p>
 
                     <div>
-                      <p className="mb-1 text-[10px] font-medium text-zinc-500">Embellishment Type</p>
+                      <p className="mb-1 text-xs font-medium text-zinc-500">Embellishment Type</p>
                       <div className="flex flex-wrap gap-1">
                         {Object.entries(EMBELLISHMENT_TYPE_LABELS).map(([type, label]) => (
                           <button
@@ -1908,7 +1908,7 @@ export function EditDesignWorkspace({
                             type="button"
                             aria-pressed={embellishmentType === type}
                             onClick={() => setEmbellishmentType(type)}
-                            className={`rounded border px-2 py-1 text-[10px] ${
+                            className={`rounded border px-2 py-1 text-xs ${
                               embellishmentType === type
                                 ? "border-indigo-600 bg-indigo-600 text-white"
                                 : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200"
@@ -1921,11 +1921,11 @@ export function EditDesignWorkspace({
                     </div>
 
                     <div>
-                      <p className="mb-1 text-[10px] font-medium text-zinc-500">Embroidery / Applique Motif (optional)</p>
+                      <p className="mb-1 text-xs font-medium text-zinc-500">Embroidery / Applique Motif (optional)</p>
                       <input
                         type="file"
                         accept="image/jpeg,image/png,image/webp"
-                        className="block w-full text-[10px]"
+                        className="block w-full text-xs"
                         onChange={(e) => {
                           const file = e.target.files?.[0];
                           if (!file) return;
@@ -1950,7 +1950,7 @@ export function EditDesignWorkspace({
                           />
                           <button
                             type="button"
-                            className="text-[10px] text-red-600 hover:underline"
+                            className="text-xs text-red-600 hover:underline"
                             onClick={() =>
                               run("delete-embellishment-motif", async () => {
                                 await parseJson(
@@ -1967,7 +1967,7 @@ export function EditDesignWorkspace({
                     </div>
 
                     <div>
-                      <label className="mb-0.5 block text-[10px] font-medium text-zinc-500">Embellishment Instructions</label>
+                      <label className="mb-0.5 block text-xs font-medium text-zinc-500">Embellishment Instructions</label>
                       <textarea
                         value={embellishmentInstructions}
                         onChange={(e) => setEmbellishmentInstructions(e.target.value)}
@@ -1994,7 +1994,7 @@ export function EditDesignWorkspace({
                 {editMode !== "EMBELLISHMENTS" && editMode !== "MASK" && (
                   <>
                     <div className="mt-3">
-                      <label className="mb-0.5 block text-[10px] font-medium text-zinc-500">View</label>
+                      <label className="mb-0.5 block text-xs font-medium text-zinc-500">View</label>
                       <div className="flex gap-1">
                         {(
                           [
@@ -2020,7 +2020,7 @@ export function EditDesignWorkspace({
                     </div>
 
                     <div className="mt-3">
-                      <label className="mb-0.5 block text-[10px] font-medium text-zinc-500">Variations to generate</label>
+                      <label className="mb-0.5 block text-xs font-medium text-zinc-500">Variations to generate</label>
                       <div className="flex gap-1">
                         {[1, 2, 3, 4].map((n) => (
                           <button
@@ -2046,7 +2046,7 @@ export function EditDesignWorkspace({
                       {busy === "preview" ? "Generating preview…" : "Generate Preview"}
                     </button>
                     {busy === "preview" && (
-                      <p className="mt-1 text-[10px] text-amber-600 dark:text-amber-400">This can take up to a minute. Nothing is applied until you review and select a result below.</p>
+                      <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">This can take up to a minute. Nothing is applied until you review and select a result below.</p>
                     )}
                   </>
                 )}

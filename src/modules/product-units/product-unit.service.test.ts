@@ -3,9 +3,14 @@ import {
   mintProductUnitsInTx,
   resolveProductUnitTraceability,
   packUnitIntoCarton,
+  listProductUnits,
 } from "./product-unit.service";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
+import { PermissionService } from "@/core/rbac/PermissionService";
 
+vi.mock("@/core/rbac/PermissionService", () => ({
+  PermissionService: { getAllowedBranchIds: vi.fn().mockResolvedValue(null), can: vi.fn().mockResolvedValue(true) },
+}));
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/barcode/barcode.service", () => ({ registerBarcode: vi.fn() }));
 vi.mock("@/core/numbering/DocumentNumberingService", () => ({
@@ -222,5 +227,31 @@ describe("product-unit.service", () => {
         packUnitIntoCarton(actor, "cart-1", "FG-00000001")
       ).rejects.toThrow(BusinessRuleError);
     });
+  });
+});
+
+describe("product-unit branch scope (P0)", () => {
+  const scopedActor = { companyId: "comp-1", userId: "user-1" };
+
+  it("filters unit lists to lots in the user's branches", async () => {
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValueOnce(new Set(["branch-1"]));
+    vi.mocked(prisma.productUnit.findMany).mockResolvedValueOnce([] as never);
+    await listProductUnits(scopedActor, { lotId: null });
+    expect(prisma.productUnit.findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ companyId: "comp-1", lot: { branchId: { in: ["branch-1"] } } }),
+      })
+    );
+  });
+
+  it("refuses to pack into a carton whose dispatch is outside the user's branches", async () => {
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValueOnce(new Set(["branch-1"]));
+    vi.mocked(prisma.carton.findUnique).mockResolvedValueOnce({
+      id: "cart-1",
+      dispatchId: "disp-1",
+      dispatch: { id: "disp-1", companyId: "comp-1", branchId: "branch-2", status: "DRAFT", items: [] },
+    } as never);
+    await expect(packUnitIntoCarton(scopedActor, "cart-1", "FG-1")).rejects.toMatchObject({ code: "BRANCH_ACCESS_DENIED" });
+    expect(prisma.$transaction).not.toHaveBeenCalledWith(expect.anything());
   });
 });

@@ -13,7 +13,8 @@ import { getSalesOrderLineCommitment } from "@/modules/production/production-ord
 export async function GET(req: NextRequest) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "production", "view");
+    // P1: planning/history detail -- needs production.view_all (workers only see their own cards).
+    await PermissionService.assert(session.user.id, "production", "view_all");
 
     const salesOrderItemId = req.nextUrl.searchParams.get("salesOrderItemId");
     if (!salesOrderItemId) throw new BusinessRuleError("VALIDATION_ERROR", "salesOrderItemId is required.");

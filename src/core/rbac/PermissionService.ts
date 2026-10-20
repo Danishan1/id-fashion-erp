@@ -73,6 +73,15 @@ class PermissionServiceImpl {
       }
     }
 
+    // P6 (decision 11): per-user overrides on top of the roles. GRANT adds a
+    // permission, DENY removes one -- and a DENY always wins.
+    const overrides = await prisma.userPermissionOverride.findMany({
+      where: { userId },
+      select: { effect: true, permission: { select: { key: true } } },
+    });
+    for (const o of overrides) if (o.effect === "GRANT") keys.add(o.permission.key);
+    for (const o of overrides) if (o.effect === "DENY") keys.delete(o.permission.key);
+
     this.cache.set(userId, keys);
     return keys;
   }
@@ -326,6 +335,25 @@ class PermissionServiceImpl {
       if (!disabled.has(mod) && keys.has(permissionKey(mod, action))) matching.add(mod);
     }
     return matching;
+  }
+
+  /**
+   * Passes when the user holds ANY one of the given module/action pairs —
+   * for a screen legitimately reachable from more than one module (e.g.
+   * Customer Returns under Barcodes or Dispatch). When none match, throws
+   * exactly what assert() would for the first pair, so the error stays the
+   * usual PERMISSION_DENIED / MODULE_NOT_ENABLED / SUBSCRIPTION_READ_ONLY.
+   */
+  async assertAny(
+    userId: string,
+    pairs: ReadonlyArray<readonly [Module, Action]>,
+    resourceContext?: ResourceContext
+  ): Promise<void> {
+    for (const [module, action] of pairs) {
+      if (await this.can(userId, module, action, resourceContext)) return;
+    }
+    const [firstModule, firstAction] = pairs[0];
+    await this.assert(userId, firstModule, firstAction, resourceContext);
   }
 
   /** Throws BusinessRuleError("PERMISSION_DENIED") if the check fails — use in route handlers/services. */

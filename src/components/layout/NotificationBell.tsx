@@ -52,7 +52,7 @@ export function NotificationBell() {
       >
         🔔
         {unreadCount > 0 && (
-          <span className="absolute -right-1 -top-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-medium text-white">
+          <span className="absolute -right-1 -top-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-600 px-1 text-xs font-medium text-white">
             {unreadCount > 9 ? "9+" : unreadCount}
           </span>
         )}
@@ -86,7 +86,7 @@ export function NotificationBell() {
                     {!n.isRead && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-indigo-600" />}
                   </div>
                   <p className="mt-0.5 text-xs">{n.body}</p>
-                  <p className="mt-0.5 text-[11px] text-zinc-400">{new Date(n.createdAt).toLocaleString()}</p>
+                  <p className="mt-0.5 text-xs text-zinc-400">{new Date(n.createdAt).toLocaleString()}</p>
                 </button>
               ))
             )}

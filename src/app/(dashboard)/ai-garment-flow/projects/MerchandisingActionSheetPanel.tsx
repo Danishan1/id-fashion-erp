@@ -149,7 +149,7 @@ export function MerchandisingActionSheetPanel({ projectId }: { projectId: string
                   {data.workflowProgress.map((s) => (
                     <span
                       key={s.key}
-                      className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                      className={`rounded-full px-2 py-0.5 text-xs font-medium ${
                         s.isCurrent
                           ? "bg-indigo-600 text-white"
                           : s.completed

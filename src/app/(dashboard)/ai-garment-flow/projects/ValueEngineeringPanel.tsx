@@ -107,7 +107,7 @@ export function ValueEngineeringPanel({ projectId, setError }: { projectId: stri
                 <div key={s.id} className="rounded-md border border-zinc-100 p-3 dark:border-zinc-800">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="text-sm font-medium text-zinc-900 dark:text-zinc-50">{s.materialDescription}</p>
-                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${IMPACT_BADGE[s.costImpactDirection]}`}>
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${IMPACT_BADGE[s.costImpactDirection]}`}>
                       {s.costImpactDirection === "LOWER" ? "Likely Lower Cost" : s.costImpactDirection === "HIGHER" ? "Likely Higher Cost" : "Similar Cost"}
                     </span>
                   </div>

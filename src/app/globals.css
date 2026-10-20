@@ -10,6 +10,18 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+
+  /* P5 typography scale (decision 10): body and inputs 15-16px, tables
+     14-15px, nothing below 12px. Use these instead of arbitrary px sizes:
+     text-body / text-input / text-table / text-caption. */
+  --text-caption: 0.75rem; /* 12px -- the smallest text anywhere */
+  --text-caption--line-height: 1rem;
+  --text-table: 0.875rem; /* 14px */
+  --text-table--line-height: 1.25rem;
+  --text-body: 0.9375rem; /* 15px */
+  --text-body--line-height: 1.5rem;
+  --text-input: 1rem; /* 16px -- also stops iOS zooming into focused fields */
+  --text-input--line-height: 1.5rem;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -22,5 +34,27 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  /* P5: use the self-hosted Geist font from the root layout (this used to
+     override it with Arial). */
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  font-size: var(--text-body);
+  line-height: 1.5;
+}
+
+/* P5: every text field, select and text area -- including the many screens
+   with hand-written input styles -- uses the input size: 16px on phones
+   (stops iOS zooming into a focused field), 15px from the sm breakpoint.
+   Deliberately unlayered so it wins over a per-field text-sm/text-xs.
+   Checkboxes, radios, ranges and colour/file pickers are left alone. */
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]),
+select,
+textarea {
+  font-size: var(--text-input);
+}
+@media (min-width: 40rem) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]),
+  select,
+  textarea {
+    font-size: var(--text-body);
+  }
 }

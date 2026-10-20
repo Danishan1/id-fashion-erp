@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { UserPermissionOverridesModal } from "./UserPermissionOverridesModal";
 import { Modal } from "@/components/ui/Modal";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
@@ -56,6 +57,7 @@ export function AdminUsersPanel({
   const [employees, setEmployees] = useState<EmployeeOption[]>([]);
   const [pendingToggle, setPendingToggle] = useState<UserRow | null>(null);
   const [resetTarget, setResetTarget] = useState<UserRow | null>(null);
+  const [overridesTarget, setOverridesTarget] = useState<UserRow | null>(null);
   const [resetPassword, setResetPassword] = useState("");
   const [resetError, setResetError] = useState<string | null>(null);
   const [isResetting, setIsResetting] = useState(false);
@@ -323,6 +325,7 @@ export function AdminUsersPanel({
                         { label: "Edit", onClick: () => openEdit(u) },
                         { label: "Roles", onClick: () => openRolesModal(u) },
                         { label: "Reset Password", onClick: () => openReset(u) },
+                        ...(u.id === currentUserId ? [] : [{ label: "Permission Overrides", onClick: () => setOverridesTarget(u) }]),
                       ]}
                     />
                   </td>
@@ -588,6 +591,7 @@ export function AdminUsersPanel({
           </div>
         </div>
       </Modal>
+      <UserPermissionOverridesModal user={overridesTarget} onClose={() => setOverridesTarget(null)} />
     </div>
   );
 }

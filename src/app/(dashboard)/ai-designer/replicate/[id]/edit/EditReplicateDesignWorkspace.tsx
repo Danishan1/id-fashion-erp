@@ -480,7 +480,7 @@ export function EditReplicateDesignWorkspace({ projectId, initialProject }: { pr
                           }`}
                         >
                           <span>{item}</span>
-                          {picked && <span className="truncate text-[9px] font-normal text-green-600 dark:text-green-400">✓ {picked}</span>}
+                          {picked && <span className="truncate text-xs font-normal text-green-600 dark:text-green-400">✓ {picked}</span>}
                         </button>
                       );
                     })}
@@ -588,7 +588,7 @@ export function EditReplicateDesignWorkspace({ projectId, initialProject }: { pr
                 {preview && (
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                     <div className="rounded border border-zinc-200 p-1 text-center dark:border-zinc-800">
-                      <p className="mb-1 text-[10px] font-medium text-zinc-500">Original</p>
+                      <p className="mb-1 text-xs font-medium text-zinc-500">Original</p>
                       {currentImage && (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img
@@ -601,7 +601,7 @@ export function EditReplicateDesignWorkspace({ projectId, initialProject }: { pr
                     </div>
                     {preview.images.map((img, i) => (
                       <div key={img.id} className="rounded border border-zinc-200 p-1 text-center dark:border-zinc-800">
-                        <p className="mb-1 text-[10px] font-medium text-zinc-500">Variation {String.fromCharCode(65 + i)}</p>
+                        <p className="mb-1 text-xs font-medium text-zinc-500">Variation {String.fromCharCode(65 + i)}</p>
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                           src={imageUrl(img.imageAttachmentId)}
@@ -615,7 +615,7 @@ export function EditReplicateDesignWorkspace({ projectId, initialProject }: { pr
                               type="button"
                               disabled={!!busy}
                               onClick={() => setApplyImageId(img.id)}
-                              className="flex-1 rounded bg-indigo-600 px-1 py-0.5 text-[10px] font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+                              className="flex-1 rounded bg-indigo-600 px-1 py-0.5 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
                             >
                               Select &amp; Apply
                             </button>
@@ -623,14 +623,14 @@ export function EditReplicateDesignWorkspace({ projectId, initialProject }: { pr
                               type="button"
                               disabled={!!busy}
                               onClick={() => rejectPreviewImage(img.id)}
-                              className="rounded border px-1 py-0.5 text-[10px] disabled:opacity-50"
+                              className="rounded border px-1 py-0.5 text-xs disabled:opacity-50"
                             >
                               Reject
                             </button>
                           </div>
                         )}
                         {img.decision !== "PENDING" && (
-                          <p className={`mt-1 text-[10px] font-medium ${img.decision === "SELECTED" ? "text-green-600" : "text-zinc-400"}`}>
+                          <p className={`mt-1 text-xs font-medium ${img.decision === "SELECTED" ? "text-green-600" : "text-zinc-400"}`}>
                             {img.decision === "SELECTED" ? "Applied" : "Rejected"}
                           </p>
                         )}
@@ -663,7 +663,7 @@ export function EditReplicateDesignWorkspace({ projectId, initialProject }: { pr
                 {compareVersion ? (
                   <div className="grid grid-cols-2 gap-4">
                     <div className="text-center">
-                      <p className="mb-1 text-[10px] font-medium text-zinc-500">
+                      <p className="mb-1 text-xs font-medium text-zinc-500">
                         V{compareVersion.versionNumber} — {compareVersion.changeSummary ?? "No description"}
                       </p>
                       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -675,7 +675,7 @@ export function EditReplicateDesignWorkspace({ projectId, initialProject }: { pr
                       />
                     </div>
                     <div className="text-center">
-                      <p className="mb-1 text-[10px] font-medium text-zinc-500">Current — V{project.currentVersion?.versionNumber}</p>
+                      <p className="mb-1 text-xs font-medium text-zinc-500">Current — V{project.currentVersion?.versionNumber}</p>
                       {currentImage && (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img
@@ -708,24 +708,24 @@ export function EditReplicateDesignWorkspace({ projectId, initialProject }: { pr
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-xs font-semibold">V{v.versionNumber}</span>
-                        <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${STATUS_BADGE[v.approvalStatus]}`}>{STATUS_LABEL[v.approvalStatus]}</span>
-                        {v.id === project.currentVersion?.id && <span className="text-[10px] text-indigo-500">● current</span>}
+                        <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${STATUS_BADGE[v.approvalStatus]}`}>{STATUS_LABEL[v.approvalStatus]}</span>
+                        {v.id === project.currentVersion?.id && <span className="text-xs text-indigo-500">● current</span>}
                       </div>
                       <p className="truncate text-xs text-zinc-600 dark:text-zinc-400">{v.changeSummary ?? "Initial design."}</p>
-                      <p className="text-[10px] text-zinc-400">
+                      <p className="text-xs text-zinc-400">
                         {v.createdBy.fullName} · {new Date(v.createdAt).toLocaleString()}
                         {v.approvedBy && ` · Approved by ${v.approvedBy.fullName}`}
                       </p>
                       {v.aiPrompt && (
                         <details className="mt-0.5">
-                          <summary className="cursor-pointer text-[10px] text-zinc-400">AI Prompt</summary>
-                          <p className="whitespace-pre-wrap text-[10px] text-zinc-500">{v.aiPrompt.promptText}</p>
+                          <summary className="cursor-pointer text-xs text-zinc-400">AI Prompt</summary>
+                          <p className="whitespace-pre-wrap text-xs text-zinc-500">{v.aiPrompt.promptText}</p>
                         </details>
                       )}
                       {v.technicalChangesJson && Object.keys(v.technicalChangesJson).length > 0 && (
                         <details className="mt-0.5">
-                          <summary className="cursor-pointer text-[10px] text-zinc-400">Technical Changes</summary>
-                          <ul className="text-[10px] text-zinc-500">
+                          <summary className="cursor-pointer text-xs text-zinc-400">Technical Changes</summary>
+                          <ul className="text-xs text-zinc-500">
                             {Object.entries(v.technicalChangesJson).map(([k, val]) => (
                               <li key={k}>
                                 {k}: {val}
@@ -741,7 +741,7 @@ export function EditReplicateDesignWorkspace({ projectId, initialProject }: { pr
                         setCompareImageId(v.currentImage.id);
                         setBottomTab("compare");
                       }}
-                      className="shrink-0 text-[10px] text-indigo-600 hover:underline dark:text-indigo-400"
+                      className="shrink-0 text-xs text-indigo-600 hover:underline dark:text-indigo-400"
                     >
                       Compare
                     </button>
@@ -773,7 +773,7 @@ export function EditReplicateDesignWorkspace({ projectId, initialProject }: { pr
             </p>
 
             {activeGroup && IMPACT_HINTS[activeGroup] && (
-              <p className="mb-3 rounded border border-amber-200 bg-amber-50 p-2 text-[10px] text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-400">
+              <p className="mb-3 rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-400">
                 {IMPACT_HINTS[activeGroup]}
               </p>
             )}
@@ -796,7 +796,7 @@ export function EditReplicateDesignWorkspace({ projectId, initialProject }: { pr
             {editMode === "QUICK" && (
               <div className="space-y-2">
                 <div>
-                  <label className="mb-0.5 block text-[10px] font-medium text-zinc-500">Current Value</label>
+                  <label className="mb-0.5 block text-xs font-medium text-zinc-500">Current Value</label>
                   <input
                     value={currentValue}
                     onChange={(e) => setCurrentValue(e.target.value)}
@@ -805,7 +805,7 @@ export function EditReplicateDesignWorkspace({ projectId, initialProject }: { pr
                   />
                 </div>
                 <div>
-                  <label className="mb-0.5 block text-[10px] font-medium text-zinc-500">New Requirement</label>
+                  <label className="mb-0.5 block text-xs font-medium text-zinc-500">New Requirement</label>
                   <input
                     value={activeItem ? (stagedSelections[activeItem] ?? "") : newValue}
                     onChange={(e) => {
@@ -828,14 +828,14 @@ export function EditReplicateDesignWorkspace({ projectId, initialProject }: { pr
                 </div>
                 {Object.keys(stagedSelections).length > 0 && (
                   <div>
-                    <label className="mb-0.5 block text-[10px] font-medium text-zinc-500">
+                    <label className="mb-0.5 block text-xs font-medium text-zinc-500">
                       Selected Changes ({Object.keys(stagedSelections).length}) — all applied together
                     </label>
                     <div className="flex flex-wrap gap-1">
                       {Object.entries(stagedSelections).map(([label, value]) => (
                         <span
                           key={label}
-                          className="inline-flex items-center gap-1 rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-medium text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
+                          className="inline-flex items-center gap-1 rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
                         >
                           {label}: {value}
                           <button
@@ -858,7 +858,7 @@ export function EditReplicateDesignWorkspace({ projectId, initialProject }: { pr
                   </div>
                 )}
                 <div>
-                  <label className="mb-0.5 block text-[10px] font-medium text-zinc-500">Additional Instructions (optional)</label>
+                  <label className="mb-0.5 block text-xs font-medium text-zinc-500">Additional Instructions (optional)</label>
                   <textarea
                     value={freeform}
                     onChange={(e) => setFreeform(e.target.value)}
@@ -871,7 +871,7 @@ export function EditReplicateDesignWorkspace({ projectId, initialProject }: { pr
 
             {editMode === "TECHNICAL" && (
               <div className="space-y-2">
-                <p className="text-[10px] text-zinc-500">Add exact manufacturing parameters — reflected in the new version&apos;s design specification data.</p>
+                <p className="text-xs text-zinc-500">Add exact manufacturing parameters — reflected in the new version&apos;s design specification data.</p>
                 {techRows.map((row, i) => (
                   <div key={i} className="flex gap-1">
                     <input
@@ -891,7 +891,7 @@ export function EditReplicateDesignWorkspace({ projectId, initialProject }: { pr
                 <button
                   type="button"
                   onClick={() => setTechRows((rows) => [...rows, { key: "", value: "" }])}
-                  className="text-[10px] text-indigo-600 hover:underline dark:text-indigo-400"
+                  className="text-xs text-indigo-600 hover:underline dark:text-indigo-400"
                 >
                   + Add parameter
                 </button>
@@ -900,7 +900,7 @@ export function EditReplicateDesignWorkspace({ projectId, initialProject }: { pr
 
             {editMode === "AI_PROMPT" && (
               <div>
-                <label className="mb-0.5 block text-[10px] font-medium text-zinc-500">Describe the design change you want…</label>
+                <label className="mb-0.5 block text-xs font-medium text-zinc-500">Describe the design change you want…</label>
                 <textarea
                   value={freeform}
                   onChange={(e) => setFreeform(e.target.value)}
@@ -913,11 +913,11 @@ export function EditReplicateDesignWorkspace({ projectId, initialProject }: { pr
 
             {editMode === "MASK" && (
               <div>
-                <p className="mb-2 text-[10px] text-zinc-500">
+                <p className="mb-2 text-xs text-zinc-500">
                   Draw directly on the design (center panel) to highlight the exact area you want changed, then describe
                   the change below — the AI only touches the area you drew.
                 </p>
-                <label className="mb-0.5 block text-[10px] font-medium text-zinc-500">What should change in the drawn area?</label>
+                <label className="mb-0.5 block text-xs font-medium text-zinc-500">What should change in the drawn area?</label>
                 <textarea
                   value={maskInstruction}
                   onChange={(e) => setMaskInstruction(e.target.value)}
@@ -929,7 +929,7 @@ export function EditReplicateDesignWorkspace({ projectId, initialProject }: { pr
             )}
 
             <div className="mt-3">
-              <label className="mb-0.5 block text-[10px] font-medium text-zinc-500">Variations to generate</label>
+              <label className="mb-0.5 block text-xs font-medium text-zinc-500">Variations to generate</label>
               <div className="flex gap-1">
                 {[1, 2, 3, 4].map((n) => (
                   <button
@@ -955,7 +955,7 @@ export function EditReplicateDesignWorkspace({ projectId, initialProject }: { pr
               {busy === "preview" ? "Generating preview…" : "Generate Preview"}
             </button>
             {busy === "preview" && (
-              <p className="mt-1 text-[10px] text-amber-600 dark:text-amber-400">This can take up to a minute. Nothing is applied until you review and select a result below.</p>
+              <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">This can take up to a minute. Nothing is applied until you review and select a result below.</p>
             )}
           </div>
         ) : (
