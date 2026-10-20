@@ -73,6 +73,15 @@ class PermissionServiceImpl {
       }
     }
 
+    // P6 (decision 11): per-user overrides on top of the roles. GRANT adds a
+    // permission, DENY removes one -- and a DENY always wins.
+    const overrides = await prisma.userPermissionOverride.findMany({
+      where: { userId },
+      select: { effect: true, permission: { select: { key: true } } },
+    });
+    for (const o of overrides) if (o.effect === "GRANT") keys.add(o.permission.key);
+    for (const o of overrides) if (o.effect === "DENY") keys.delete(o.permission.key);
+
     this.cache.set(userId, keys);
     return keys;
   }

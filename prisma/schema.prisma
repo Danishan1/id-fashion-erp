@@ -50,6 +50,7 @@ model Company {
   employees                           Employee[]
   employeeReportingLines              EmployeeReportingLine[]
   productionHandbacks                 ProductionHandback[]
+  userPermissionOverrides             UserPermissionOverride[]
   products                            Product[]
   colors                              Color[]
   sizes                               Size[]
@@ -1054,6 +1055,8 @@ model User {
   customerReturnItemsInspected               CustomerReturnItem[]                 @relation("CustomerReturnItemInspectedBy")
 
   productionHandbacks ProductionHandback[] @relation("ProductionHandbackBy")
+  permissionOverrides        UserPermissionOverride[] @relation("UserPermissionOverrideUser")
+  permissionOverridesCreated UserPermissionOverride[] @relation("UserPermissionOverrideCreatedBy")
   @@unique([companyId, supportForPlatformUserId])
   @@map("users")
 }
@@ -1140,6 +1143,7 @@ model Permission {
 
   rolePermissions RolePermission[]
 
+  userOverrides   UserPermissionOverride[]
   @@index([module])
   @@map("permissions")
 }
@@ -13288,4 +13292,32 @@ model CrmWebhookDelivery {
   @@index([status, nextAttemptAt])
   @@index([subscriptionId, createdAt])
   @@map("crm_webhook_deliveries")
+}
+
+enum PermissionOverrideEffect {
+  GRANT
+  DENY
+}
+
+/// P6 (2026-10-21, decision 11): a per-user exception to their roles' permissions.
+/// GRANT adds one permission, DENY removes one even if a role grants it. A DENY
+/// always wins over a GRANT and over every role. One row per user per permission.
+model UserPermissionOverride {
+  id              String                   @id @default(uuid()) @db.Uuid
+  companyId       String                   @map("company_id") @db.Uuid
+  userId          String                   @map("user_id") @db.Uuid
+  permissionId    String                   @map("permission_id") @db.Uuid
+  effect          PermissionOverrideEffect
+  reason          String
+  createdByUserId String                   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime                 @default(now()) @map("created_at")
+
+  company    Company    @relation(fields: [companyId], references: [id])
+  user       User       @relation("UserPermissionOverrideUser", fields: [userId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  createdBy  User       @relation("UserPermissionOverrideCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@unique([userId, permissionId])
+  @@index([companyId])
+  @@map("user_permission_overrides")
 }

@@ -6,7 +6,8 @@ import { prisma } from "@/core/db/client";
 import { recordSupportEvent } from "@/core/support-access/support-events";
 import { getLiveSupportSession, isMethodAllowedForSupport } from "@/core/support-access/support-session-guard";
 import { EntitlementService } from "@/core/entitlements/EntitlementService";
-import { isPathDisabled, MODULE_UNAVAILABLE_PATH } from "@/core/entitlements/route-modules";
+import { isPathDisabled, isPathForbidden, MODULE_UNAVAILABLE_PATH, NO_ACCESS_PATH } from "@/core/entitlements/route-modules";
+import { PermissionService } from "@/core/rbac/PermissionService";
 
 /**
  * Platform SaaS Phase 3 (PLAT-019): an ERP page whose module the platform
@@ -19,6 +20,25 @@ async function entitlementGate(companyId: string, request: NextRequest): Promise
   const disabled = await EntitlementService.getDisabledModules(companyId);
   if (isPathDisabled(pathname, disabled)) {
     return Response.redirect(new URL(MODULE_UNAVAILABLE_PATH, request.nextUrl.origin));
+  }
+  return true;
+}
+
+/**
+ * P6 (2026-10-21): a page whose modules the user can't view redirects to
+ * /no-access before it renders -- closes the gap where ~47 client list pages
+ * showed their shell (title, "New" button) and only the data call was
+ * refused. Uses the same page -> module map as the sidebar, and the same
+ * PermissionService (roles + per-user overrides). APIs keep their own checks.
+ */
+async function permissionGate(userId: string, request: NextRequest): Promise<true | Response> {
+  const pathname = request.nextUrl.pathname;
+  // The landing page after sign-in always renders (it shows each user only
+  // what they may see), so a role without dashboard.view isn't bounced.
+  if (pathname === NO_ACCESS_PATH || pathname === "/dashboard") return true;
+  const viewable = await PermissionService.getViewableModules(userId);
+  if (isPathForbidden(pathname, viewable)) {
+    return Response.redirect(new URL(NO_ACCESS_PATH, request.nextUrl.origin));
   }
   return true;
 }
@@ -126,7 +146,10 @@ const authorized: NonNullable<NextAuthConfig["callbacks"]>["authorized"] = async
   if (suspended && !SUSPENDED_ALLOWED_PATHS.has(pathname)) {
     return Response.redirect(new URL(ACCOUNT_SUSPENDED_PATH, request.nextUrl.origin));
   }
-  return user ? entitlementGate(user.companyId, request) : true;
+  if (!user) return true;
+  const entitled = await entitlementGate(user.companyId, request);
+  if (entitled !== true) return entitled;
+  return permissionGate(userId, request);
 };
 
 export default NextAuth({ ...authConfig, callbacks: { ...authConfig.callbacks, authorized } }).auth;

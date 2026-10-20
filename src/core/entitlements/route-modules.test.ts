@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Module } from "@/config/rbac";
-import { isPathDisabled, modulesForPath } from "./route-modules";
+import { isPathDisabled, isPathForbidden, modulesForPath } from "./route-modules";
 
 describe("route → module mapping", () => {
   it("picks the most specific sidebar link", () => {
@@ -21,5 +21,17 @@ describe("route → module mapping", () => {
     expect(isPathDisabled("/production/scan", off)).toBe(true);
     expect(isPathDisabled("/production/job-work", off)).toBe(false);
     expect(isPathDisabled("/production/scan", new Set())).toBe(false);
+  });
+});
+
+describe("P6 -- page permission gate", () => {
+  it("forbids a page when the user can view none of its modules", () => {
+    expect(isPathForbidden("/accounts/journals", new Set<Module>(["production"]))).toBe(true);
+    expect(isPathForbidden("/production/job-work", new Set<Module>(["production"]))).toBe(false);
+  });
+
+  it("never forbids a page no sidebar link covers", () => {
+    expect(isPathForbidden("/no-access", new Set())).toBe(false);
+    expect(isPathForbidden("/account", new Set())).toBe(false);
   });
 });
