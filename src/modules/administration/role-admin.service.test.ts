@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
-vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { invalidate: vi.fn() } }));
+vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { invalidate: vi.fn(), can: vi.fn() } }));
 vi.mock("./role-admin.repository", () => ({
   RoleAdminRepository: {
     findById: vi.fn(),
@@ -44,6 +44,7 @@ const PERMISSION_CATALOG = [
 beforeEach(() => {
   vi.mocked(writeAuditLog).mockReset().mockResolvedValue(undefined as never);
   vi.mocked(PermissionService.invalidate).mockReset();
+  vi.mocked(PermissionService.can).mockReset().mockResolvedValue(true);
   vi.mocked(RoleAdminRepository.findById).mockReset().mockResolvedValue({ id: "role-1", companyId: "co-1", name: "Cutting Supervisor", isSystemRole: false } as never);
   vi.mocked(RoleAdminRepository.findActiveProductionStages).mockReset().mockResolvedValue(STAGES as never);
   vi.mocked(RoleAdminRepository.findGrantedStageIds).mockReset().mockResolvedValue([]);
@@ -234,5 +235,24 @@ describe("updateRolePermissions", () => {
   it("throws NOT_FOUND for a role that doesn't belong to the company", async () => {
     vi.mocked(RoleAdminRepository.findById).mockResolvedValue(null);
     await expect(updateRolePermissions(actor, "role-x", [])).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  // FERP-QA-005 regression: an editor must not add a permission they don't
+  // hold themselves (they could then assign the role to a second account).
+  it("refuses to add a permission the editor does not hold, naming it", async () => {
+    vi.mocked(PermissionService.can).mockImplementation(async (_u, mod, action) => !(mod === "sampling" && action === "edit"));
+    await expect(updateRolePermissions(actor, "role-1", ["sampling.view", "sampling.edit"])).rejects.toMatchObject({
+      code: "PERMISSION_DENIED",
+      details: { notHeld: ["sampling.edit"] },
+    });
+    expect(RoleAdminRepository.replacePermissionsInTx).not.toHaveBeenCalled();
+  });
+
+  it("only checks newly added keys — keeping or removing existing ones never needs the editor to hold them", async () => {
+    vi.mocked(PermissionService.can).mockResolvedValue(false);
+    // "sampling.view" is already granted on the role (see beforeEach), so keeping it is fine.
+    await expect(updateRolePermissions(actor, "role-1", ["sampling.view"])).resolves.toBeDefined();
+    await expect(updateRolePermissions(actor, "role-1", [])).resolves.toBeDefined();
+    expect(PermissionService.can).not.toHaveBeenCalled();
   });
 });

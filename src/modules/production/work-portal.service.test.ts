@@ -5,6 +5,7 @@ const tx = vi.hoisted(() => ({
   productionHandback: { create: vi.fn() },
 }));
 const db = vi.hoisted(() => ({
+  productionHandback: { findMany: vi.fn() },
   user: { findUnique: vi.fn() },
   jobOrderAssignment: { findFirst: vi.fn() },
   attachment: { findFirst: vi.fn() },
@@ -27,14 +28,14 @@ vi.mock("./assignment-capacity", () => ({
   syncAssignmentStatusInTx: vi.fn(),
 }));
 vi.mock("./job-order.service", () => ({ assertJobOrderScope: vi.fn(), getJobOrderById: vi.fn() }));
-vi.mock("./production-scope", () => ({ getProductionApprovalTeam: vi.fn() }));
+vi.mock("./production-scope", () => ({ getProductionApprovalTeam: vi.fn(), getProductionRecordScope: vi.fn() }));
 
 const { PermissionService } = await import("@/core/rbac/PermissionService");
 const Attach = await import("@/core/attachments/AttachmentService");
 const Cap = await import("./assignment-capacity");
 const JO = await import("./job-order.service");
-const { getProductionApprovalTeam } = await import("./production-scope");
-const { handBackAssignment, uploadJobOrderSlip, getJobOrderSlipForDownload, deleteJobOrderSlip } = await import(
+const { getProductionApprovalTeam, getProductionRecordScope } = await import("./production-scope");
+const { handBackAssignment, uploadJobOrderSlip, getJobOrderSlipForDownload, deleteJobOrderSlip, listHandbacks } = await import(
   "./work-portal.service"
 );
 
@@ -162,5 +163,34 @@ describe("job order slips (P4)", () => {
     await deleteJobOrderSlip(actor, "jo-1", "att-1");
     expect(PermissionService.assert).not.toHaveBeenCalled();
     expect(Attach.deleteAttachment).toHaveBeenCalledWith(actor, "att-1");
+  });
+});
+
+// FERP-QA-007 regression: an assigned-only worker used to see every worker's
+// hand-backs (names and quantities) on a shared job order.
+describe("listHandbacks", () => {
+  beforeEach(() => {
+    db.productionHandback.findMany.mockReset().mockResolvedValue([]);
+    vi.mocked(JO.getJobOrderById).mockReset().mockResolvedValue({ id: "jo-1" } as never);
+  });
+
+  it("limits an assigned-only worker to their own hand-backs", async () => {
+    vi.mocked(getProductionRecordScope).mockResolvedValue({ mode: "ASSIGNED", employeeId: "emp-1" } as never);
+    await listHandbacks(actor, "jo-1");
+    expect(db.productionHandback.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { companyId: "co-1", jobOrderId: "jo-1", employeeId: "emp-1" } })
+    );
+  });
+
+  it("matches nothing for an assigned-only login with no linked employee", async () => {
+    vi.mocked(getProductionRecordScope).mockResolvedValue({ mode: "ASSIGNED", employeeId: null } as never);
+    await listHandbacks(actor, "jo-1");
+    expect(db.productionHandback.findMany.mock.calls[0][0].where.employeeId).toBe("00000000-0000-0000-0000-000000000000");
+  });
+
+  it("shows every hand-back to a user who can see all production", async () => {
+    vi.mocked(getProductionRecordScope).mockResolvedValue({ mode: "ALL" } as never);
+    await listHandbacks(actor, "jo-1");
+    expect(db.productionHandback.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { companyId: "co-1", jobOrderId: "jo-1" } }));
   });
 });

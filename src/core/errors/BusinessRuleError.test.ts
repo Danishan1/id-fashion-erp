@@ -68,6 +68,14 @@ describe("toErrorResponse", () => {
     expect(code).toBe("DUPLICATE_DOC_NUMBER");
     expect(message).toContain("company_id, code");
   });
+
+  // FERP-QA-006 regression: a foreign-key block (e.g. editing a Sales Order
+  // line that a Production Order uses) used to surface as a raw 500.
+  it("maps a Prisma P2003 (foreign key) error to REFERENCED_RECORD_IN_USE / 409", () => {
+    const { status, body } = toErrorResponse({ code: "P2003", meta: { field_name: "sales_order_item_id" } });
+    expect(status).toBe(409);
+    expect((body as { error: { code: string } }).error.code).toBe("REFERENCED_RECORD_IN_USE");
+  });
 });
 
 describe("isUniqueConstraintViolationOnColumn", () => {

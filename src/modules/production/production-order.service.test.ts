@@ -91,7 +91,10 @@ beforeEach(() => {
 });
 
 describe("duplicate production order for the same Sale Order line (2026-09-29)", () => {
+  const confirmedLine = { id: "soi-1", productId: "prod-1", salesOrder: { orderNumber: "ORD-2026-00001", status: "CONFIRMED" }, breakdown: [{ orderedQuantity: 50 }] };
+
   it("refuses a second production order and names the existing one", async () => {
+    vi.mocked(prisma.salesOrderItem.findFirst).mockResolvedValue(confirmedLine as never);
     vi.mocked(prisma.productionOrder.findFirst).mockResolvedValue({ id: "po-existing", orderNumber: "PROD-2026-00016", status: "IN_PROGRESS" } as never);
 
     await expect(
@@ -100,6 +103,41 @@ describe("duplicate production order for the same Sale Order line (2026-09-29)",
       code: "PRODUCTION_ORDER_EXISTS",
       details: { existingProductionOrderId: "po-existing", existingOrderNumber: "PROD-2026-00016" },
     });
+    expect(ProductionOrderRepository.create).not.toHaveBeenCalled();
+  });
+
+  // S-10 regression: two simultaneous creates both pass the check above; the
+  // database's partial unique index rejects the loser, which must surface as
+  // the same clean PRODUCTION_ORDER_EXISTS, not a raw P2002.
+  it("turns the database's unique-index violation into PRODUCTION_ORDER_EXISTS", async () => {
+    vi.mocked(prisma.salesOrderItem.findFirst).mockResolvedValue(confirmedLine as never);
+    vi.mocked(prisma.productionOrder.findFirst)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: "po-winner", orderNumber: "PROD-2026-00020", status: "PLANNED" } as never);
+    vi.mocked(ProductionOrderRepository.create).mockRejectedValue(
+      Object.assign(new Error("Unique constraint failed"), { code: "P2002", meta: { target: ["sales_order_item_id"] } })
+    );
+
+    await expect(
+      createProductionOrder(actor, { productId: "prod-1", salesOrderItemId: "soi-1", plannedQuantity: 50, priority: "NORMAL" } as never)
+    ).rejects.toMatchObject({ code: "PRODUCTION_ORDER_EXISTS", details: { existingOrderNumber: "PROD-2026-00020" } });
+  });
+});
+
+describe("Sales Order line must be able to feed production (FERP-QA-004)", () => {
+  it.each(["DRAFT", "ON_HOLD", "CANCELLED", "CLOSED"])("refuses a %s sales order", async (status) => {
+    vi.mocked(prisma.salesOrderItem.findFirst).mockResolvedValue({ id: "soi-1", productId: "prod-1", salesOrder: { orderNumber: "ORD-2026-00001", status } } as never);
+    await expect(
+      createProductionOrder(actor, { productId: "prod-1", salesOrderItemId: "soi-1", plannedQuantity: 10, priority: "NORMAL" } as never)
+    ).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+    expect(ProductionOrderRepository.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses a style that doesn't match the sales order line's style", async () => {
+    vi.mocked(prisma.salesOrderItem.findFirst).mockResolvedValue({ id: "soi-1", productId: "prod-OTHER", salesOrder: { orderNumber: "ORD-2026-00001", status: "CONFIRMED" } } as never);
+    await expect(
+      createProductionOrder(actor, { productId: "prod-1", salesOrderItemId: "soi-1", plannedQuantity: 10, priority: "NORMAL" } as never)
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
     expect(ProductionOrderRepository.create).not.toHaveBeenCalled();
   });
 });
@@ -176,6 +214,8 @@ describe("createProductionOrder", () => {
   it("allows planning MORE than the Sales Order line's ordered quantity, returning informational context instead of rejecting", async () => {
     vi.mocked(prisma.salesOrderItem.findFirst).mockResolvedValue({
       id: "soi-1",
+      productId: "prod-1",
+      salesOrder: { orderNumber: "ORD-2026-00001", status: "CONFIRMED" },
       breakdown: [{ orderedQuantity: 5 }],
     } as never);
 
@@ -193,6 +233,8 @@ describe("createProductionOrder", () => {
   it("allows planning LESS than the Sales Order line's ordered quantity", async () => {
     vi.mocked(prisma.salesOrderItem.findFirst).mockResolvedValue({
       id: "soi-1",
+      productId: "prod-1",
+      salesOrder: { orderNumber: "ORD-2026-00001", status: "CONFIRMED" },
       breakdown: [{ orderedQuantity: 100 }],
     } as never);
     vi.mocked(prisma.productionOrder.aggregate).mockResolvedValue({ _sum: { plannedQuantity: 60 } } as never);
@@ -221,6 +263,8 @@ describe("getSalesOrderLineCommitment", () => {
   it("excludes the given production order id from the committed sum", async () => {
     vi.mocked(prisma.salesOrderItem.findFirst).mockResolvedValue({
       id: "soi-1",
+      productId: "prod-1",
+      salesOrder: { orderNumber: "ORD-2026-00001", status: "CONFIRMED" },
       breakdown: [{ orderedQuantity: 100 }],
     } as never);
     vi.mocked(prisma.productionOrder.aggregate).mockResolvedValue({ _sum: { plannedQuantity: 30 } } as never);
@@ -242,6 +286,8 @@ describe("getProductionOrderById", () => {
     } as never);
     vi.mocked(prisma.salesOrderItem.findFirst).mockResolvedValue({
       id: "soi-1",
+      productId: "prod-1",
+      salesOrder: { orderNumber: "ORD-2026-00001", status: "CONFIRMED" },
       breakdown: [{ orderedQuantity: 100 }],
     } as never);
     vi.mocked(prisma.productionOrder.aggregate).mockResolvedValue({ _sum: { plannedQuantity: 20 } } as never);

@@ -68,6 +68,7 @@ vi.mock("./job-work-order.repository", () => ({
     findAnyById: vi.fn(),
     findByIdempotencyKey: vi.fn(),
     updateInTx: vi.fn(),
+    cancelIfCompletedInTx: vi.fn(),
     findPendingForCompany: vi.fn(),
     updateApprovalStatusConditionalInTx: vi.fn(),
   },
@@ -195,6 +196,7 @@ beforeEach(() => {
   vi.mocked(JobWorkReceiptRepository.findByIdempotencyKey).mockReset().mockResolvedValue(null);
   vi.mocked(JobWorkReceiptRepository.findAnyById).mockReset();
   vi.mocked(JobWorkReceiptRepository.updateInTx).mockReset();
+  vi.mocked(JobWorkReceiptRepository.cancelIfCompletedInTx).mockReset().mockResolvedValue({ count: 1 } as never);
   vi.mocked(JobWorkReceiptRepository.findPendingForCompany).mockReset().mockResolvedValue([]);
   vi.mocked(PermissionService.getAllowedContractorId).mockReset().mockResolvedValue(null);
   vi.mocked(PermissionService.assert).mockReset().mockResolvedValue(undefined as never);
@@ -485,17 +487,53 @@ describe("reverseJobWorkReceipt", () => {
   it("symmetrically decrements both the JobWorkOrder and the parent JobOrder", async () => {
     vi.mocked(JobWorkReceiptRepository.findAnyById).mockResolvedValue({ id: "receipt-1", jobWorkOrderId: "jwo-1", status: "COMPLETED", receivedQuantity: 30, rejectedQuantity: 0, damagedQuantity: 0, remarks: null } as never);
     vi.mocked(JobWorkOrderRepository.findForGuardedUpdateInTx).mockResolvedValue(jobWorkOrder({ issuedQuantity: 50, receivedQuantity: 30, jobOrderId: "jo-1" }) as never);
+    vi.mocked(JobOrderRepository.findForGuardedUpdateInTx).mockResolvedValue(jobOrder({ completedQuantity: 30, forwardedQuantity: 0 }) as never);
 
     await reverseJobWorkReceipt(actor, "receipt-1", "Wrong quantity recorded");
 
     expect(JobWorkOrderRepository.updateInTx).toHaveBeenCalledWith(mockTx, "jwo-1", expect.objectContaining({ receivedQuantity: 0 }));
     expect(applyJobOrderQuantityDelta).toHaveBeenCalledWith(mockTx, "jo-1", { completed: -30, rejected: -0, damaged: -0 });
-    expect(JobWorkReceiptRepository.updateInTx).toHaveBeenCalledWith(mockTx, "receipt-1", expect.objectContaining({ status: "CANCELLED" }));
+    expect(JobWorkReceiptRepository.cancelIfCompletedInTx).toHaveBeenCalledWith(mockTx, "receipt-1", expect.stringContaining("Reversed: Wrong quantity recorded"));
   });
 
   it("refuses to reverse an already-reversed receipt", async () => {
     vi.mocked(JobWorkReceiptRepository.findAnyById).mockResolvedValue({ id: "receipt-1", status: "CANCELLED" } as never);
     await expect(reverseJobWorkReceipt(actor, "receipt-1", "reason")).rejects.toThrow(BusinessRuleError);
+  });
+
+  // FERP-QA-003 regression: an external submission is stored COMPLETED but
+  // PENDING approval and was never applied; reversing it used to subtract
+  // pieces that were never added.
+  it.each(["PENDING", "REJECTED"])("refuses to reverse a receipt with approval %s, touching nothing", async (approvalStatus) => {
+    vi.mocked(JobWorkReceiptRepository.findAnyById).mockResolvedValue({ id: "receipt-1", jobWorkOrderId: "jwo-1", status: "COMPLETED", approvalStatus, receivedQuantity: 4, rejectedQuantity: 0, damagedQuantity: 0 } as never);
+    await expect(reverseJobWorkReceipt(actor, "receipt-1", "reason")).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+    expect(JobWorkReceiptRepository.cancelIfCompletedInTx).not.toHaveBeenCalled();
+    expect(JobWorkOrderRepository.updateInTx).not.toHaveBeenCalled();
+    expect(applyJobOrderQuantityDelta).not.toHaveBeenCalled();
+  });
+
+  it("still reverses an APPROVED external receipt", async () => {
+    vi.mocked(JobWorkReceiptRepository.findAnyById).mockResolvedValue({ id: "receipt-1", jobWorkOrderId: "jwo-1", status: "COMPLETED", approvalStatus: "APPROVED", receivedQuantity: 4, rejectedQuantity: 0, damagedQuantity: 0, remarks: null } as never);
+    vi.mocked(JobWorkOrderRepository.findForGuardedUpdateInTx).mockResolvedValue(jobWorkOrder({ issuedQuantity: 10, receivedQuantity: 10, jobOrderId: "jo-1" }) as never);
+    vi.mocked(JobOrderRepository.findForGuardedUpdateInTx).mockResolvedValue(jobOrder({ completedQuantity: 10, forwardedQuantity: 0 }) as never);
+    await reverseJobWorkReceipt(actor, "receipt-1", "reason");
+    expect(applyJobOrderQuantityDelta).toHaveBeenCalledWith(mockTx, "jo-1", { completed: -4, rejected: -0, damaged: -0 });
+  });
+
+  it("rolls back when a concurrent reversal already claimed the receipt", async () => {
+    vi.mocked(JobWorkReceiptRepository.findAnyById).mockResolvedValue({ id: "receipt-1", jobWorkOrderId: "jwo-1", status: "COMPLETED", approvalStatus: "NOT_REQUIRED", receivedQuantity: 4, rejectedQuantity: 0, damagedQuantity: 0 } as never);
+    vi.mocked(JobWorkReceiptRepository.cancelIfCompletedInTx).mockResolvedValue({ count: 0 } as never);
+    await expect(reverseJobWorkReceipt(actor, "receipt-1", "reason")).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+    expect(JobWorkOrderRepository.updateInTx).not.toHaveBeenCalled();
+    expect(applyJobOrderQuantityDelta).not.toHaveBeenCalled();
+  });
+
+  it("refuses when the received pieces were already forwarded to the next stage", async () => {
+    vi.mocked(JobWorkReceiptRepository.findAnyById).mockResolvedValue({ id: "receipt-1", jobWorkOrderId: "jwo-1", status: "COMPLETED", approvalStatus: "NOT_REQUIRED", receivedQuantity: 6, rejectedQuantity: 0, damagedQuantity: 0 } as never);
+    vi.mocked(JobWorkOrderRepository.findForGuardedUpdateInTx).mockResolvedValue(jobWorkOrder({ issuedQuantity: 10, receivedQuantity: 6, jobOrderId: "jo-1" }) as never);
+    vi.mocked(JobOrderRepository.findForGuardedUpdateInTx).mockResolvedValue(jobOrder({ completedQuantity: 6, forwardedQuantity: 5 }) as never);
+    await expect(reverseJobWorkReceipt(actor, "receipt-1", "reason")).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+    expect(applyJobOrderQuantityDelta).not.toHaveBeenCalled();
   });
 });
 

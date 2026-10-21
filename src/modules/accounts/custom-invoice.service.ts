@@ -171,11 +171,14 @@ async function resolveGstBreakdown(params: {
       where: { id: companyId },
       select: { id: true, taxRegistrationNo: true },
     }),
-    prisma.customer.findUnique({
-      where: { id: customerId },
+    // Scoped to the actor's company: another tenant's customer must never be
+    // invoiced, nor have its GSTIN decide the CGST/SGST vs IGST split.
+    prisma.customer.findFirst({
+      where: { id: customerId, companyId, deletedAt: null },
       select: { id: true, taxRegistrationNo: true },
     }),
   ]);
+  if (!customer) throw new BusinessRuleError("NOT_FOUND", "Customer not found.", { customerId });
 
   const supplierStateCode = extractStateCodeFromGstin(company?.taxRegistrationNo);
 

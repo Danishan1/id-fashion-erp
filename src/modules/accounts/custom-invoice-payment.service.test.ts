@@ -67,6 +67,42 @@ describe("recordCustomInvoicePayment", () => {
     });
   });
 
+  // S-08 regression: an advance already shown on the invoice counts as
+  // received, so 1000 total - 400 advance leaves only 600 to pay.
+  it("caps the payment at the balance due, net of the advance and payable amounts", async () => {
+    vi.mocked(CustomInvoiceRepository.findAnyById).mockResolvedValue(
+      invoiceFixture({ grandTotal: 1000, advancePaymentAmount: 400, paidAmount: 0 }) as never
+    );
+    await expect(recordCustomInvoicePayment(actor, "inv-1", { paymentDate: "2026-08-27", amount: 601 })).rejects.toMatchObject({
+      code: "OVER_PAYMENT_NOT_ALLOWED",
+      details: { available: 600 },
+    });
+
+    vi.mocked(CustomInvoiceRepository.findAnyById).mockResolvedValue(
+      invoiceFixture({ grandTotal: 1000, payableAmountValue: 250, paidAmount: 0 }) as never
+    );
+    await expect(recordCustomInvoicePayment(actor, "inv-1", { paymentDate: "2026-08-27", amount: 751 })).rejects.toMatchObject({
+      code: "OVER_PAYMENT_NOT_ALLOWED",
+      details: { available: 750 },
+    });
+  });
+
+  // S-09 regression: the guard checks creditedAmount too, so a credit note
+  // that lands at the same moment makes this payment lose the race.
+  it("guards on both paidAmount and creditedAmount, and rejects when a concurrent change wins", async () => {
+    vi.mocked(CustomInvoiceRepository.findAnyById).mockResolvedValue(invoiceFixture({ grandTotal: 1000, paidAmount: 0, creditedAmount: 0 }) as never);
+    const updateMany = vi.fn().mockResolvedValue({ count: 0 });
+    vi.mocked(prisma.$transaction).mockImplementation((cb: unknown) =>
+      (cb as (tx: unknown) => Promise<unknown>)({ customInvoice: { updateMany }, customInvoicePayment: { create: vi.fn() } })
+    );
+    await expect(recordCustomInvoicePayment(actor, "inv-1", { paymentDate: "2026-08-27", amount: 800 })).rejects.toMatchObject({
+      code: "OVER_PAYMENT_NOT_ALLOWED",
+    });
+    expect(updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "inv-1", paidAmount: 0, creditedAmount: 0 } })
+    );
+  });
+
   it("records a valid payment and recomputes balanceDue inside the transaction", async () => {
     vi.mocked(CustomInvoiceRepository.findAnyById).mockResolvedValue(invoiceFixture({ grandTotal: 1000, paidAmount: 0 }) as never);
     let capturedUpdateData: unknown;

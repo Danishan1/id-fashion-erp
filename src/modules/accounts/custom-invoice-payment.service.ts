@@ -1,7 +1,6 @@
 import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { prisma } from "@/core/db/client";
-import { round2 } from "@/lib/money";
 import type { CustomInvoicePaymentInput } from "./custom-invoice-payment.schema";
 import { CustomInvoicePaymentRepository } from "./custom-invoice-payment.repository";
 import { CustomInvoiceRepository } from "./custom-invoice.repository";
@@ -19,8 +18,15 @@ export async function recordCustomInvoicePayment(actor: ActorContext, customInvo
     throw new BusinessRuleError("INVALID_STATE_TRANSITION", "Cannot record a payment against a cancelled invoice.", { customInvoiceId });
   }
 
-  const paidSoFar = Number(invoice.paidAmount);
-  const available = round2(Number(invoice.grandTotal) - Number(invoice.creditedAmount) - paidSoFar);
+  // What's still owed is the balance due — an advance or payable amount
+  // already shown on the invoice counts as received, not just the payments.
+  const available = computeBalanceDue({
+    grandTotal: Number(invoice.grandTotal),
+    advancePaymentAmount: invoice.advancePaymentAmount ? Number(invoice.advancePaymentAmount) : null,
+    payableAmountValue: invoice.payableAmountValue ? Number(invoice.payableAmountValue) : null,
+    paidAmount: Number(invoice.paidAmount),
+    creditedAmount: Number(invoice.creditedAmount),
+  });
   if (input.amount > available) {
     throw new BusinessRuleError(
       "OVER_PAYMENT_NOT_ALLOWED",
@@ -30,12 +36,13 @@ export async function recordCustomInvoicePayment(actor: ActorContext, customInvo
   }
 
   const payment = await prisma.$transaction(async (tx) => {
-    // Guarded on the exact paidAmount value already read above — the same
-    // compare-and-swap idiom every other accumulator in this project uses;
-    // a lost race here means someone else's payment landed first, so this
-    // one is rejected rather than silently over-crediting the invoice.
+    // Guarded on the exact paidAmount AND creditedAmount values read above —
+    // the same compare-and-swap idiom every other accumulator in this project
+    // uses. Both columns, because a credit note landing at the same moment
+    // also reduces what's owed; a lost race rejects this payment rather than
+    // letting payments + credits exceed the invoice.
     const guard = await tx.customInvoice.updateMany({
-      where: { id: customInvoiceId, paidAmount: invoice.paidAmount },
+      where: { id: customInvoiceId, paidAmount: invoice.paidAmount, creditedAmount: invoice.creditedAmount },
       data: { paidAmount: { increment: input.amount } },
     });
     if (guard.count === 0) {

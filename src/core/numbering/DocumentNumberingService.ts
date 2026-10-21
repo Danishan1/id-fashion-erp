@@ -167,32 +167,44 @@ export async function generateDocumentNumber({
   const year = fiscalYear ?? new Date().getFullYear();
   const prefix = PREFIX_BY_DOCUMENT_TYPE[documentType];
 
-  const sequence = await prisma.$transaction(async (tx) => {
-    // findFirst (not findUnique) because Prisma's compound-unique lookup type
-    // requires branchId to be non-null even though the column is nullable —
-    // the @@unique constraint in the schema still guarantees correctness.
-    const existing = await tx.documentSequence.findFirst({
-      where: { companyId, branchId, documentType, fiscalYear: year },
-    });
-
-    if (existing) {
-      return tx.documentSequence.update({
-        where: { id: existing.id },
-        data: { currentNumber: { increment: 1 } },
+  const nextSequence = () =>
+    prisma.$transaction(async (tx) => {
+      // findFirst (not findUnique) because Prisma's compound-unique lookup type
+      // requires branchId to be non-null even though the column is nullable —
+      // the @@unique constraint in the schema still guarantees correctness.
+      const existing = await tx.documentSequence.findFirst({
+        where: { companyId, branchId, documentType, fiscalYear: year },
       });
-    }
 
-    return tx.documentSequence.create({
-      data: {
-        companyId,
-        branchId,
-        documentType,
-        prefix,
-        fiscalYear: year,
-        currentNumber: 1,
-      },
+      if (existing) {
+        return tx.documentSequence.update({
+          where: { id: existing.id },
+          data: { currentNumber: { increment: 1 } },
+        });
+      }
+
+      return tx.documentSequence.create({
+        data: {
+          companyId,
+          branchId,
+          documentType,
+          prefix,
+          fiscalYear: year,
+          currentNumber: 1,
+        },
+      });
     });
-  });
+
+  let sequence;
+  try {
+    sequence = await nextSequence();
+  } catch (error) {
+    // Two requests creating the very first number of the year at the same
+    // moment: the loser hits the unique constraint. The row exists now, so a
+    // retry takes the atomic-increment path instead of failing.
+    if (!(error && typeof error === "object" && (error as { code?: string }).code === "P2002")) throw error;
+    sequence = await nextSequence();
+  }
 
   const padded = sequence.currentNumber.toString().padStart(sequence.paddingLength, "0");
   return `${sequence.prefix}-${year}-${padded}`;

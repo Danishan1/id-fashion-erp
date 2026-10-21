@@ -23,7 +23,7 @@ vi.mock("@/core/db/client", () => ({
   prisma: {
     $transaction: vi.fn(),
     company: { findUnique: vi.fn() },
-    customer: { findUnique: vi.fn() },
+    customer: { findFirst: vi.fn() },
   },
 }));
 
@@ -81,7 +81,7 @@ beforeEach(() => {
     id: "co-1",
     taxRegistrationNo: "07AAAAA0000A1Z5", // Delhi (07)
   } as never);
-  vi.mocked(prisma.customer.findUnique).mockReset().mockResolvedValue({
+  vi.mocked(prisma.customer.findFirst).mockReset().mockResolvedValue({
     id: "cust-1",
     taxRegistrationNo: "07BBBBB0000B1Z6", // Delhi (07) -> Intra-state default
   } as never);
@@ -96,6 +96,17 @@ describe("createCustomInvoice", () => {
   it("rejects an inactive invoice series", async () => {
     vi.mocked(InvoiceSeriesRepository.findById).mockResolvedValue({ ...series, isActive: false } as never);
     await expect(createCustomInvoice(actor, baseInput())).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  // FERP-QA-001 regression: a customer from another company must be rejected,
+  // and the lookup must be scoped to the actor's own company.
+  it("rejects a customer that doesn't belong to the actor's company", async () => {
+    vi.mocked(prisma.customer.findFirst).mockResolvedValue(null);
+    await expect(createCustomInvoice(actor, baseInput({ customerId: "other-co-customer" }))).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(prisma.customer.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "other-co-customer", companyId: "co-1", deletedAt: null } })
+    );
+    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
   it("applies discount% per line before GST, matching the reference tool's own calculation", async () => {
@@ -174,7 +185,7 @@ describe("createCustomInvoice", () => {
 
   it("calculates inter-state GST with IGST equal to total tax and zero CGST/SGST", async () => {
     // Customer from Maharashtra (State Code 27), Supplier in Delhi (07)
-    vi.mocked(prisma.customer.findUnique).mockResolvedValue({
+    vi.mocked(prisma.customer.findFirst).mockResolvedValue({
       id: "cust-mh",
       taxRegistrationNo: "27AAAAA1111A1Z5",
     } as never);
@@ -269,7 +280,7 @@ describe("createCustomInvoice", () => {
   });
 
   it("rejects invoice creation with VALIDATION_ERROR when GST > 0 but customer state cannot be determined", async () => {
-    vi.mocked(prisma.customer.findUnique).mockResolvedValue({
+    vi.mocked(prisma.customer.findFirst).mockResolvedValue({
       id: "cust-1",
       taxRegistrationNo: null,
     } as never);
@@ -282,7 +293,7 @@ describe("createCustomInvoice", () => {
 
   it("allows zero tax without requiring GSTIN and zeroes all tax components", async () => {
     vi.mocked(prisma.company.findUnique).mockResolvedValue({ id: "co-1", taxRegistrationNo: null } as never);
-    vi.mocked(prisma.customer.findUnique).mockResolvedValue({ id: "cust-1", taxRegistrationNo: null } as never);
+    vi.mocked(prisma.customer.findFirst).mockResolvedValue({ id: "cust-1", taxRegistrationNo: null } as never);
 
     const txCreate = mockTransaction({ id: "inv-zero-tax", items: [], notes: [] });
     await createCustomInvoice(
@@ -301,7 +312,7 @@ describe("createCustomInvoice", () => {
 
   it("allows reverse charge (RCM) without requiring GSTIN and zeroes all tax components", async () => {
     vi.mocked(prisma.company.findUnique).mockResolvedValue({ id: "co-1", taxRegistrationNo: null } as never);
-    vi.mocked(prisma.customer.findUnique).mockResolvedValue({ id: "cust-1", taxRegistrationNo: null } as never);
+    vi.mocked(prisma.customer.findFirst).mockResolvedValue({ id: "cust-1", taxRegistrationNo: null } as never);
 
     const txCreate = mockTransaction({ id: "inv-rcm", items: [], notes: [] });
     await createCustomInvoice(actor, baseInput({ isReverseCharge: true }));
@@ -328,6 +339,14 @@ describe("updateCustomInvoice", () => {
   it("rejects editing an invoice that isn't DRAFT", async () => {
     vi.mocked(CustomInvoiceRepository.findAnyById).mockResolvedValue({ id: "inv-1", status: "CANCELLED" } as never);
     await expect(updateCustomInvoice(actor, "inv-1", baseInput())).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+    expect(CustomInvoiceRepository.replaceItemsAndNotes).not.toHaveBeenCalled();
+  });
+
+  it("rejects switching a DRAFT invoice to another company's customer (FERP-QA-001)", async () => {
+    vi.mocked(CustomInvoiceRepository.findAnyById).mockResolvedValue({ id: "inv-1", status: "DRAFT", paidAmount: 0, creditedAmount: 0 } as never);
+    vi.mocked(CustomInvoiceCreditNoteRepository.countActiveByInvoiceId).mockResolvedValue(0);
+    vi.mocked(prisma.customer.findFirst).mockResolvedValue(null);
+    await expect(updateCustomInvoice(actor, "inv-1", baseInput({ customerId: "other-co-customer" }))).rejects.toMatchObject({ code: "NOT_FOUND" });
     expect(CustomInvoiceRepository.replaceItemsAndNotes).not.toHaveBeenCalled();
   });
 
@@ -375,7 +394,7 @@ describe("updateCustomInvoice", () => {
     vi.mocked(CustomInvoiceCreditNoteRepository.countActiveByInvoiceId).mockResolvedValue(0);
     vi.mocked(CustomInvoiceRepository.replaceItemsAndNotes).mockResolvedValue({ id: "inv-1" } as never);
     // Customer in Karnataka (29), Supplier in Delhi (07)
-    vi.mocked(prisma.customer.findUnique).mockResolvedValue({
+    vi.mocked(prisma.customer.findFirst).mockResolvedValue({
       id: "cust-ka",
       taxRegistrationNo: "29CCCCC2222C1Z8",
     } as never);

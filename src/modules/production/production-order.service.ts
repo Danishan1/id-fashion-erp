@@ -1,6 +1,6 @@
 import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { prisma } from "@/core/db/client";
-import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
+import { BusinessRuleError, isUniqueConstraintViolationOnColumn } from "@/core/errors/BusinessRuleError";
 import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingService";
 import { PermissionService } from "@/core/rbac/PermissionService";
 import type { ListQuery } from "@/lib/list-query";
@@ -179,6 +179,31 @@ export async function getProductionOrderById(actor: { companyId: string; userId:
   return { ...order, salesOrderContext, progress, quantityChanges, dispatchReadiness: withReadiness.dispatchReadiness };
 }
 
+/** Sales Order statuses that may feed production. A Draft, On Hold,
+ * Cancelled or Closed order is not a firm commitment to make anything. */
+const PRODUCTION_ELIGIBLE_SALES_ORDER_STATUSES = new Set(["CONFIRMED", "IN_PRODUCTION", "PARTIALLY_DISPATCHED", "DISPATCHED", "INVOICED"]);
+
+async function assertSalesOrderLineCanFeedProduction(companyId: string, salesOrderItemId: string, productId: string) {
+  const line = await prisma.salesOrderItem.findFirst({
+    where: { id: salesOrderItemId, salesOrder: { companyId } },
+    select: { productId: true, salesOrder: { select: { orderNumber: true, status: true } } },
+  });
+  if (!line) throw new BusinessRuleError("NOT_FOUND", "Sales order line not found.", { id: salesOrderItemId });
+  if (!PRODUCTION_ELIGIBLE_SALES_ORDER_STATUSES.has(line.salesOrder.status)) {
+    throw new BusinessRuleError(
+      "INVALID_STATE_TRANSITION",
+      `Sales order ${line.salesOrder.orderNumber} is ${line.salesOrder.status.replace(/_/g, " ").toLowerCase()} — confirm it before raising a production order.`,
+      { salesOrderStatus: line.salesOrder.status }
+    );
+  }
+  if (line.productId !== productId) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "The style must match the style on the selected sales order line.", {
+      salesOrderLineProductId: line.productId,
+      productId,
+    });
+  }
+}
+
 export async function createProductionOrder(actor: ActorContext, input: CreateProductionOrderInput) {
   const product = await ProductRepository.findStyleById(actor.companyId, input.productId);
   if (!product) throw new BusinessRuleError("NOT_FOUND", "Style not found.", { id: input.productId });
@@ -190,6 +215,7 @@ export async function createProductionOrder(actor: ActorContext, input: CreatePr
   // context is returned so the UI can show it, never to block creation.
   let salesOrderContext: SalesOrderLineCommitment | null = null;
   if (input.salesOrderItemId) {
+    await assertSalesOrderLineCanFeedProduction(actor.companyId, input.salesOrderItemId, input.productId);
     // One Sales Order line keeps ONE Production Order (2026-09-29). More
     // quantity for the same line is added to the existing order via
     // addExtraProductionQuantity — never a silent second, duplicate order.
@@ -216,21 +242,37 @@ export async function createProductionOrder(actor: ActorContext, input: CreatePr
     documentType: "PRODUCTION_ORDER",
   });
 
-  const order = await ProductionOrderRepository.create({
-    companyId: actor.companyId,
-    branchId: actor.branchId || null,
-    orderNumber,
-    salesOrderItemId: input.salesOrderItemId || null,
-    productId: input.productId,
-    bomId: bom?.id ?? null,
-    plannedQuantity: input.plannedQuantity,
-    status: "PLANNED",
-    priority: input.priority,
-    plannedStartDate: input.plannedStartDate ? new Date(input.plannedStartDate) : null,
-    plannedEndDate: input.plannedEndDate ? new Date(input.plannedEndDate) : null,
-    remarks: input.remarks || null,
-    requestedByUserId: actor.userId,
-  });
+  // The database also enforces one active Production Order per Sales Order
+  // line (a partial unique index), closing the race where two simultaneous
+  // creates both pass the duplicate check above.
+  let order;
+  try {
+    order = await ProductionOrderRepository.create({
+      companyId: actor.companyId,
+      branchId: actor.branchId || null,
+      orderNumber,
+      salesOrderItemId: input.salesOrderItemId || null,
+      productId: input.productId,
+      bomId: bom?.id ?? null,
+      plannedQuantity: input.plannedQuantity,
+      status: "PLANNED",
+      priority: input.priority,
+      plannedStartDate: input.plannedStartDate ? new Date(input.plannedStartDate) : null,
+      plannedEndDate: input.plannedEndDate ? new Date(input.plannedEndDate) : null,
+      remarks: input.remarks || null,
+      requestedByUserId: actor.userId,
+    });
+  } catch (error) {
+    if (input.salesOrderItemId && isUniqueConstraintViolationOnColumn(error, "sales_order_item_id")) {
+      const existing = await findActiveProductionOrderForSalesOrderItem(actor.companyId, input.salesOrderItemId);
+      throw new BusinessRuleError(
+        "PRODUCTION_ORDER_EXISTS",
+        `A production order${existing ? ` (${existing.orderNumber})` : ""} has already been created for this Sale Order. Add extra quantity to it instead of creating another production order.`,
+        { existingProductionOrderId: existing?.id, existingOrderNumber: existing?.orderNumber }
+      );
+    }
+    throw error;
+  }
 
   await writeAuditLog({
     companyId: actor.companyId,

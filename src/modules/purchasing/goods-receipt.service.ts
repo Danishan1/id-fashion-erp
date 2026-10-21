@@ -477,27 +477,33 @@ export async function reverseGoodsReceiptLine(
   // un-reversed remainder, which stays in the PO line's original unit — it
   // must be converted before it can cancel out the ledger/StockBalance
   // entry that createGoodsReceipt wrote in base UOM.
-  let ledgerQuantity: number;
-  if (targetRoll) {
-    ledgerQuantity = input.quantity;
-  } else {
-    if (!item.product.baseUom) {
-      throw new BusinessRuleError(
-        "UOM_CONVERSION_UNAVAILABLE",
-        `"${item.product.styleName}" has no base unit configured.`,
-        { goodsReceiptItemId }
-      );
-    }
-    const converted = convertUomQuantity(input.quantity, item.uom, item.product.baseUom);
-    if (converted === null) {
-      throw new BusinessRuleError(
-        "UOM_CONVERSION_UNAVAILABLE",
-        `"${item.uom.name}" has no fixed conversion to "${item.product.styleName}"'s base unit.`,
-        { goodsReceiptItemId }
-      );
-    }
-    ledgerQuantity = converted;
+  //
+  // The receipt line's reversedQuantity and the PO line's receivedQuantity
+  // are both kept in the PO line's unit, so a roll-scoped (base-UOM) quantity
+  // must be converted back to that unit before it touches them — otherwise a
+  // YDS line reversed in MTR is left part-received (QA finding S-01).
+  if (!item.product.baseUom) {
+    throw new BusinessRuleError(
+      "UOM_CONVERSION_UNAVAILABLE",
+      `"${item.product.styleName}" has no base unit configured.`,
+      { goodsReceiptItemId }
+    );
   }
+  const converted = targetRoll
+    ? convertUomQuantity(input.quantity, item.product.baseUom, item.uom)
+    : convertUomQuantity(input.quantity, item.uom, item.product.baseUom);
+  if (converted === null) {
+    throw new BusinessRuleError(
+      "UOM_CONVERSION_UNAVAILABLE",
+      `"${item.uom.name}" has no fixed conversion to "${item.product.styleName}"'s base unit.`,
+      { goodsReceiptItemId }
+    );
+  }
+  // Quantity columns are Decimal(18,4); round so 91.44 MTR comes back as
+  // exactly 100 YDS rather than 100.00000000000001.
+  const roundedConverted = Math.round(converted * 10_000) / 10_000;
+  const ledgerQuantity = targetRoll ? input.quantity : roundedConverted;
+  const lineQuantity = targetRoll ? roundedConverted : input.quantity;
 
   const result = await prisma.$transaction(async (tx) => {
     if (targetRoll) {
@@ -519,12 +525,12 @@ export async function reverseGoodsReceiptLine(
       tx,
       goodsReceiptItemId,
       Number(item.receivedQuantity),
-      input.quantity
+      lineQuantity
     );
     if (lineUpdate.count === 0) {
       throw new BusinessRuleError(
         "OVER_REVERSAL_NOT_ALLOWED",
-        `Cannot reverse ${input.quantity} — more than this line's remaining un-reversed quantity.`,
+        `Cannot reverse ${lineQuantity} — more than this line's remaining un-reversed quantity.`,
         { goodsReceiptItemId }
       );
     }
@@ -544,12 +550,12 @@ export async function reverseGoodsReceiptLine(
     const decrementResult = await PurchaseOrderItemRepository.guardedDecrementReceived(
       tx,
       item.purchaseOrderItemId,
-      input.quantity
+      lineQuantity
     );
     if (decrementResult === 0) {
       throw new BusinessRuleError(
         "OVER_REVERSAL_NOT_ALLOWED",
-        `Cannot reverse ${input.quantity} — ${item.purchaseOrderItem.invoicedQuantity} of this line has already been invoiced and can't be left unreceived.`,
+        `Cannot reverse ${lineQuantity} — ${item.purchaseOrderItem.invoicedQuantity} of this line has already been invoiced and can't be left unreceived.`,
         { purchaseOrderItemId: item.purchaseOrderItemId }
       );
     }

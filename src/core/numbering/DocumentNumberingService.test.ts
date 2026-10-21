@@ -48,6 +48,28 @@ describe("generateDocumentNumber", () => {
     expect(updateMock).not.toHaveBeenCalled();
   });
 
+  // Regression (QA audit, found while reproducing S-10): two requests both
+  // creating the first number of the year — the loser's create hits the
+  // unique constraint and must retry onto the increment path, not fail.
+  it("retries once onto the increment path when a concurrent first-use create wins the race", async () => {
+    findFirstMock.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: "seq-1" });
+    createMock.mockRejectedValueOnce(Object.assign(new Error("Unique constraint failed"), { code: "P2002" }));
+    updateMock.mockResolvedValue({ prefix: "PROD", currentNumber: 2, paddingLength: 5 });
+
+    const result = await generateDocumentNumber({ companyId: "co-1", branchId: "br-1", documentType: "PRODUCTION_ORDER", fiscalYear: 2026 });
+
+    expect(result).toBe("PROD-2026-00002");
+    expect(transactionMock).toHaveBeenCalledTimes(2);
+    expect(updateMock).toHaveBeenCalledWith({ where: { id: "seq-1" }, data: { currentNumber: { increment: 1 } } });
+  });
+
+  it("does not swallow errors other than a unique-constraint race", async () => {
+    findFirstMock.mockResolvedValue(null);
+    createMock.mockRejectedValue(Object.assign(new Error("connection lost"), { code: "P1001" }));
+    await expect(generateDocumentNumber({ companyId: "co-1", documentType: "SAMPLE_REQUEST", fiscalYear: 2026 })).rejects.toThrow("connection lost");
+    expect(transactionMock).toHaveBeenCalledTimes(1);
+  });
+
   it("atomically increments an existing sequence rather than SELECT MAX()+1", async () => {
     findFirstMock.mockResolvedValue({ id: "seq-1", prefix: "ORD", currentNumber: 41, paddingLength: 5 });
     updateMock.mockResolvedValue({ prefix: "ORD", currentNumber: 42, paddingLength: 5 });

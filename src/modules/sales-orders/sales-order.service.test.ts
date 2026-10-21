@@ -137,6 +137,22 @@ describe("createSalesOrder", () => {
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 
+  // FERP-QA-002 regression: a buyer that belongs to another customer (or
+  // another company — it won't be in this customer's buyer list either).
+  it("rejects a buyer that doesn't belong to the selected customer", async () => {
+    vi.mocked(CustomerRepository.findByIdWithBuyers).mockResolvedValue({ id: "cust-1", name: "Zenith", buyers: [{ id: "buyer-own" }] } as never);
+    await expect(
+      createSalesOrder(actor, { customerId: "cust-1", buyerId: "buyer-of-someone-else", orderDate: "2026-08-24", requiredShipDate: "", items: [oneItem()] })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(SalesOrderRepository.createHeader).not.toHaveBeenCalled();
+  });
+
+  it("accepts the customer's own buyer", async () => {
+    vi.mocked(CustomerRepository.findByIdWithBuyers).mockResolvedValue({ id: "cust-1", name: "Zenith", buyers: [{ id: "buyer-own" }] } as never);
+    await createSalesOrder(actor, { customerId: "cust-1", buyerId: "buyer-own", orderDate: "2026-08-24", requiredShipDate: "", items: [oneItem()] });
+    expect(SalesOrderRepository.createHeader).toHaveBeenCalledWith(expect.objectContaining({ buyerId: "buyer-own" }));
+  });
+
   it("rejects a line item whose product is not a Style — the P0 fix, closing the gap every sibling module already guards", async () => {
     vi.mocked(ProductRepository.findStyleById).mockResolvedValue(null);
 
@@ -215,6 +231,27 @@ describe("createSalesOrder", () => {
 });
 
 describe("updateSalesOrder", () => {
+  // FERP-QA-002 regression: the edit path previously wrote customerId/buyerId
+  // with no lookup at all.
+  it("rejects switching to a customer from another company", async () => {
+    vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue({ id: "so-1", status: "DRAFT", requestedByUserId: "user-1", items: [] } as never);
+    vi.mocked(CustomerRepository.findByIdWithBuyers).mockResolvedValue(null);
+    await expect(
+      updateSalesOrder(actor, "so-1", { customerId: "other-co-customer", buyerId: "", orderDate: "2026-08-24", requiredShipDate: "", items: [oneItem()] })
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(CustomerRepository.findByIdWithBuyers).toHaveBeenCalledWith("co-1", "other-co-customer");
+    expect(SalesOrderRepository.replaceItems).not.toHaveBeenCalled();
+  });
+
+  it("rejects a buyer that doesn't belong to the customer", async () => {
+    vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue({ id: "so-1", status: "DRAFT", requestedByUserId: "user-1", items: [] } as never);
+    vi.mocked(CustomerRepository.findByIdWithBuyers).mockResolvedValue({ id: "cust-1", name: "Zenith", buyers: [] } as never);
+    await expect(
+      updateSalesOrder(actor, "so-1", { customerId: "cust-1", buyerId: "foreign-buyer", orderDate: "2026-08-24", requiredShipDate: "", items: [oneItem()] })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(SalesOrderRepository.replaceItems).not.toHaveBeenCalled();
+  });
+
   it("blocks editing an order that has moved past CONFIRMED", async () => {
     vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue({ id: "so-1", status: "IN_PRODUCTION", requestedByUserId: "user-1", items: [] } as never);
 

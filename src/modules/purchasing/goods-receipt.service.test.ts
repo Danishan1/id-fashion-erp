@@ -532,6 +532,27 @@ describe("reverseGoodsReceiptLine", () => {
     expect(GoodsReceiptRepository.updateStatusInTx).toHaveBeenCalledWith(expect.anything(), "gr-1", "PARTIALLY_REVERSED");
   });
 
+  // S-01 regression: the PO line is in YDS but rolls are stored in the
+  // material's base unit (MTR). Reversing a whole 91.44 MTR roll must take
+  // 100 YDS off the receipt line and the PO line, not 91.44.
+  it("converts a roll-scoped (base-unit) reversal back to the PO line's unit for the line counters", async () => {
+    const YDS = { id: "uom-yds", name: "YDS", baseUnitId: "uom-1", conversionFactor: 0.9144 };
+    vi.mocked(GoodsReceiptItemRepository.findByIdWithContext).mockResolvedValue(
+      reversibleItem({ uom: YDS, receivedQuantity: 100, rolls: [{ id: "roll-1" }] }) as never
+    );
+    vi.mocked(PurchaseOrderItemRepository.findManyForStatusRecompute).mockResolvedValue([{ orderedQuantity: 100, receivedQuantity: 0 }] as never);
+    vi.mocked(GoodsReceiptItemRepository.findManyByReceiptIdInTx).mockResolvedValue([{ receivedQuantity: 100, reversedQuantity: 100 }] as never);
+    vi.mocked(GoodsReceiptRepository.findByIdWithDetails).mockResolvedValue({ id: "gr-1" } as never);
+
+    await reverseGoodsReceiptLine(actor, "gri-1", { quantity: 91.44, reason: "Whole roll", fabricRollId: "roll-1" });
+
+    expect(FabricRollRepository.guardedDecrementRemaining).toHaveBeenCalledWith(expect.anything(), "roll-1", 91.44);
+    expect(GoodsReceiptItemRepository.guardedIncrementReversed).toHaveBeenCalledWith(expect.anything(), "gri-1", 100, 100);
+    expect(PurchaseOrderItemRepository.guardedDecrementReceived).toHaveBeenCalledWith(expect.anything(), "poi-1", 100);
+    expect(recordInventoryTransaction).toHaveBeenCalledWith(expect.anything(), actor, expect.objectContaining({ quantity: -91.44 }));
+    expect(GoodsReceiptRepository.updateStatusInTx).toHaveBeenCalledWith(expect.anything(), "gr-1", "CANCELLED");
+  });
+
   it("flips the goods receipt to CANCELLED once every line is fully reversed", async () => {
     vi.mocked(GoodsReceiptItemRepository.findByIdWithContext).mockResolvedValue(reversibleItem() as never);
     vi.mocked(PurchaseOrderItemRepository.findManyForStatusRecompute).mockResolvedValue([{ orderedQuantity: 100, receivedQuantity: 0 }] as never);

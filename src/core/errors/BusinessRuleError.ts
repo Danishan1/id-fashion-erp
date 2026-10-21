@@ -317,6 +317,19 @@ function toInnerErrorResponse(error: unknown): {
         },
       };
     }
+    //  - P2003 "Foreign key constraint failed" — a delete/replace blocked
+    //    because another record still points at this one (e.g. editing a
+    //    Sales Order line that a Production Order already uses).
+    if (prismaError.code === "P2003") {
+      return {
+        status: 409,
+        error: {
+          code: "REFERENCED_RECORD_IN_USE",
+          message: "This can't be changed because other records still use it.",
+          details: null,
+        },
+      };
+    }
   }
 
   logger.error("Unhandled API error", { error });

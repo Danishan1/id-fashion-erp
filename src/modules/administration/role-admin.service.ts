@@ -1,5 +1,6 @@
 import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
+import type { Action, Module } from "@/config/rbac";
 import { PermissionService } from "@/core/rbac/PermissionService";
 import { RoleAdminRepository } from "./role-admin.repository";
 import type { CreateRoleInput, UpdateRoleBranchesInput, UpdateRoleProductionStagesInput } from "./role-admin.schema";
@@ -116,6 +117,28 @@ export async function updateRolePermissions(actor: ActorContext, roleId: string,
   const previousGrantedKeys = previousGranted
     .map((g) => catalogById.get(g.permissionId))
     .filter((k): k is string => !!k);
+
+  // 3. No widening past your own access — you can only ADD a permission you
+  //    hold yourself (same rule as per-user overrides). Otherwise an editor
+  //    could widen a role they don't hold, assign it to a second account and
+  //    gain access they were never given. Removing permissions, and keeping
+  //    ones the role already had, is always allowed.
+  const moduleByKey = new Map(catalog.map((p) => [p.key, p.module]));
+  const previousKeySet = new Set(previousGrantedKeys);
+  const addedKeys = grantedKeys.filter((k) => !previousKeySet.has(k));
+  const notHeld: string[] = [];
+  for (const key of addedKeys) {
+    const mod = moduleByKey.get(key)!;
+    const action = key.slice(mod.length + 1);
+    if (!(await PermissionService.can(actor.userId, mod as Module, action as Action))) notHeld.push(key);
+  }
+  if (notHeld.length > 0) {
+    throw new BusinessRuleError(
+      "PERMISSION_DENIED",
+      `You can only grant permissions you hold yourself. Not held: ${notHeld.join(", ")}.`,
+      { notHeld }
+    );
+  }
 
   const permissionIds = grantedKeys.map((k) => catalogByKey.get(k)!);
   await RoleAdminRepository.replacePermissionsInTx(roleId, permissionIds);

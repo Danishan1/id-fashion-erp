@@ -105,6 +105,20 @@ describe("issueCustomInvoiceCreditNote — OVERALL_DISCOUNT", () => {
     expect(result).toMatchObject({ id: "cn-1" });
     expect(itemUpdate).not.toHaveBeenCalled();
   });
+
+  // S-09 regression: guarded on paidAmount too, so a payment saved at the
+  // same moment makes this credit note lose the race instead of both passing.
+  it("guards on both creditedAmount and paidAmount, and rejects when a concurrent change wins", async () => {
+    vi.mocked(CustomInvoiceRepository.findByIdWithDetails).mockResolvedValue(invoiceFixture({ paidAmount: 0, creditedAmount: 0 }) as never);
+    const updateMany = vi.fn().mockResolvedValue({ count: 0 });
+    vi.mocked(prisma.$transaction).mockImplementation((cb: unknown) =>
+      (cb as (tx: unknown) => Promise<unknown>)({ customInvoice: { updateMany }, customInvoiceItem: { update: vi.fn() }, customInvoiceCreditNote: { create: vi.fn() } })
+    );
+    await expect(
+      issueCustomInvoiceCreditNote(actor, "inv-1", { creditNoteDate: "2026-08-27", type: "OVERALL_DISCOUNT", amount: 800, items: [] })
+    ).rejects.toMatchObject({ code: "OVER_CREDIT_NOTE_NOT_ALLOWED" });
+    expect(updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "inv-1", creditedAmount: 0, paidAmount: 0 } }));
+  });
 });
 
 describe("issueCustomInvoiceCreditNote — PRODUCT_RETURN", () => {

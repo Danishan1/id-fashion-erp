@@ -132,8 +132,10 @@ export async function issueCustomInvoiceCreditNote(actor: ActorContext, customIn
   });
 
   const creditNote = await prisma.$transaction(async (tx) => {
+    // Guarded on both creditedAmount and paidAmount, so a payment and a
+    // credit note saved at the same moment can't both pass their caps.
     const guard = await tx.customInvoice.updateMany({
-      where: { id: customInvoiceId, creditedAmount: invoice.creditedAmount },
+      where: { id: customInvoiceId, creditedAmount: invoice.creditedAmount, paidAmount: invoice.paidAmount },
       data: { creditedAmount: { increment: totalAmount } },
     });
     if (guard.count === 0) {

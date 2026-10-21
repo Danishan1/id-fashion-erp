@@ -116,6 +116,12 @@ export const JobWorkReceiptRepository = {
   updateInTx: (tx: Prisma.TransactionClient, id: string, data: Prisma.JobWorkReceiptUncheckedUpdateInput) =>
     tx.jobWorkReceipt.update({ where: { id }, data }),
 
+  /** Flips an applied receipt COMPLETED → CANCELLED only if it is still
+   * COMPLETED. Returns the number of rows changed: 0 means a concurrent
+   * reversal already claimed it. */
+  cancelIfCompletedInTx: (tx: Prisma.TransactionClient, id: string, remarks: string) =>
+    tx.jobWorkReceipt.updateMany({ where: { id, status: "COMPLETED" }, data: { status: "CANCELLED", remarks } }),
+
   /** Backs the Supervisor-facing "Pending External Receipts" queue. */
   findPendingForCompany: (companyId: string) =>
     prisma.jobWorkReceipt.findMany({

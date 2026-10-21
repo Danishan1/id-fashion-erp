@@ -1058,6 +1058,17 @@ export async function reverseJobWorkReceipt(actor: ActorContext, receiptId: stri
   if (receipt.status !== "COMPLETED") {
     throw new BusinessRuleError("INVALID_STATE_TRANSITION", `Cannot reverse a receipt in "${receipt.status}" status.`, {});
   }
+  // A PENDING or REJECTED external submission never touched any quantity, so
+  // "reversing" it would subtract pieces that were never added.
+  if (receipt.approvalStatus === "PENDING" || receipt.approvalStatus === "REJECTED") {
+    throw new BusinessRuleError(
+      "INVALID_STATE_TRANSITION",
+      receipt.approvalStatus === "PENDING"
+        ? "This receipt is still waiting for approval and was never applied — reject it instead of reversing it."
+        : "This receipt was rejected and never applied, so there is nothing to reverse.",
+      { approvalStatus: receipt.approvalStatus }
+    );
+  }
   const parentOrder = await JobWorkOrderRepository.findAnyById(actor.companyId, receipt.jobWorkOrderId);
   if (parentOrder && downstreamStageIdsOf(parentOrder).length > 0 && Number(receipt.receivedQuantity) > 0) {
     throw new BusinessRuleError(
@@ -1068,7 +1079,26 @@ export async function reverseJobWorkReceipt(actor: ActorContext, receiptId: stri
   }
 
   await prisma.$transaction(async (tx) => {
+    // Claim the receipt first: a second, concurrent reversal finds it no
+    // longer COMPLETED and rolls back without touching any quantity.
+    const claimed = await JobWorkReceiptRepository.cancelIfCompletedInTx(tx, receiptId, `${receipt.remarks ?? ""}\nReversed: ${reason}`.trim());
+    if (claimed.count === 0) {
+      throw new BusinessRuleError("INVALID_STATE_TRANSITION", "This receipt has already been reversed.", { id: receiptId });
+    }
+
     const order = await JobWorkOrderRepository.findForGuardedUpdateInTx(tx, receipt.jobWorkOrderId);
+
+    // Pieces already forwarded to the next stage can't be un-received here.
+    const jobOrder = await JobOrderRepository.findForGuardedUpdateInTx(tx, order.jobOrderId);
+    const completedAfter = Number(jobOrder.completedQuantity) - Number(receipt.receivedQuantity);
+    if (completedAfter < Number(jobOrder.forwardedQuantity) - EPSILON) {
+      throw new BusinessRuleError(
+        "INVALID_STATE_TRANSITION",
+        `Cannot reverse this receipt — ${Number(jobOrder.forwardedQuantity)} piece(s) of this job order have already been forwarded to the next stage. Revert them on the next stage first.`,
+        { completedAfter, forwarded: Number(jobOrder.forwardedQuantity) }
+      );
+    }
+
     const newReceived = Number(order.receivedQuantity) - Number(receipt.receivedQuantity);
     const newRejected = Number(order.rejectedQuantity) - Number(receipt.rejectedQuantity);
     const newDamaged = Number(order.damagedQuantity) - Number(receipt.damagedQuantity);
@@ -1084,8 +1114,6 @@ export async function reverseJobWorkReceipt(actor: ActorContext, receiptId: stri
         damagedQuantity: Math.max(0, newDamaged),
       }),
     });
-
-    await JobWorkReceiptRepository.updateInTx(tx, receiptId, { status: "CANCELLED", remarks: `${receipt.remarks ?? ""}\nReversed: ${reason}`.trim() });
 
     await applyJobOrderQuantityDelta(tx, order.jobOrderId, {
       completed: -Number(receipt.receivedQuantity),

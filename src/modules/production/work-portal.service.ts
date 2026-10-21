@@ -17,7 +17,7 @@ import {
   syncAssignmentStatusInTx,
 } from "./assignment-capacity";
 import { assertJobOrderScope, getJobOrderById } from "./job-order.service";
-import { getProductionApprovalTeam } from "./production-scope";
+import { getProductionApprovalTeam, getProductionRecordScope } from "./production-scope";
 
 /**
  * P4 (2026-10-21): the Employee Work Portal's two new actions.
@@ -130,11 +130,20 @@ export async function handBackAssignment(actor: ActorContext, assignmentId: stri
   return handback;
 }
 
-/** Hand-backs on one job order, newest first (visible to anyone who can see the job order). */
+/**
+ * Hand-backs on one job order, newest first. A user who sees every job order
+ * sees every hand-back; an assigned-only worker sees only their own, the same
+ * way getJobOrderById filters assignments and progress entries.
+ */
 export async function listHandbacks(actor: ActorContext, jobOrderId: string) {
   await getJobOrderById(actor.companyId, jobOrderId, actor.userId);
+  const scope = await getProductionRecordScope(actor.userId);
   return prisma.productionHandback.findMany({
-    where: { companyId: actor.companyId, jobOrderId },
+    where: {
+      companyId: actor.companyId,
+      jobOrderId,
+      ...(scope.mode === "ASSIGNED" ? { employeeId: scope.employeeId ?? "00000000-0000-0000-0000-000000000000" } : {}),
+    },
     orderBy: { createdAt: "desc" },
     include: {
       employee: { select: { id: true, fullName: true, employeeCode: true } },

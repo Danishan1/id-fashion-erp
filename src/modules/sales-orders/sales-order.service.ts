@@ -220,9 +220,25 @@ async function assertLinkedDesignsValid(
   }
 }
 
+/**
+ * The customer must belong to the actor's company, and a buyer (when given)
+ * must belong to that customer — never another customer's or another
+ * company's buyer. Runs on both create and edit.
+ */
+async function assertCustomerAndBuyer(companyId: string, customerId: string, buyerId: string | null | undefined) {
+  const customer = await CustomerRepository.findByIdWithBuyers(companyId, customerId);
+  if (!customer) throw new BusinessRuleError("NOT_FOUND", "Customer not found.", { id: customerId });
+  if (buyerId && !customer.buyers.some((b) => b.id === buyerId)) {
+    throw new BusinessRuleError("VALIDATION_ERROR", `The selected buyer does not belong to customer "${customer.name}".`, {
+      customerId,
+      buyerId,
+    });
+  }
+  return customer;
+}
+
 export async function createSalesOrder(actor: ActorContext, input: SalesOrderInput) {
-  const customer = await CustomerRepository.findByIdWithBuyers(actor.companyId, input.customerId);
-  if (!customer) throw new BusinessRuleError("NOT_FOUND", "Customer not found.", { id: input.customerId });
+  await assertCustomerAndBuyer(actor.companyId, input.customerId, input.buyerId);
 
   await assertItemsAreStyles(actor.companyId, input.items, { rejectInactive: true });
   await assertLinkedDesignsValid(actor.companyId, input.items);
@@ -323,6 +339,7 @@ export async function updateSalesOrder(actor: ActorContext, id: string, input: U
   const existing = await SalesOrderRepository.findByIdWithDetails(actor.companyId, id);
   if (!existing) throw new BusinessRuleError("NOT_FOUND", "Sales order not found.", { id });
 
+  await assertCustomerAndBuyer(actor.companyId, input.customerId, input.buyerId);
   await assertItemsAreStyles(actor.companyId, input.items);
   await assertLinkedDesignsValid(actor.companyId, input.items);
 
