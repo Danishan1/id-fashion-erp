@@ -2,6 +2,7 @@ import { prisma } from "@/core/db/client";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { convertUomQuantity } from "@/lib/uom-conversion";
 import { getMaterialRequirementForOrderLine } from "@/modules/bom-mrp/mrp.service";
+import { getPlanFabricReplacements } from "./color-fabric-plan.service";
 import { ProductionOrderRepository } from "./production.repository";
 import { materialRequestScopeForOrder } from "./material-request-scope";
 
@@ -117,6 +118,14 @@ export async function getLotMaterialReadiness(
     const base = line.material.baseUom;
     const converted = base ? convertUomQuantity(issued, line.uom, base) : issued;
     issuedByMaterial.set(line.materialId, (issuedByMaterial.get(line.materialId) ?? 0) + (converted ?? 0));
+  }
+  // A fabric chosen in the colour-wise fabric plan instead of the BOM's own
+  // fabric stands in for it (2026-10-21).
+  const replacements = await getPlanFabricReplacements(companyId, productionOrderId);
+  for (const [chosenId, bomMaterialId] of replacements) {
+    const issued = issuedByMaterial.get(chosenId);
+    if (!issued) continue;
+    issuedByMaterial.set(bomMaterialId, (issuedByMaterial.get(bomMaterialId) ?? 0) + issued);
   }
 
   const rows: LotMaterialReadinessRow[] = requirement.materials

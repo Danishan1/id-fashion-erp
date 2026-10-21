@@ -11,6 +11,7 @@ const SUBSTITUTION_INCLUDE = {
   uom: { select: { id: true, code: true, name: true, baseUnitId: true, conversionFactor: true } },
   requestedBy: { select: { id: true, fullName: true } },
   approvedBy: { select: { id: true, fullName: true } },
+  substituteColor: { select: { id: true, name: true } },
 } satisfies Prisma.MaterialSubstitutionInclude;
 
 export const MaterialSubstitutionRepository = {

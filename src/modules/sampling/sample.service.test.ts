@@ -6,6 +6,8 @@ vi.mock("@/core/db/client", () => ({
     $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn({})),
     crmCompany: { findFirst: vi.fn().mockResolvedValue(null) },
     crmActivity: { create: vi.fn() },
+    sampleMaterial: { findMany: vi.fn() },
+    materialRequestItem: { findMany: vi.fn() },
   },
 }));
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
@@ -78,6 +80,26 @@ const { BomRepository } = await import("@/modules/bom-mrp/bom.repository");
 const { PermissionService } = await import("@/core/rbac/PermissionService");
 const { getAttachmentMetadata } = await import("@/core/attachments/AttachmentService");
 const { generateDocumentNumber } = await import("@/core/numbering/DocumentNumberingService");
+const { prisma } = await import("@/core/db/client");
+
+const MTR = { id: "uom-mtr", code: "MTR", baseUnitId: null, conversionFactor: 1 };
+const CM = { id: "uom-cm", code: "CM", baseUnitId: "uom-mtr", conversionFactor: 0.01 };
+
+/** One planned material line (2 MTR of Cotton) and whatever has been issued against it via sample Material Requests. */
+function mockSampleMaterialIssue(issued: Array<{ quantity: number; uom?: typeof MTR | typeof CM }>, planned = 2) {
+  vi.mocked(prisma.sampleMaterial.findMany).mockResolvedValue([
+    { materialId: "mat-cotton", plannedQuantity: planned, uom: MTR, material: { styleName: "Cotton", baseUom: MTR } },
+  ] as never);
+  vi.mocked(prisma.materialRequestItem.findMany).mockResolvedValue(
+    issued.map((i) => ({
+      materialId: "mat-cotton",
+      requestedQuantity: i.quantity,
+      issuedQuantity: i.quantity,
+      uom: i.uom ?? MTR,
+      material: { baseUom: MTR },
+    })) as never
+  );
+}
 const {
   recalculateSampleVersionCosting,
   addSampleMaterial,
@@ -552,6 +574,7 @@ describe("transitionSampleStatus", () => {
     vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue({ id: "sam-1", status: "TECH_PACK_READY", customerId: "cust-1" } as never);
     vi.mocked(SampleRequestRepository.update).mockResolvedValue({ id: "sam-1", status: "IN_DEVELOPMENT" } as never);
     vi.mocked(SampleVersionRepository.findLatest).mockResolvedValue({ id: "ver-old", status: "SUPERSEDED" } as never);
+    mockSampleMaterialIssue([{ quantity: 2 }]);
 
     await transitionSampleStatus(actor, "sam-1", "IN_DEVELOPMENT" as never);
 
@@ -594,6 +617,8 @@ describe("transitionSampleStatus", () => {
       ["INTERNAL_QC", "CANCELLED"],
     ])("keeps asserting sampling.edit, not qc.edit, for %s -> %s", async (from, to) => {
       vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue({ id: "sam-1", status: from, customerId: "cust-1" } as never);
+      vi.mocked(SampleVersionRepository.findLatest).mockResolvedValue({ id: "ver-1", status: "IN_DEVELOPMENT" } as never);
+      mockSampleMaterialIssue([{ quantity: 2 }]);
       vi.mocked(SampleRequestRepository.update).mockResolvedValue({ id: "sam-1", status: to } as never);
 
       await transitionSampleStatus(actor, "sam-1", to as never);
@@ -873,5 +898,73 @@ describe("setSampleRequestMainImage", () => {
 
     expect(getAttachmentMetadata).not.toHaveBeenCalled();
     expect(SampleRequestRepository.update).toHaveBeenCalledWith("sam-1", { mainImageAttachmentId: null });
+  });
+});
+
+// "Start Development" gate (2026-10-21): material for the current version must
+// be issued from the store before TECH_PACK_READY -> IN_DEVELOPMENT.
+describe("Start Development requires issued sample material", () => {
+  beforeEach(() => {
+    vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue({ id: "sam-1", status: "TECH_PACK_READY", customerId: "cust-1" } as never);
+    vi.mocked(SampleRequestRepository.update).mockResolvedValue({ id: "sam-1", status: "IN_DEVELOPMENT" } as never);
+    vi.mocked(SampleVersionRepository.findLatest).mockResolvedValue({ id: "ver-1", status: "IN_DEVELOPMENT" } as never);
+  });
+
+  it("blocks when the version has no materials", async () => {
+    vi.mocked(prisma.sampleMaterial.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.materialRequestItem.findMany).mockResolvedValue([] as never);
+
+    await expect(transitionSampleStatus(actor, "sam-1", "IN_DEVELOPMENT" as never)).rejects.toMatchObject({ code: "SAMPLE_MATERIAL_NOT_ISSUED" });
+    expect(SampleRequestRepository.update).not.toHaveBeenCalled();
+  });
+
+  it("blocks when material is only partly issued, naming what's missing", async () => {
+    mockSampleMaterialIssue([{ quantity: 1.5 }]);
+
+    const error = await transitionSampleStatus(actor, "sam-1", "IN_DEVELOPMENT" as never).catch((e) => e);
+    expect(error).toBeInstanceOf(BusinessRuleError);
+    expect(error.code).toBe("SAMPLE_MATERIAL_NOT_ISSUED");
+    expect(error.message).toContain("Cotton (issued 1.5 of 2 MTR)");
+    expect(SampleRequestRepository.update).not.toHaveBeenCalled();
+  });
+
+  it("blocks when the material was requested but not issued yet", async () => {
+    vi.mocked(prisma.sampleMaterial.findMany).mockResolvedValue([
+      { materialId: "mat-cotton", plannedQuantity: 2, uom: MTR, material: { styleName: "Cotton", baseUom: MTR } },
+    ] as never);
+    vi.mocked(prisma.materialRequestItem.findMany).mockResolvedValue([
+      { materialId: "mat-cotton", requestedQuantity: 2, issuedQuantity: 0, uom: MTR, material: { baseUom: MTR } },
+    ] as never);
+
+    await expect(transitionSampleStatus(actor, "sam-1", "IN_DEVELOPMENT" as never)).rejects.toMatchObject({ code: "SAMPLE_MATERIAL_NOT_ISSUED" });
+  });
+
+  it("allows it once every material is fully issued, summing across requests and units", async () => {
+    // 1.5 MTR on one request + 50 CM on another = 2 MTR.
+    mockSampleMaterialIssue([{ quantity: 1.5 }, { quantity: 50, uom: CM }]);
+
+    await transitionSampleStatus(actor, "sam-1", "IN_DEVELOPMENT" as never);
+
+    expect(SampleRequestRepository.update).toHaveBeenCalledWith("sam-1", expect.objectContaining({ status: "IN_DEVELOPMENT" }));
+  });
+
+  it("only counts non-cancelled requests linked to the current version", async () => {
+    mockSampleMaterialIssue([{ quantity: 2 }]);
+    await transitionSampleStatus(actor, "sam-1", "IN_DEVELOPMENT" as never);
+
+    expect(prisma.materialRequestItem.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { materialRequest: { companyId: "co-1", sampleVersionId: "ver-1", status: { not: "CANCELLED" } } },
+      })
+    );
+  });
+
+  it("does not check material when a sample is sent back to development from Internal QC", async () => {
+    vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue({ id: "sam-1", status: "INTERNAL_QC", customerId: "cust-1" } as never);
+    vi.mocked(prisma.sampleMaterial.findMany).mockClear();
+
+    await transitionSampleStatus(actor, "sam-1", "IN_DEVELOPMENT" as never);
+
+    expect(prisma.sampleMaterial.findMany).not.toHaveBeenCalled();
   });
 });

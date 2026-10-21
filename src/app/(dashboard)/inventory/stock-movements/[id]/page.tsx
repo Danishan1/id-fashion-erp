@@ -5,6 +5,9 @@ import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Barcode } from "@/components/ui/Barcode";
 import { formatDateTime } from "@/lib/date-format";
 import { formatNumber } from "@/lib/currency";
+import { PermissionService } from "@/core/rbac/PermissionService";
+import { MovementStatusBadge } from "../StockMovementsListClient";
+import { ReceiveTransferPanel } from "./ReceiveTransferPanel";
 
 const MOVEMENT_TYPE_LABELS: Record<string, string> = {
   TRANSFER: "Transfer",
@@ -18,6 +21,8 @@ export default async function StockMovementDetailPage({ params }: { params: Prom
 
   const movement = await getStockMovementById({ companyId: session!.user.companyId, userId: session!.user.id }, id).catch(() => null);
   if (!movement) notFound();
+  const canReceive = await PermissionService.can(session!.user.id, "inventory", "create");
+  const isTransfer = movement.movementType === "TRANSFER";
 
   return (
     <div className="space-y-6">
@@ -40,6 +45,21 @@ export default async function StockMovementDetailPage({ params }: { params: Prom
       </div>
 
       <dl className="grid grid-cols-2 gap-4 rounded-lg border border-zinc-200 p-4 text-sm dark:border-zinc-800 sm:grid-cols-3">
+        <div>
+          <dt className="text-xs font-medium uppercase text-zinc-500">Status</dt>
+          <dd className="mt-0.5">
+            <MovementStatusBadge status={movement.status} />
+          </dd>
+        </div>
+        {movement.status === "RECEIVED" && (
+          <div>
+            <dt className="text-xs font-medium uppercase text-zinc-500">Received</dt>
+            <dd className="mt-0.5 text-zinc-900 dark:text-zinc-50">
+              {movement.receivedBy?.fullName ?? "—"}
+              {movement.receivedAt ? ` on ${formatDateTime(movement.receivedAt)}` : ""}
+            </dd>
+          </div>
+        )}
         <div>
           <dt className="text-xs font-medium uppercase text-zinc-500">{movement.movementType === "TRANSFER" ? "From Warehouse" : "Warehouse"}</dt>
           <dd className="mt-0.5 text-zinc-900 dark:text-zinc-50">{movement.warehouse.name}</dd>
@@ -70,6 +90,22 @@ export default async function StockMovementDetailPage({ params }: { params: Prom
         )}
       </dl>
 
+      {isTransfer && movement.status === "IN_TRANSIT" && movement.toWarehouseId && (
+        <ReceiveTransferPanel
+          movementId={movement.id}
+          toWarehouseId={movement.toWarehouseId}
+          toWarehouseName={movement.toWarehouse?.name ?? "the destination warehouse"}
+          canReceive={canReceive}
+          lines={movement.items.map((item) => ({
+            id: item.id,
+            materialName: `${item.product.styleName} (${item.product.styleCode})${item.color ? ` — ${item.color.name}` : ""}`,
+            quantity: Number(item.quantity),
+            uomCode: item.uom.code,
+            materialCategory: item.product.materialCategory,
+          }))}
+        />
+      )}
+
       <div>
         <h2 className="mb-2 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Line Items</h2>
         <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
@@ -79,7 +115,9 @@ export default async function StockMovementDetailPage({ params }: { params: Prom
                 <th className="px-4 py-2 text-left font-medium text-zinc-500">Material</th>
                 <th className="px-4 py-2 text-left font-medium text-zinc-500">Quantity</th>
                 <th className="px-4 py-2 text-left font-medium text-zinc-500">Unit</th>
-                <th className="px-4 py-2 text-left font-medium text-zinc-500">Location</th>
+                <th className="px-4 py-2 text-left font-medium text-zinc-500">Colour</th>
+                <th className="px-4 py-2 text-left font-medium text-zinc-500">{isTransfer ? "From Location" : "Location"}</th>
+                {isTransfer && <th className="px-4 py-2 text-left font-medium text-zinc-500">Put Away At</th>}
                 <th className="px-4 py-2 text-left font-medium text-zinc-500">Remarks</th>
               </tr>
             </thead>
@@ -94,7 +132,13 @@ export default async function StockMovementDetailPage({ params }: { params: Prom
                     {formatNumber(Number(item.quantity))}
                   </td>
                   <td className="px-4 py-2 text-zinc-500">{item.uom.code}</td>
+                  <td className="px-4 py-2 text-zinc-500">{item.color?.name ?? "No colour"}</td>
                   <td className="px-4 py-2 text-zinc-500">{item.warehouseLocation?.code ?? "—"}</td>
+                  {isTransfer && (
+                    <td className="px-4 py-2 text-zinc-500">
+                      {item.toWarehouseLocation?.code ?? (movement.status === "IN_TRANSIT" ? "In transit" : "—")}
+                    </td>
+                  )}
                   <td className="px-4 py-2 text-zinc-500">{item.remarks ?? "—"}</td>
                 </tr>
               ))}

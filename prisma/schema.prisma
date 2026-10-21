@@ -257,6 +257,8 @@ model Company {
   productUnits     ProductUnit[]
   customerReturns  CustomerReturn[]
 
+  productionOrderColorFabrics ProductionOrderColorFabric[]
+  stockColorBalances                  StockColorBalance[]
   @@map("companies")
 }
 
@@ -889,6 +891,7 @@ model User {
   goodsReceiptsReceived                      GoodsReceipt[]                       @relation("GoodsReceiptReceivedBy")
   inventoryTransactionsPerformed             InventoryTransaction[]               @relation("InventoryTransactionPerformedBy")
   stockMovementsPerformed                    StockMovement[]                      @relation("StockMovementPerformedBy")
+  stockMovementsReceived                     StockMovement[]                      @relation("StockMovementReceivedBy")
   sampleVersionsCreated                      SampleVersion[]                      @relation("SampleVersionCreatedBy")
   sampleVersionsCostingLocked                SampleVersion[]                      @relation("SampleVersionCostingLockedBy")
   bomVersionsCreated                         BomVersion[]                         @relation("BomVersionCreatedBy")
@@ -1057,6 +1060,7 @@ model User {
   productionHandbacks ProductionHandback[] @relation("ProductionHandbackBy")
   permissionOverrides        UserPermissionOverride[] @relation("UserPermissionOverrideUser")
   permissionOverridesCreated UserPermissionOverride[] @relation("UserPermissionOverrideCreatedBy")
+  productionOrderColorFabricsUpdated ProductionOrderColorFabric[] @relation("ProductionOrderColorFabricUpdatedBy")
   @@unique([companyId, supportForPlatformUserId])
   @@map("users")
 }
@@ -1783,6 +1787,9 @@ model Product {
   stageCosts StyleStageCost[]
   productUnits ProductUnit[]
 
+  productionOrderColorFabricBom      ProductionOrderColorFabric[] @relation("ProductionOrderColorFabricBomMaterial")
+  productionOrderColorFabricChosen   ProductionOrderColorFabric[] @relation("ProductionOrderColorFabricMaterial")
+  stockColorBalances                StockColorBalance[]
   @@unique([companyId, styleCode])
   @@map("products")
 }
@@ -1807,6 +1814,12 @@ model Color {
   sampleRequests         SampleRequest[]
   salesOrderBomOverrides SalesOrderBomOverride[]
 
+  productionOrderGarmentColorFabrics ProductionOrderColorFabric[] @relation("ProductionOrderColorFabricGarmentColor")
+  productionOrderFabricColorFabrics  ProductionOrderColorFabric[] @relation("ProductionOrderColorFabricFabricColor")
+  inventoryTransactions      InventoryTransaction[] @relation("InventoryTransactionColor")
+  stockColorBalances         StockColorBalance[]
+  stockMovementItems         StockMovementItem[]    @relation("StockMovementItemColor")
+  materialSubstitutionsAsSubstituteColor MaterialSubstitution[] @relation("MaterialSubstitutionSubstituteColor")
   @@unique([companyId, code])
   @@map("colors")
 }
@@ -1858,6 +1871,7 @@ model UnitOfMeasure {
   salesOrderBomOverrides       SalesOrderBomOverride[]
   materialSubstitutions        MaterialSubstitution[]
 
+  productionOrderColorFabrics  ProductionOrderColorFabric[]
   @@map("units_of_measure")
 }
 
@@ -1942,6 +1956,7 @@ model Warehouse {
   productUnits               ProductUnit[]
   customerReturnRestockItems CustomerReturnItem[] @relation("CustomerReturnRestockWarehouse")
 
+  stockColorBalances         StockColorBalance[]
   @@unique([branchId, code])
   @@map("warehouses")
 }
@@ -4320,6 +4335,9 @@ model MaterialSubstitution {
   materialRequestItemId  String                     @map("material_request_item_id") @db.Uuid
   originalMaterialId     String                     @map("original_material_id") @db.Uuid
   substituteMaterialId   String                     @map("substitute_material_id") @db.Uuid
+  // Colour of the substitute stock to issue (2026-10-21); null = "No colour"
+  // stock. Lets the same material in another colour be the substitute.
+  substituteColorId      String?                    @map("substitute_color_id") @db.Uuid
   quantity               Decimal                    @map("quantity") @db.Decimal(18, 4)
   uomId                  String                     @map("uom_id") @db.Uuid
   reason                 MaterialSubstitutionReason @default(OTHER)
@@ -4346,6 +4364,7 @@ model MaterialSubstitution {
   approvedBy           User?                 @relation("MaterialSubstitutionApprovedBy", fields: [approvedByUserId], references: [id])
   inventoryTransaction InventoryTransaction? @relation(fields: [inventoryTransactionId], references: [id])
 
+  substituteColor      Color?                @relation("MaterialSubstitutionSubstituteColor", fields: [substituteColorId], references: [id])
   @@index([materialRequestItemId])
   @@index([companyId, status])
   @@map("material_substitutions")
@@ -4562,11 +4581,48 @@ model ProductionOrder {
   finishedGoodsReceipts  FinishedGoodsReceipt[]
   productUnits           ProductUnit[]
 
+  colorFabrics           ProductionOrderColorFabric[]
   @@unique([companyId, orderNumber])
   @@index([companyId, status])
   @@index([salesOrderItemId])
   @@index([productId])
   @@map("production_orders")
+}
+
+// Production Order colour-wise fabric plan (2026-10-21). One row per garment
+// colour (from the linked Sales Order line's colour/size breakdown) x fabric
+// line of the order's Effective BOM: which fabric to issue for that colour
+// (defaults to the BOM's own fabric), which fabric colour, and how much.
+// "Request Material" stays blocked until every row has a fabric colour; the
+// fabric lines of the generated Material Request come from these rows.
+model ProductionOrderColorFabric {
+  id                String   @id @default(uuid()) @db.Uuid
+  companyId         String   @map("company_id") @db.Uuid
+  productionOrderId String   @map("production_order_id") @db.Uuid
+  garmentColorId    String   @map("garment_color_id") @db.Uuid
+  // The BOM fabric line this row covers (the plan key).
+  bomMaterialId     String   @map("bom_material_id") @db.Uuid
+  // The fabric actually chosen for this colour — defaults to bomMaterialId.
+  materialId        String   @map("material_id") @db.Uuid
+  fabricColorId     String?  @map("fabric_color_id") @db.Uuid
+  quantity          Decimal  @db.Decimal(18, 4)
+  uomId             String   @map("uom_id") @db.Uuid
+  updatedByUserId   String   @map("updated_by_user_id") @db.Uuid
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  company         Company         @relation(fields: [companyId], references: [id])
+  productionOrder ProductionOrder @relation(fields: [productionOrderId], references: [id], onDelete: Cascade)
+  garmentColor    Color           @relation("ProductionOrderColorFabricGarmentColor", fields: [garmentColorId], references: [id])
+  bomMaterial     Product         @relation("ProductionOrderColorFabricBomMaterial", fields: [bomMaterialId], references: [id])
+  material        Product         @relation("ProductionOrderColorFabricMaterial", fields: [materialId], references: [id])
+  fabricColor     Color?          @relation("ProductionOrderColorFabricFabricColor", fields: [fabricColorId], references: [id])
+  uom             UnitOfMeasure   @relation(fields: [uomId], references: [id])
+  updatedBy       User            @relation("ProductionOrderColorFabricUpdatedBy", fields: [updatedByUserId], references: [id])
+
+  @@unique([productionOrderId, garmentColorId, bomMaterialId])
+  @@index([companyId])
+  @@map("production_order_color_fabrics")
 }
 
 enum ProductionOrderQuantityChangeType {
@@ -5374,6 +5430,9 @@ model InventoryTransaction {
   referenceModule     RelatedModule            @map("reference_module")
   referenceRecordId   String                   @map("reference_record_id") @db.Uuid
   fabricRollId        String?                  @map("fabric_roll_id") @db.Uuid
+  // Colour-wise raw-material stock (2026-10-21): the Colors-master colour of
+  // the stock this row moved; null = "No colour". Feeds StockColorBalance.
+  colorId             String?                  @map("color_id") @db.Uuid
   performedByUserId   String                   @map("performed_by_user_id") @db.Uuid
   performedAt         DateTime                 @default(now()) @map("performed_at")
   notes               String?
@@ -5390,6 +5449,7 @@ model InventoryTransaction {
   finishedGoodsReceiptItems FinishedGoodsReceiptItem[]
   finishedGoodsPutawayItems FinishedGoodsPutawayItem[]
 
+  color                 Color?                 @relation("InventoryTransactionColor", fields: [colorId], references: [id])
   @@index([companyId, productId, warehouseId])
   @@index([referenceModule, referenceRecordId])
   @@index([fabricRollId])
@@ -5664,10 +5724,47 @@ model FinishedGoodsPutawayItem {
 // created, matching every other inventory/financial transactional table in
 // this project — no delete/edit column; a mistake is corrected with a new,
 // opposite-direction StockMovement, never an update to an existing one.
+// Raw-material Transfer send/receive (2026-10-21): Send posts only the source
+// side and leaves the movement IN_TRANSIT (stock is in neither warehouse);
+// Receive posts the destination side at a chosen location and flips it to
+// RECEIVED. Every other movement (Adjustment, Return to Supplier, Finished
+// Goods Transfer) posts in one step and is POSTED from creation.
+enum StockMovementStatus {
+  POSTED
+  IN_TRANSIT
+  RECEIVED
+}
+
 enum StockMovementType {
   TRANSFER
   ADJUSTMENT
   RETURN_TO_SUPPLIER
+}
+
+// Colour-wise raw-material stock (2026-10-21) — how much of a warehouse's
+// StockBalance is in each Colors-master colour. Updated by
+// recordInventoryTransaction() in the same transaction as the ledger row.
+// Only coloured stock has rows; StockBalance minus the sum of these rows is
+// the "No colour" stock. The sum never exceeds StockBalance: an uncoloured
+// decrement that goes past the "No colour" stock takes the rest from the
+// coloured rows (largest first).
+model StockColorBalance {
+  id             String   @id @default(uuid()) @db.Uuid
+  companyId      String   @map("company_id") @db.Uuid
+  productId      String   @map("product_id") @db.Uuid
+  warehouseId    String   @map("warehouse_id") @db.Uuid
+  colorId        String   @map("color_id") @db.Uuid
+  quantityOnHand Decimal  @default(0) @map("quantity_on_hand") @db.Decimal(18, 4)
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  company   Company   @relation(fields: [companyId], references: [id])
+  product   Product   @relation(fields: [productId], references: [id])
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id])
+  color     Color     @relation(fields: [colorId], references: [id])
+
+  @@unique([companyId, productId, warehouseId, colorId])
+  @@index([companyId, productId, warehouseId])
+  @@map("stock_color_balances")
 }
 
 model StockMovement {
@@ -5689,6 +5786,9 @@ model StockMovement {
   remarks           String?
   performedByUserId String            @map("performed_by_user_id") @db.Uuid
   performedAt       DateTime          @default(now()) @map("performed_at")
+  status            StockMovementStatus @default(POSTED)
+  receivedAt        DateTime?         @map("received_at")
+  receivedByUserId  String?           @map("received_by_user_id") @db.Uuid
   // CF-5: see GoodsReceipt.idempotencyKey for the full rationale. Company-only
   // (not branch-inclusive) deliberately — a nullable branchId in a composite
   // unique would let Postgres treat every null-branch row as non-conflicting
@@ -5703,11 +5803,13 @@ model StockMovement {
   toWarehouse Warehouse?          @relation("StockMovementDestinationWarehouse", fields: [toWarehouseId], references: [id])
   supplier    Supplier?           @relation(fields: [supplierId], references: [id])
   performedBy User                @relation("StockMovementPerformedBy", fields: [performedByUserId], references: [id])
+  receivedBy  User?               @relation("StockMovementReceivedBy", fields: [receivedByUserId], references: [id])
   items       StockMovementItem[]
 
   @@unique([companyId, idempotencyKey])
   @@index([companyId, movementType])
   @@index([companyId, warehouseId])
+  @@index([companyId, status])
   @@map("stock_movements")
 }
 
@@ -5742,6 +5844,8 @@ model StockMovementItem {
   // destination-side location concept, matching warehouseLocationId's own
   // long-standing "source side only" scope for that item family.
   toWarehouseLocationId String? @map("to_warehouse_location_id") @db.Uuid
+  // Colour of the raw-material stock moved (2026-10-21); null = "No colour".
+  colorId             String? @map("color_id") @db.Uuid
 
   stockMovement       StockMovement      @relation(fields: [stockMovementId], references: [id])
   product             Product            @relation(fields: [productId], references: [id])
@@ -5750,6 +5854,7 @@ model StockMovementItem {
   productVariant      ProductVariant?    @relation(fields: [productVariantId], references: [id])
   toWarehouseLocation WarehouseLocation? @relation("StockMovementItemDestinationLocation", fields: [toWarehouseLocationId], references: [id])
 
+  color               Color?             @relation("StockMovementItemColor", fields: [colorId], references: [id])
   @@index([stockMovementId])
   @@map("stock_movement_items")
 }

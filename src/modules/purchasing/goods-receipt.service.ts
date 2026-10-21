@@ -332,7 +332,15 @@ export async function createGoodsReceipt(actor: ActorContext, purchaseOrderId: s
       // quantities are already base-UOM (stored that way above); the
       // non-roll line quantity uses the precomputed base-UOM conversion since
       // createdItem.receivedQuantity itself is still in the original unit.
+      // Colour-wise stock (2026-10-21): received stock takes the PO line's colour.
+      const poItemColors = await tx.purchaseOrderItem.findMany({
+        where: { id: { in: created.items.map((i) => i.purchaseOrderItemId) } },
+        select: { id: true, colorId: true },
+      });
+      const colorIdByPoItemId = new Map(poItemColors.map((p) => [p.id, p.colorId]));
+
       for (const createdItem of created.items) {
+        const colorId = colorIdByPoItemId.get(createdItem.purchaseOrderItemId) ?? null;
         if (createdItem.rolls.length > 0) {
           for (const roll of createdItem.rolls) {
             await recordInventoryTransaction(tx, actor, {
@@ -344,6 +352,7 @@ export async function createGoodsReceipt(actor: ActorContext, purchaseOrderId: s
               referenceModule: "GOODS_RECEIPT",
               referenceRecordId: createdItem.id,
               fabricRollId: roll.id,
+              colorId,
             });
           }
         } else {
@@ -355,6 +364,7 @@ export async function createGoodsReceipt(actor: ActorContext, purchaseOrderId: s
             quantity: baseUomLineQuantityByPoItemId.get(createdItem.purchaseOrderItemId)!,
             referenceModule: "GOODS_RECEIPT",
             referenceRecordId: createdItem.id,
+            colorId,
           });
         }
 
@@ -539,6 +549,8 @@ export async function reverseGoodsReceiptLine(
       referenceRecordId: goodsReceiptItemId,
       fabricRollId: targetRoll?.id || null,
       notes: input.reason,
+      // Reverses the stock in the same colour it was received in.
+      colorId: item.purchaseOrderItem.colorId ?? null,
     });
 
     const decrementResult = await PurchaseOrderItemRepository.guardedDecrementReceived(

@@ -13,6 +13,7 @@ interface SubstitutionRow {
   inventoryTransactionId: string | null;
   originalMaterial: { styleName: string; styleCode: string };
   substituteMaterial: { styleName: string; styleCode: string };
+  substituteColor: { id: string; name: string } | null;
   requestedBy: { fullName: string };
   approvedBy: { fullName: string } | null;
   approvalRemark: string | null;
@@ -105,6 +106,7 @@ export function MaterialSubstitutionsSection({ lineIds }: { lineIds: string[] })
                 <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_BADGE[row.status]}`}>{row.status}</span>
                 <span className="text-zinc-700 dark:text-zinc-200">
                   {row.originalMaterial.styleName} <span className="text-zinc-400">→</span> {row.substituteMaterial.styleName}
+                  {row.substituteColor ? ` (${row.substituteColor.name})` : ""}
                 </span>
                 <span className="text-zinc-500">
                   {row.quantity} {row.uom.code}
