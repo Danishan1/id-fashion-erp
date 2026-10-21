@@ -8,11 +8,11 @@ import { branchScopeWhere } from "@/lib/branch-access";
 import { convertUomQuantity } from "@/lib/uom-conversion";
 import { LookupRepository } from "@/modules/lookups/lookup.repository";
 import { ProductRepository, ProductVariantRepository } from "@/modules/products/product.repository";
-import { StockMovementType, type Prisma } from "@prisma/client";
-import { getAvailableQuantity, getFinishedGoodsSaleableQuantity, recordInventoryTransaction } from "./inventory.service";
+import { StockMovementStatus, StockMovementType, type Prisma } from "@prisma/client";
+import { getAvailableQuantity, getFinishedGoodsSaleableQuantity, getRawMaterialStockByLocation, recordInventoryTransaction } from "./inventory.service";
 import { getFgInventorySettings, adjustmentNeedsApproval } from "@/core/fg-inventory-settings/FgInventorySettingsService";
 import { StockMovementRepository } from "./stock-movement.repository";
-import type { CreateStockMovementInput } from "./stock-movement.schema";
+import type { CreateStockMovementInput, ReceiveStockMovementInput } from "./stock-movement.schema";
 
 interface ActorContext {
   companyId: string;
@@ -27,6 +27,15 @@ const INVENTORY_TRANSACTION_TYPE_BY_MOVEMENT_TYPE = {
 } as const;
 
 const VALID_STOCK_MOVEMENT_TYPES = new Set<string>(Object.values(StockMovementType));
+const VALID_STOCK_MOVEMENT_STATUSES = new Set<string>(Object.values(StockMovementStatus));
+
+export interface StockMovementListFilters {
+  movementType?: string;
+  /** POSTED / IN_TRANSIT / RECEIVED — the receive page lists IN_TRANSIT. */
+  status?: string;
+  /** Destination warehouse of a Transfer. */
+  toWarehouseId?: string;
+}
 
 /**
  * `movementType` (TRANSFER/ADJUSTMENT/RETURN_TO_SUPPLIER) is this model's own
@@ -39,8 +48,9 @@ const VALID_STOCK_MOVEMENT_TYPES = new Set<string>(Object.values(StockMovementTy
 export async function listStockMovements(
   actor: { companyId: string; userId: string },
   query: ListQuery,
-  movementType?: string
+  filters: StockMovementListFilters = {}
 ) {
+  const { movementType, status, toWarehouseId } = filters;
   const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
   const where: Prisma.StockMovementWhereInput = {
     companyId: actor.companyId,
@@ -49,6 +59,8 @@ export async function listStockMovements(
     ...(movementType && VALID_STOCK_MOVEMENT_TYPES.has(movementType)
       ? { movementType: movementType as StockMovementType }
       : {}),
+    ...(status && VALID_STOCK_MOVEMENT_STATUSES.has(status) ? { status: status as StockMovementStatus } : {}),
+    ...(toWarehouseId ? { toWarehouseId } : {}),
   };
 
   const [data, totalCount] = await Promise.all([
@@ -92,7 +104,10 @@ export async function getStockMovementById(actor: { companyId: string; userId: s
  * Receipt's own "document keeps the original unit, ledger keeps base UOM"
  * precedent.
  */
-async function convertItemsToBaseUom(companyId: string, items: CreateStockMovementInput["items"]): Promise<number[]> {
+async function convertItemsToBaseUom(
+  companyId: string,
+  items: Array<Pick<CreateStockMovementInput["items"][number], "productId" | "uomId" | "quantity">>
+): Promise<number[]> {
   const baseQuantities: number[] = [];
   for (const item of items) {
     const material = await ProductRepository.findMaterialById(companyId, item.productId);
@@ -270,6 +285,20 @@ export async function createStockMovement(actor: ActorContext, input: CreateStoc
         { productId: item.productId, warehouseId: input.warehouseId, available, requested: removedQuantity }
       );
     }
+    // Raw material taken out of a specific location: that location must hold
+    // it (2026-10-21 — the Send page lists only locations holding the material).
+    if (removesStock && !isFinishedGoods && item.warehouseLocationId) {
+      const byLocation = await getRawMaterialStockByLocation(actor.companyId, item.productId, input.warehouseId);
+      const atLocation = byLocation.locations.find((l) => l.warehouseLocationId === item.warehouseLocationId);
+      const atLocationQty = atLocation?.quantity ?? 0;
+      if (removedQuantity > atLocationQty + 1e-6) {
+        throw new BusinessRuleError(
+          "INSUFFICIENT_STOCK_FOR_MOVEMENT",
+          `Cannot move ${removedQuantity} out of location ${atLocation?.code ?? "the selected location"} — only ${atLocationQty} of this material is there.`,
+          { productId: item.productId, warehouseLocationId: item.warehouseLocationId, available: atLocationQty, requested: removedQuantity }
+        );
+      }
+    }
   }
 
   // Finished Goods Inventory module (FGI-032) -- Stock Adjustment approval
@@ -304,6 +333,8 @@ export async function createStockMovement(actor: ActorContext, input: CreateStoc
   });
 
   const inventoryTransactionType = INVENTORY_TRANSACTION_TYPE_BY_MOVEMENT_TYPE[input.movementType];
+  // A raw-material Transfer is sent now and received later (receiveStockMovement).
+  const isSendOnlyTransfer = input.movementType === "TRANSFER" && !isFinishedGoods;
 
   let movement;
   try {
@@ -322,6 +353,7 @@ export async function createStockMovement(actor: ActorContext, input: CreateStoc
           remarks: input.remarks || null,
           performedByUserId: actor.userId,
           idempotencyKey: input.idempotencyKey ?? null,
+          status: isSendOnlyTransfer ? "IN_TRANSIT" : "POSTED",
         },
         input.items.map((item) => ({
           productId: item.productId,
@@ -332,7 +364,9 @@ export async function createStockMovement(actor: ActorContext, input: CreateStoc
           // Finished Goods Inventory module (FGI-014) — both null for a
           // raw-material line, exactly as before this task.
           productVariantId: item.productVariantId || null,
-          toWarehouseLocationId: item.toWarehouseLocationId || null,
+          // Raw-material Transfer: the destination location is picked by the
+          // receiver, never on the Send page.
+          toWarehouseLocationId: isSendOnlyTransfer ? null : item.toWarehouseLocationId || null,
         }))
       );
 
@@ -364,6 +398,10 @@ export async function createStockMovement(actor: ActorContext, input: CreateStoc
             warehouseLocationId: item.warehouseLocationId || null,
             ...fgFields,
           });
+          // Raw material: the destination side is posted by
+          // receiveStockMovement() once the receiver picks a location; until
+          // then the stock is in transit and counts in neither warehouse.
+          if (isSendOnlyTransfer) continue;
           await recordInventoryTransaction(tx, actor, {
             productId: item.productId,
             warehouseId: input.toWarehouseId!,
@@ -431,8 +469,96 @@ export async function createStockMovement(actor: ActorContext, input: CreateStoc
       itemFamily: input.itemFamily,
       warehouseId: input.warehouseId,
       itemCount: input.items.length,
+      status: movement.status,
     },
   });
 
   return movement;
+}
+
+/**
+ * Receive an in-transit raw-material Transfer (2026-10-21). The receiver must
+ * pick a destination location for every line; only then is the destination
+ * side posted to the ledger (base unit, at that location) and the movement
+ * marked RECEIVED. The status flip is a guarded update inside the same
+ * transaction, so a double click or two receivers can't post it twice.
+ */
+export async function receiveStockMovement(actor: ActorContext, id: string, input: ReceiveStockMovementInput) {
+  const movement = await getStockMovementById(actor, id);
+  if (movement.movementType !== "TRANSFER" || movement.status !== "IN_TRANSIT" || !movement.toWarehouseId) {
+    throw new BusinessRuleError(
+      "INVALID_STATE_TRANSITION",
+      movement.status === "RECEIVED" ? "This transfer has already been received." : "Only an in-transit transfer can be received.",
+      { status: movement.status }
+    );
+  }
+  const toWarehouseId = movement.toWarehouseId;
+
+  const locationByItem = new Map(input.items.map((i) => [i.itemId, i.toWarehouseLocationId]));
+  const unknown = input.items.filter((i) => !movement.items.some((item) => item.id === i.itemId));
+  if (unknown.length > 0) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "A line does not belong to this transfer.", { itemIds: unknown.map((u) => u.itemId) });
+  }
+  const missing = movement.items.filter((item) => !locationByItem.get(item.id));
+  if (missing.length > 0) {
+    throw new BusinessRuleError(
+      "VALIDATION_ERROR",
+      `Pick a destination location for every line before receiving (missing: ${missing.map((m) => m.product.styleName).join(", ")}).`,
+      { itemIds: missing.map((m) => m.id) }
+    );
+  }
+
+  const locationIds = Array.from(new Set(locationByItem.values()));
+  const validLocations = await prisma.warehouseLocation.findMany({
+    where: { id: { in: locationIds }, warehouseId: toWarehouseId, isActive: true, warehouse: { companyId: actor.companyId } },
+    select: { id: true },
+  });
+  if (validLocations.length !== locationIds.length) {
+    throw new BusinessRuleError(
+      "VALIDATION_ERROR",
+      `Every destination location must be an active location of ${movement.toWarehouse?.name ?? "the destination warehouse"}.`,
+      { locationIds }
+    );
+  }
+
+  const baseQuantities = await convertItemsToBaseUom(
+    actor.companyId,
+    movement.items.map((item) => ({ productId: item.productId, uomId: item.uomId, quantity: Number(item.quantity) }))
+  );
+
+  await prisma.$transaction(async (tx) => {
+    const flipped = await tx.stockMovement.updateMany({
+      where: { id: movement.id, companyId: actor.companyId, status: "IN_TRANSIT" },
+      data: { status: "RECEIVED", receivedAt: new Date(), receivedByUserId: actor.userId },
+    });
+    if (flipped.count === 0) {
+      throw new BusinessRuleError("INVALID_STATE_TRANSITION", "This transfer has already been received.", { id });
+    }
+    for (let i = 0; i < movement.items.length; i++) {
+      const item = movement.items[i];
+      const toWarehouseLocationId = locationByItem.get(item.id)!;
+      await tx.stockMovementItem.update({ where: { id: item.id }, data: { toWarehouseLocationId } });
+      await recordInventoryTransaction(tx, actor, {
+        productId: item.productId,
+        warehouseId: toWarehouseId,
+        transactionType: "STOCK_TRANSFER",
+        quantity: baseQuantities[i],
+        referenceModule: "STOCK_MOVEMENT",
+        referenceRecordId: movement.id,
+        warehouseLocationId: toWarehouseLocationId,
+      });
+    }
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "stock_movements",
+    recordId: movement.id,
+    action: "UPDATE",
+    oldValues: { status: "IN_TRANSIT" },
+    newValues: { status: "RECEIVED", locations: Object.fromEntries(locationByItem) },
+  });
+
+  return getStockMovementById(actor, id);
 }

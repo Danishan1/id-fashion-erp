@@ -35,6 +35,7 @@ import { createActivity } from "@/modules/crm/activities/crm-activities.service"
 import type { CrmActor } from "@/modules/crm/core/crm-actor";
 import { SampleStatus, SampleType, type Prisma, type SampleVersionStatus } from "@prisma/client";
 import type { SampleBomUpdateInput } from "./sample.schema";
+import { convertUomQuantity, type UomLike } from "@/lib/uom-conversion";
 
 // The header's own status is the real state — this mirrors it onto the
 // current (latest, still-live) version's display-only status field for the
@@ -465,6 +466,122 @@ export async function setSampleRequestMainImage(actor: ActorContext, id: string,
   return updated;
 }
 
+export interface SampleMaterialIssueLine {
+  materialId: string;
+  materialName: string;
+  uomCode: string;
+  plannedQuantity: number;
+  requestedQuantity: number;
+  issuedQuantity: number;
+}
+
+export interface SampleMaterialIssueStatus {
+  sampleVersionId: string | null;
+  /** True only when the version has material and every material is fully issued. */
+  isFullyIssued: boolean;
+  hasMaterials: boolean;
+  lines: SampleMaterialIssueLine[];
+}
+
+const ISSUE_EPSILON = 1e-6;
+
+/**
+ * Sampling "Start Development" gate (2026-10-21): a sample can't go into
+ * development until the raw material for its current version has been issued
+ * from the store. "Issued" = the issuedQuantity on non-cancelled Material
+ * Requests linked to this version (sampleVersionId) — the same accumulator
+ * every issue and approved substitution already increments, so nothing is
+ * re-derived. Compared per material in the material's base unit, against the
+ * version's own planned SampleMaterial quantities.
+ */
+export async function getSampleMaterialIssueStatus(companyId: string, sampleRequestId: string): Promise<SampleMaterialIssueStatus> {
+  const request = await SampleRequestRepository.findAnyById(companyId, sampleRequestId);
+  if (!request) throw new BusinessRuleError("NOT_FOUND", "Sample request not found.", { id: sampleRequestId });
+
+  const version = await SampleVersionRepository.findLatest(sampleRequestId);
+  if (!version) return { sampleVersionId: null, isFullyIssued: false, hasMaterials: false, lines: [] };
+
+  const uomSelect = { id: true, code: true, baseUnitId: true, conversionFactor: true } as const;
+  const [planned, requestLines] = await Promise.all([
+    prisma.sampleMaterial.findMany({
+      where: { sampleVersionId: version.id },
+      select: {
+        materialId: true,
+        plannedQuantity: true,
+        uom: { select: uomSelect },
+        material: { select: { styleName: true, baseUom: { select: uomSelect } } },
+      },
+    }),
+    prisma.materialRequestItem.findMany({
+      where: { materialRequest: { companyId, sampleVersionId: version.id, status: { not: "CANCELLED" } } },
+      select: {
+        materialId: true,
+        requestedQuantity: true,
+        issuedQuantity: true,
+        uom: { select: uomSelect },
+        material: { select: { baseUom: { select: uomSelect } } },
+      },
+    }),
+  ]);
+
+  const toBase = (qty: number, from: UomLike | null, base: UomLike | null) =>
+    from && base ? (convertUomQuantity(qty, from, base) ?? qty) : qty;
+
+  const byMaterial = new Map<string, SampleMaterialIssueLine>();
+  for (const m of planned) {
+    const base = m.material.baseUom;
+    const line = byMaterial.get(m.materialId) ?? {
+      materialId: m.materialId,
+      materialName: m.material.styleName,
+      uomCode: base?.code ?? m.uom?.code ?? "",
+      plannedQuantity: 0,
+      requestedQuantity: 0,
+      issuedQuantity: 0,
+    };
+    line.plannedQuantity += toBase(Number(m.plannedQuantity), m.uom ?? base, base);
+    byMaterial.set(m.materialId, line);
+  }
+  for (const r of requestLines) {
+    const line = byMaterial.get(r.materialId);
+    // A request line for a material no longer on the version doesn't count
+    // toward (or against) the gate.
+    if (!line) continue;
+    const base = r.material.baseUom;
+    line.requestedQuantity += toBase(Number(r.requestedQuantity), r.uom, base);
+    line.issuedQuantity += toBase(Number(r.issuedQuantity), r.uom, base);
+  }
+
+  const round = (n: number) => Math.round(n * 10000) / 10000;
+  const lines = Array.from(byMaterial.values())
+    .filter((l) => l.plannedQuantity > ISSUE_EPSILON)
+    .map((l) => ({ ...l, plannedQuantity: round(l.plannedQuantity), requestedQuantity: round(l.requestedQuantity), issuedQuantity: round(l.issuedQuantity) }));
+  const hasMaterials = lines.length > 0;
+  const isFullyIssued = hasMaterials && lines.every((l) => l.issuedQuantity + ISSUE_EPSILON >= l.plannedQuantity);
+  return { sampleVersionId: version.id, isFullyIssued, hasMaterials, lines };
+}
+
+async function assertSampleMaterialIssued(companyId: string, sampleRequestId: string) {
+  const status = await getSampleMaterialIssueStatus(companyId, sampleRequestId);
+  if (!status.hasMaterials) {
+    throw new BusinessRuleError(
+      "SAMPLE_MATERIAL_NOT_ISSUED",
+      "Add the raw materials to this sample version, request them from the store and get them issued before starting development.",
+      { lines: [] }
+    );
+  }
+  if (!status.isFullyIssued) {
+    const missing = status.lines.filter((l) => l.issuedQuantity + ISSUE_EPSILON < l.plannedQuantity);
+    const summary = missing
+      .map((l) => `${l.materialName} (issued ${l.issuedQuantity} of ${l.plannedQuantity}${l.uomCode ? ` ${l.uomCode}` : ""})`)
+      .join(", ");
+    throw new BusinessRuleError(
+      "SAMPLE_MATERIAL_NOT_ISSUED",
+      `Development can't start until all sample material is issued from the store. Still to issue: ${summary}.`,
+      { lines: missing }
+    );
+  }
+}
+
 export async function transitionSampleStatus(actor: ActorContext, id: string, targetStatus: SampleStatus) {
   const before = await SampleRequestRepository.findAnyById(actor.companyId, id);
   if (!before) throw new BusinessRuleError("NOT_FOUND", "Sample request not found.", { id });
@@ -486,6 +603,13 @@ export async function transitionSampleStatus(actor: ActorContext, id: string, ta
       `Cannot move a sample request from ${before.status} to ${targetStatus}.`,
       { from: before.status, to: targetStatus }
     );
+  }
+
+  // Starting development needs the sample's raw material issued first. Only
+  // the first start (from Tech Pack Ready) — sending a sample back from QC or
+  // from the customer reuses material that was already issued.
+  if (before.status === "TECH_PACK_READY" && targetStatus === "IN_DEVELOPMENT") {
+    await assertSampleMaterialIssued(actor.companyId, id);
   }
 
   const updated = await SampleRequestRepository.update(id, {

@@ -9,10 +9,12 @@ const mockPrisma = vi.hoisted(() => ({
 vi.mock("@/core/db/client", () => ({ prisma: mockPrisma }));
 vi.mock("./production.repository", () => ({ ProductionOrderRepository: { findAnyById: vi.fn() } }));
 vi.mock("@/modules/bom-mrp/mrp.service", () => ({ getMaterialRequirementForOrderLine: vi.fn() }));
+vi.mock("./color-fabric-plan.service", () => ({ getPlanFabricReplacements: vi.fn().mockResolvedValue(new Map()) }));
 
 const { ProductionOrderRepository } = await import("./production.repository");
 const { getMaterialRequirementForOrderLine } = await import("@/modules/bom-mrp/mrp.service");
 const { getLotMaterialReadiness, assertLotMaterialReady } = await import("./lot-readiness.service");
+const { getPlanFabricReplacements } = await import("./color-fabric-plan.service");
 
 const MTR = { id: "uom-mtr", baseUnitId: null, conversionFactor: "1" };
 
@@ -80,6 +82,20 @@ describe("getLotMaterialReadiness", () => {
 
   it("adds up partial issues across several request lines", async () => {
     mockPrisma.materialRequestItem.findMany.mockResolvedValue([...issued(4), ...issued(3.5)]);
+
+    const r = await getLotMaterialReadiness("co-1", "po-1", { newLotPieces: 5 });
+    expect(r.rows[0].issuedQuantity).toBe(7.5);
+    expect(r.ready).toBe(true);
+  });
+
+  // Colour-wise fabric plan (2026-10-21): a fabric chosen instead of the BOM
+  // fabric for a garment colour stands in for it at the lot gate.
+  it("counts a fabric chosen in the colour-wise plan toward the BOM fabric it replaces", async () => {
+    vi.mocked(getPlanFabricReplacements).mockResolvedValueOnce(new Map([["mat-poplin", "mat-cotton"]]));
+    mockPrisma.materialRequestItem.findMany.mockResolvedValue([
+      ...issued(4.5),
+      { materialId: "mat-poplin", issuedQuantity: "3", uom: MTR, material: { baseUom: MTR } },
+    ]);
 
     const r = await getLotMaterialReadiness("co-1", "po-1", { newLotPieces: 5 });
     expect(r.rows[0].issuedQuantity).toBe(7.5);

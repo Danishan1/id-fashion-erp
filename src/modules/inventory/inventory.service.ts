@@ -184,6 +184,63 @@ export async function getAvailableQuantity(companyId: string, productId: string,
   return balance ? Number(balance.quantityOnHand) : 0;
 }
 
+export interface RawMaterialLocationStock {
+  warehouseLocationId: string;
+  code: string;
+  label: string;
+  quantity: number;
+}
+
+/**
+ * Raw material stock per location within one warehouse (2026-10-21). There is
+ * no per-location balance cache for raw material (StockBalance is warehouse-
+ * level), so this sums the ledger's own warehouseLocationId per location.
+ * A location's figure is capped at the warehouse's real on-hand total (issues
+ * posted without a location reduce the warehouse but not a location), and
+ * whatever on-hand stock isn't attributed to any location is returned as
+ * `unassignedQuantity`.
+ */
+export async function getRawMaterialStockByLocation(
+  companyId: string,
+  productId: string,
+  warehouseId: string
+): Promise<{ onHand: number; locations: RawMaterialLocationStock[]; unassignedQuantity: number }> {
+  const [onHand, sums] = await Promise.all([
+    getAvailableQuantity(companyId, productId, warehouseId),
+    prisma.inventoryTransaction.groupBy({
+      by: ["warehouseLocationId"],
+      where: { companyId, productId, warehouseId, warehouseLocationId: { not: null }, productVariantId: null },
+      _sum: { quantity: true },
+    }),
+  ]);
+  const positive = sums
+    .map((r) => ({ id: r.warehouseLocationId!, quantity: Number(r._sum.quantity ?? 0) }))
+    .filter((r) => r.quantity > 1e-6);
+  const locationRows = positive.length
+    ? await prisma.warehouseLocation.findMany({
+        where: { id: { in: positive.map((r) => r.id) }, warehouseId, warehouse: { companyId } },
+        select: { id: true, code: true, zone: true, rack: true, shelf: true, bin: true },
+      })
+    : [];
+  const byId = new Map(locationRows.map((l) => [l.id, l]));
+  const round = (n: number) => Math.round(n * 10000) / 10000;
+  const locations = positive
+    .filter((r) => byId.has(r.id))
+    .map((r) => {
+      const l = byId.get(r.id)!;
+      const parts = [l.zone, l.rack, l.shelf, l.bin].filter(Boolean).join(" / ");
+      return {
+        warehouseLocationId: r.id,
+        code: l.code,
+        label: parts ? `${l.code} (${parts})` : l.code,
+        quantity: round(Math.min(r.quantity, onHand)),
+      };
+    })
+    .sort((a, b) => a.code.localeCompare(b.code));
+  const located = positive.reduce((sum, r) => sum + r.quantity, 0);
+  return { onHand: round(onHand), locations, unassignedQuantity: round(Math.max(0, onHand - located)) };
+}
+
 /**
  * Finished Goods Inventory module (2026-10-13, FGI-010) — the variant/
  * location-aware sibling of getAvailableQuantity above, reading the new

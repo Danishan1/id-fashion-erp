@@ -27,6 +27,13 @@ interface LocationOption {
   isActive: boolean;
 }
 
+/** GET /api/v1/stock-movements/location-stock — how much of one material each location holds. */
+interface LocationStock {
+  onHand: number;
+  locations: Array<{ warehouseLocationId: string; code: string; label: string; quantity: number }>;
+  unassignedQuantity: number;
+}
+
 interface LineItem {
   productId: string;
   uomId: string;
@@ -75,6 +82,9 @@ export function StockMovementForm() {
   // regardless of movement type (even Transfer's destination side has no
   // location field this pass, see stock-movement.schema.ts).
   const [locations, setLocations] = useState<LocationOption[]>([]);
+  // Per material (in the source warehouse): which locations hold it and how
+  // much. Keyed `${warehouseId}:${productId}` so a warehouse change refetches.
+  const [locationStock, setLocationStock] = useState<Record<string, LocationStock>>({});
 
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -121,6 +131,19 @@ export function StockMovementForm() {
       .catch(() => setLocations([]));
   }, [warehouseId]);
 
+  const productIdsKey = Array.from(new Set(lines.map((l) => l.productId).filter(Boolean))).sort().join(",");
+  useEffect(() => {
+    if (!warehouseId || !productIdsKey) return;
+    for (const productId of productIdsKey.split(",")) {
+      const key = `${warehouseId}:${productId}`;
+      fetch(`/api/v1/stock-movements/location-stock?productId=${productId}&warehouseId=${warehouseId}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((body) => {
+          if (body?.data) setLocationStock((prev) => ({ ...prev, [key]: body.data }));
+        });
+    }
+  }, [warehouseId, productIdsKey]);
+
   const updateLine = (index: number, patch: Partial<LineItem>) => {
     setLines((prev) => prev.map((line, i) => (i === index ? { ...line, ...patch } : line)));
   };
@@ -135,13 +158,18 @@ export function StockMovementForm() {
 
   const onMaterialChange = (index: number, productId: string) => {
     const material = materials.find((m) => m.id === productId);
-    updateLine(index, { productId, uomId: material?.baseUom?.id ?? "" });
+    // A location picked for the previous material may not hold this one.
+    updateLine(index, { productId, uomId: material?.baseUom?.id ?? "", warehouseLocationId: "" });
   };
 
   const addLine = () => setLines((prev) => [...prev, emptyLine()]);
   const removeLine = (index: number) => setLines((prev) => prev.filter((_, i) => i !== index));
 
   const isAdjustment = movementType === "ADJUSTMENT";
+  const isTransfer = movementType === "TRANSFER";
+
+  /** Stock is leaving the warehouse on this line (only a positive adjustment adds stock). */
+  const takesStockOut = (line: LineItem) => !isAdjustment || !(Number(line.quantity) > 0);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -246,6 +274,13 @@ export function StockMovementForm() {
         )}
       </div>
 
+      {isTransfer && (
+        <p className="rounded-md bg-indigo-50 px-3 py-2 text-sm text-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-300">
+          Sending a transfer takes the stock out of the source warehouse now. It stays &ldquo;In transit&rdquo; until the
+          receiving warehouse picks where to put it on the Receive Stock page — only then is it added there.
+        </p>
+      )}
+
       {isAdjustment && (
         <FormField label="Reason" htmlFor="reason" required>
           <input
@@ -322,22 +357,59 @@ export function StockMovementForm() {
               />
             </FormField>
 
-            <FormField label="Location (optional)" htmlFor={`location-${index}`}>
-              <select
-                id={`location-${index}`}
-                value={line.warehouseLocationId}
-                onChange={(e) => updateLine(index, { warehouseLocationId: e.target.value })}
-                disabled={!warehouseId}
-                className={textInputClass()}
-              >
-                <option value="">{warehouseId ? "— No specific location —" : "Pick a warehouse first"}</option>
-                {locations.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.code}
-                    {l.materialCategory ? ` (${formatCategoryLabel(l.materialCategory)})` : ""}
-                  </option>
-                ))}
-              </select>
+            <FormField label={takesStockOut(line) ? "Take From Location (optional)" : "Location (optional)"} htmlFor={`location-${index}`}>
+              {takesStockOut(line) ? (
+                (() => {
+                  const stock = line.productId && warehouseId ? locationStock[`${warehouseId}:${line.productId}`] : undefined;
+                  const uom = units.find((u) => u.id === line.uomId)?.code ?? "";
+                  return (
+                    <>
+                      <select
+                        id={`location-${index}`}
+                        value={line.warehouseLocationId}
+                        onChange={(e) => updateLine(index, { warehouseLocationId: e.target.value })}
+                        disabled={!warehouseId || !line.productId}
+                        className={textInputClass()}
+                      >
+                        <option value="">
+                          {!warehouseId ? "Pick a warehouse first" : !line.productId ? "Pick a material first" : "— No specific location —"}
+                        </option>
+                        {stock?.locations.map((l) => (
+                          <option key={l.warehouseLocationId} value={l.warehouseLocationId}>
+                            {l.label} — {l.quantity} {uom}
+                          </option>
+                        ))}
+                      </select>
+                      {stock && (
+                        <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                          In this warehouse: {stock.onHand} {uom}
+                          {stock.locations.length === 0
+                            ? " — not recorded at any location yet."
+                            : stock.unassignedQuantity > 0
+                              ? ` (${stock.unassignedQuantity} not at a recorded location)`
+                              : ""}
+                        </p>
+                      )}
+                    </>
+                  );
+                })()
+              ) : (
+                <select
+                  id={`location-${index}`}
+                  value={line.warehouseLocationId}
+                  onChange={(e) => updateLine(index, { warehouseLocationId: e.target.value })}
+                  disabled={!warehouseId}
+                  className={textInputClass()}
+                >
+                  <option value="">{warehouseId ? "— No specific location —" : "Pick a warehouse first"}</option>
+                  {locations.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.code}
+                      {l.materialCategory ? ` (${formatCategoryLabel(l.materialCategory)})` : ""}
+                    </option>
+                  ))}
+                </select>
+              )}
               {(() => {
                 const material = materials.find((m) => m.id === line.productId);
                 const location = locations.find((l) => l.id === line.warehouseLocationId);
@@ -380,7 +452,7 @@ export function StockMovementForm() {
         disabled={isSubmitting}
         className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
       >
-        {isSubmitting ? "Saving…" : "Create Stock Movement"}
+        {isSubmitting ? "Saving…" : isTransfer ? "Send Stock" : "Create Stock Movement"}
       </button>
     </form>
   );

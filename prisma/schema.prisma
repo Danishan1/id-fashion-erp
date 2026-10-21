@@ -257,6 +257,7 @@ model Company {
   productUnits     ProductUnit[]
   customerReturns  CustomerReturn[]
 
+  productionOrderColorFabrics ProductionOrderColorFabric[]
   @@map("companies")
 }
 
@@ -889,6 +890,7 @@ model User {
   goodsReceiptsReceived                      GoodsReceipt[]                       @relation("GoodsReceiptReceivedBy")
   inventoryTransactionsPerformed             InventoryTransaction[]               @relation("InventoryTransactionPerformedBy")
   stockMovementsPerformed                    StockMovement[]                      @relation("StockMovementPerformedBy")
+  stockMovementsReceived                     StockMovement[]                      @relation("StockMovementReceivedBy")
   sampleVersionsCreated                      SampleVersion[]                      @relation("SampleVersionCreatedBy")
   sampleVersionsCostingLocked                SampleVersion[]                      @relation("SampleVersionCostingLockedBy")
   bomVersionsCreated                         BomVersion[]                         @relation("BomVersionCreatedBy")
@@ -1057,6 +1059,7 @@ model User {
   productionHandbacks ProductionHandback[] @relation("ProductionHandbackBy")
   permissionOverrides        UserPermissionOverride[] @relation("UserPermissionOverrideUser")
   permissionOverridesCreated UserPermissionOverride[] @relation("UserPermissionOverrideCreatedBy")
+  productionOrderColorFabricsUpdated ProductionOrderColorFabric[] @relation("ProductionOrderColorFabricUpdatedBy")
   @@unique([companyId, supportForPlatformUserId])
   @@map("users")
 }
@@ -1783,6 +1786,8 @@ model Product {
   stageCosts StyleStageCost[]
   productUnits ProductUnit[]
 
+  productionOrderColorFabricBom      ProductionOrderColorFabric[] @relation("ProductionOrderColorFabricBomMaterial")
+  productionOrderColorFabricChosen   ProductionOrderColorFabric[] @relation("ProductionOrderColorFabricMaterial")
   @@unique([companyId, styleCode])
   @@map("products")
 }
@@ -1807,6 +1812,8 @@ model Color {
   sampleRequests         SampleRequest[]
   salesOrderBomOverrides SalesOrderBomOverride[]
 
+  productionOrderGarmentColorFabrics ProductionOrderColorFabric[] @relation("ProductionOrderColorFabricGarmentColor")
+  productionOrderFabricColorFabrics  ProductionOrderColorFabric[] @relation("ProductionOrderColorFabricFabricColor")
   @@unique([companyId, code])
   @@map("colors")
 }
@@ -1858,6 +1865,7 @@ model UnitOfMeasure {
   salesOrderBomOverrides       SalesOrderBomOverride[]
   materialSubstitutions        MaterialSubstitution[]
 
+  productionOrderColorFabrics  ProductionOrderColorFabric[]
   @@map("units_of_measure")
 }
 
@@ -4562,11 +4570,48 @@ model ProductionOrder {
   finishedGoodsReceipts  FinishedGoodsReceipt[]
   productUnits           ProductUnit[]
 
+  colorFabrics           ProductionOrderColorFabric[]
   @@unique([companyId, orderNumber])
   @@index([companyId, status])
   @@index([salesOrderItemId])
   @@index([productId])
   @@map("production_orders")
+}
+
+// Production Order colour-wise fabric plan (2026-10-21). One row per garment
+// colour (from the linked Sales Order line's colour/size breakdown) x fabric
+// line of the order's Effective BOM: which fabric to issue for that colour
+// (defaults to the BOM's own fabric), which fabric colour, and how much.
+// "Request Material" stays blocked until every row has a fabric colour; the
+// fabric lines of the generated Material Request come from these rows.
+model ProductionOrderColorFabric {
+  id                String   @id @default(uuid()) @db.Uuid
+  companyId         String   @map("company_id") @db.Uuid
+  productionOrderId String   @map("production_order_id") @db.Uuid
+  garmentColorId    String   @map("garment_color_id") @db.Uuid
+  // The BOM fabric line this row covers (the plan key).
+  bomMaterialId     String   @map("bom_material_id") @db.Uuid
+  // The fabric actually chosen for this colour — defaults to bomMaterialId.
+  materialId        String   @map("material_id") @db.Uuid
+  fabricColorId     String?  @map("fabric_color_id") @db.Uuid
+  quantity          Decimal  @db.Decimal(18, 4)
+  uomId             String   @map("uom_id") @db.Uuid
+  updatedByUserId   String   @map("updated_by_user_id") @db.Uuid
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  company         Company         @relation(fields: [companyId], references: [id])
+  productionOrder ProductionOrder @relation(fields: [productionOrderId], references: [id], onDelete: Cascade)
+  garmentColor    Color           @relation("ProductionOrderColorFabricGarmentColor", fields: [garmentColorId], references: [id])
+  bomMaterial     Product         @relation("ProductionOrderColorFabricBomMaterial", fields: [bomMaterialId], references: [id])
+  material        Product         @relation("ProductionOrderColorFabricMaterial", fields: [materialId], references: [id])
+  fabricColor     Color?          @relation("ProductionOrderColorFabricFabricColor", fields: [fabricColorId], references: [id])
+  uom             UnitOfMeasure   @relation(fields: [uomId], references: [id])
+  updatedBy       User            @relation("ProductionOrderColorFabricUpdatedBy", fields: [updatedByUserId], references: [id])
+
+  @@unique([productionOrderId, garmentColorId, bomMaterialId])
+  @@index([companyId])
+  @@map("production_order_color_fabrics")
 }
 
 enum ProductionOrderQuantityChangeType {
@@ -5664,6 +5709,17 @@ model FinishedGoodsPutawayItem {
 // created, matching every other inventory/financial transactional table in
 // this project — no delete/edit column; a mistake is corrected with a new,
 // opposite-direction StockMovement, never an update to an existing one.
+// Raw-material Transfer send/receive (2026-10-21): Send posts only the source
+// side and leaves the movement IN_TRANSIT (stock is in neither warehouse);
+// Receive posts the destination side at a chosen location and flips it to
+// RECEIVED. Every other movement (Adjustment, Return to Supplier, Finished
+// Goods Transfer) posts in one step and is POSTED from creation.
+enum StockMovementStatus {
+  POSTED
+  IN_TRANSIT
+  RECEIVED
+}
+
 enum StockMovementType {
   TRANSFER
   ADJUSTMENT
@@ -5689,6 +5745,9 @@ model StockMovement {
   remarks           String?
   performedByUserId String            @map("performed_by_user_id") @db.Uuid
   performedAt       DateTime          @default(now()) @map("performed_at")
+  status            StockMovementStatus @default(POSTED)
+  receivedAt        DateTime?         @map("received_at")
+  receivedByUserId  String?           @map("received_by_user_id") @db.Uuid
   // CF-5: see GoodsReceipt.idempotencyKey for the full rationale. Company-only
   // (not branch-inclusive) deliberately — a nullable branchId in a composite
   // unique would let Postgres treat every null-branch row as non-conflicting
@@ -5703,11 +5762,13 @@ model StockMovement {
   toWarehouse Warehouse?          @relation("StockMovementDestinationWarehouse", fields: [toWarehouseId], references: [id])
   supplier    Supplier?           @relation(fields: [supplierId], references: [id])
   performedBy User                @relation("StockMovementPerformedBy", fields: [performedByUserId], references: [id])
+  receivedBy  User?               @relation("StockMovementReceivedBy", fields: [receivedByUserId], references: [id])
   items       StockMovementItem[]
 
   @@unique([companyId, idempotencyKey])
   @@index([companyId, movementType])
   @@index([companyId, warehouseId])
+  @@index([companyId, status])
   @@map("stock_movements")
 }
 

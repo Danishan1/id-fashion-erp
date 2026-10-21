@@ -185,6 +185,7 @@ export const NAV_SECTIONS: NavSection[] = [
     children: [
       { label: "Stock Balances", href: "/inventory/stock-balances", modules: ["inventory"], group: "Raw Materials" },
       { label: "Stock Movements", href: "/inventory/stock-movements", modules: ["inventory"], group: "Raw Materials" },
+      { label: "Receive Stock", href: "/inventory/stock-movements/receive", modules: ["inventory"], group: "Raw Materials" },
       // Material Requests moved to its own `material_request` module (RBAC
       // audit, 2026-09-24) — previously gated on the same coarse `inventory`
       // key as Stock Balances/Movements.

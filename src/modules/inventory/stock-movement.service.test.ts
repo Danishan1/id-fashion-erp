@@ -2,10 +2,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/numbering/DocumentNumberingService", () => ({ generateDocumentNumber: vi.fn() }));
-vi.mock("@/core/db/client", () => ({ prisma: { $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn({})) } }));
+const txMock = vi.hoisted(() => ({
+  stockMovement: { updateMany: vi.fn() },
+  stockMovementItem: { update: vi.fn() },
+}));
+vi.mock("@/core/db/client", () => ({
+  prisma: {
+    $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(txMock)),
+    warehouseLocation: { findMany: vi.fn() },
+  },
+}));
 vi.mock("./inventory.service", () => ({
   getAvailableQuantity: vi.fn(),
   getFinishedGoodsSaleableQuantity: vi.fn(),
+  getRawMaterialStockByLocation: vi.fn(),
   recordInventoryTransaction: vi.fn(),
 }));
 vi.mock("./stock-movement.repository", () => ({
@@ -37,13 +47,16 @@ vi.mock("@/core/fg-inventory-settings/FgInventorySettingsService", async () => {
 });
 
 const { generateDocumentNumber } = await import("@/core/numbering/DocumentNumberingService");
-const { getAvailableQuantity, getFinishedGoodsSaleableQuantity, recordInventoryTransaction } = await import("./inventory.service");
+const { getAvailableQuantity, getFinishedGoodsSaleableQuantity, getRawMaterialStockByLocation, recordInventoryTransaction } = await import(
+  "./inventory.service"
+);
+const { prisma } = await import("@/core/db/client");
 const { StockMovementRepository } = await import("./stock-movement.repository");
 const { ProductRepository, ProductVariantRepository } = await import("@/modules/products/product.repository");
 const { LookupRepository } = await import("@/modules/lookups/lookup.repository");
 const { PermissionService } = await import("@/core/rbac/PermissionService");
 const { getFgInventorySettings } = await import("@/core/fg-inventory-settings/FgInventorySettingsService");
-const { createStockMovement, listStockMovements, getStockMovementById } = await import("./stock-movement.service");
+const { createStockMovement, listStockMovements, getStockMovementById, receiveStockMovement } = await import("./stock-movement.service");
 
 const actor = { companyId: "co-1", userId: "user-1", branchId: "br-1" };
 
@@ -81,7 +94,9 @@ beforeEach(() => {
 });
 
 describe("createStockMovement", () => {
-  it("posts two ledger entries for a TRANSFER — negative at source, positive at destination", async () => {
+  // Send/receive (2026-10-21): a raw-material Transfer posts only the source
+  // side on Send and stays IN_TRANSIT; receiveStockMovement() posts the rest.
+  it("sends a raw-material TRANSFER — only the source side is posted, and it stays IN_TRANSIT", async () => {
     vi.mocked(getAvailableQuantity).mockResolvedValue(50);
 
     await createStockMovement(actor, {
@@ -91,22 +106,20 @@ describe("createStockMovement", () => {
       items: [{ productId: "mat-1", uomId: "uom-1", quantity: 10, remarks: "" }],
     } as never);
 
-    expect(recordInventoryTransaction).toHaveBeenCalledTimes(2);
-    expect(recordInventoryTransaction).toHaveBeenNthCalledWith(
-      1,
+    expect(recordInventoryTransaction).toHaveBeenCalledTimes(1);
+    expect(recordInventoryTransaction).toHaveBeenCalledWith(
       expect.anything(),
       actor,
       expect.objectContaining({ warehouseId: "wh-a", quantity: -10, transactionType: "STOCK_TRANSFER" })
     );
-    expect(recordInventoryTransaction).toHaveBeenNthCalledWith(
-      2,
+    expect(StockMovementRepository.createWithItems).toHaveBeenCalledWith(
       expect.anything(),
-      actor,
-      expect.objectContaining({ warehouseId: "wh-b", quantity: 10, transactionType: "STOCK_TRANSFER" })
+      expect.objectContaining({ status: "IN_TRANSIT", toWarehouseId: "wh-b" }),
+      expect.anything()
     );
   });
 
-  it("never wires a destination warehouseLocationId for a raw-material Transfer — unaffected by the new Finished Goods capability", async () => {
+  it("never takes a destination location on Send for a raw-material Transfer — the receiver picks it", async () => {
     vi.mocked(getAvailableQuantity).mockResolvedValue(50);
 
     await createStockMovement(actor, {
@@ -116,11 +129,51 @@ describe("createStockMovement", () => {
       items: [{ productId: "mat-1", uomId: "uom-1", quantity: 10, remarks: "", toWarehouseLocationId: "loc-ignored" }],
     } as never);
 
-    expect(recordInventoryTransaction).toHaveBeenNthCalledWith(
-      2,
+    expect(StockMovementRepository.createWithItems).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      [expect.objectContaining({ toWarehouseLocationId: null })]
+    );
+  });
+
+  it("rejects sending more than the chosen source location holds", async () => {
+    vi.mocked(getAvailableQuantity).mockResolvedValue(50);
+    vi.mocked(getRawMaterialStockByLocation).mockResolvedValue({
+      onHand: 50,
+      unassignedQuantity: 44,
+      locations: [{ warehouseLocationId: "loc-a", code: "A", label: "A", quantity: 6 }],
+    });
+
+    await expect(
+      createStockMovement(actor, {
+        movementType: "TRANSFER",
+        warehouseId: "wh-a",
+        toWarehouseId: "wh-b",
+        items: [{ productId: "mat-1", uomId: "uom-1", quantity: 10, remarks: "", warehouseLocationId: "loc-a" }],
+      } as never)
+    ).rejects.toMatchObject({ code: "INSUFFICIENT_STOCK_FOR_MOVEMENT" });
+    expect(recordInventoryTransaction).not.toHaveBeenCalled();
+  });
+
+  it("posts the source location on Send when that location holds enough", async () => {
+    vi.mocked(getAvailableQuantity).mockResolvedValue(50);
+    vi.mocked(getRawMaterialStockByLocation).mockResolvedValue({
+      onHand: 50,
+      unassignedQuantity: 30,
+      locations: [{ warehouseLocationId: "loc-a", code: "A", label: "A", quantity: 20 }],
+    });
+
+    await createStockMovement(actor, {
+      movementType: "TRANSFER",
+      warehouseId: "wh-a",
+      toWarehouseId: "wh-b",
+      items: [{ productId: "mat-1", uomId: "uom-1", quantity: 10, remarks: "", warehouseLocationId: "loc-a" }],
+    } as never);
+
+    expect(recordInventoryTransaction).toHaveBeenCalledWith(
       expect.anything(),
       actor,
-      expect.objectContaining({ warehouseLocationId: null })
+      expect.objectContaining({ warehouseId: "wh-a", quantity: -10, warehouseLocationId: "loc-a" })
     );
   });
 
@@ -792,5 +845,83 @@ describe("branch access enforcement (2026-09-15)", () => {
     vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
 
     await expect(getStockMovementById(actor, "sm-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+});
+
+describe("receiveStockMovement", () => {
+  const inTransit = {
+    id: "sm-1",
+    companyId: "co-1",
+    branchId: "br-1",
+    movementType: "TRANSFER",
+    status: "IN_TRANSIT",
+    warehouseId: "wh-a",
+    toWarehouseId: "wh-b",
+    toWarehouse: { id: "wh-b", name: "Warehouse B" },
+    items: [
+      { id: "item-1", productId: "mat-1", uomId: "uom-1", quantity: "10", product: { styleName: "Cotton" } },
+      { id: "item-2", productId: "mat-1", uomId: "uom-1", quantity: "4", product: { styleName: "Cotton" } },
+    ],
+  };
+
+  beforeEach(() => {
+    vi.mocked(StockMovementRepository.findByIdWithDetails).mockReset().mockResolvedValue(inTransit as never);
+    vi.mocked(prisma.warehouseLocation.findMany).mockReset().mockResolvedValue([{ id: "loc-b1" }, { id: "loc-b2" }] as never);
+    txMock.stockMovement.updateMany.mockReset().mockResolvedValue({ count: 1 });
+    txMock.stockMovementItem.update.mockReset();
+  });
+
+  const allPicked = { items: [{ itemId: "item-1", toWarehouseLocationId: "loc-b1" }, { itemId: "item-2", toWarehouseLocationId: "loc-b2" }] };
+
+  it("posts the destination side at each chosen location and marks it RECEIVED", async () => {
+    await receiveStockMovement(actor, "sm-1", allPicked);
+
+    expect(txMock.stockMovement.updateMany).toHaveBeenCalledWith({
+      where: { id: "sm-1", companyId: "co-1", status: "IN_TRANSIT" },
+      data: expect.objectContaining({ status: "RECEIVED", receivedByUserId: "user-1" }),
+    });
+    expect(recordInventoryTransaction).toHaveBeenCalledTimes(2);
+    expect(recordInventoryTransaction).toHaveBeenCalledWith(
+      txMock,
+      actor,
+      expect.objectContaining({ warehouseId: "wh-b", quantity: 10, warehouseLocationId: "loc-b1", transactionType: "STOCK_TRANSFER" })
+    );
+    expect(recordInventoryTransaction).toHaveBeenCalledWith(
+      txMock,
+      actor,
+      expect.objectContaining({ warehouseId: "wh-b", quantity: 4, warehouseLocationId: "loc-b2" })
+    );
+    expect(txMock.stockMovementItem.update).toHaveBeenCalledWith({ where: { id: "item-1" }, data: { toWarehouseLocationId: "loc-b1" } });
+  });
+
+  it("requires a destination location for every line", async () => {
+    await expect(
+      receiveStockMovement(actor, "sm-1", { items: [{ itemId: "item-1", toWarehouseLocationId: "loc-b1" }] })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(recordInventoryTransaction).not.toHaveBeenCalled();
+  });
+
+  it("rejects a location that isn't an active location of the destination warehouse", async () => {
+    vi.mocked(prisma.warehouseLocation.findMany).mockResolvedValue([{ id: "loc-b1" }] as never);
+
+    await expect(receiveStockMovement(actor, "sm-1", allPicked)).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(prisma.warehouseLocation.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ warehouseId: "wh-b", isActive: true, warehouse: { companyId: "co-1" } }) })
+    );
+    expect(recordInventoryTransaction).not.toHaveBeenCalled();
+  });
+
+  it("refuses a transfer that is already received", async () => {
+    vi.mocked(StockMovementRepository.findByIdWithDetails).mockResolvedValue({ ...inTransit, status: "RECEIVED" } as never);
+
+    await expect(receiveStockMovement(actor, "sm-1", allPicked)).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+    expect(recordInventoryTransaction).not.toHaveBeenCalled();
+  });
+
+  it("posts nothing when another receiver got there first", async () => {
+    txMock.stockMovement.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(receiveStockMovement(actor, "sm-1", allPicked)).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+    expect(recordInventoryTransaction).not.toHaveBeenCalled();
   });
 });

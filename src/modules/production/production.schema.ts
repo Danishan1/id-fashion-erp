@@ -30,6 +30,25 @@ export const generateMaterialRequestSchema = z.object({
 });
 export type GenerateMaterialRequestInput = z.infer<typeof generateMaterialRequestSchema>;
 
+// Colour-wise fabric plan (2026-10-21): per garment colour x BOM fabric line,
+// the fabric, fabric colour and quantity to request. fabricColorId may be left
+// empty while planning; "Request Material" requires it on every row.
+export const saveColorFabricPlanSchema = z.object({
+  rows: z
+    .array(
+      z.object({
+        garmentColorId: z.string().uuid(),
+        bomMaterialId: z.string().uuid(),
+        materialId: z.string().uuid("Pick a fabric"),
+        fabricColorId: z.string().uuid().nullable().optional().or(z.literal("")),
+        quantity: z.coerce.number().positive("Quantity must be greater than 0"),
+        uomId: z.string().uuid("Unit is required"),
+      })
+    )
+    .min(1, "At least one row is required"),
+});
+export type SaveColorFabricPlanInput = z.infer<typeof saveColorFabricPlanSchema>;
+
 // Purely informational (see LotVariantBreakdown in schema.prisma) — optional
 // so a style with no configured variants (or a lot that genuinely doesn't
 // need this) still creates exactly as before. When supplied, createLot()

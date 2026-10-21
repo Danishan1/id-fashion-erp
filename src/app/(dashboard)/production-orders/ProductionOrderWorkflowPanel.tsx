@@ -7,6 +7,7 @@ import { FormField, textInputClass } from "@/components/ui/FormField";
 import { Modal } from "@/components/ui/Modal";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { MaterialPlannedVsIssuedPanel } from "./MaterialPlannedVsIssuedPanel";
+import { ColorFabricPlanPanel, type ColorFabricPlan } from "./ColorFabricPlanPanel";
 import { MaterialRequirementPreview } from "./MaterialRequirementPreview";
 import {
   LotMaterialReadinessPanel,
@@ -163,6 +164,9 @@ export function ProductionOrderWorkflowPanel({
   const [warehouses, setWarehouses] = useState<WarehouseOption[]>([]);
   const [mrWarehouseId, setMrWarehouseId] = useState("");
   const [mrResult, setMrResult] = useState<string | null>(null);
+  // Colour-wise fabric plan — the material request is blocked until it's complete.
+  const [colorPlan, setColorPlan] = useState<ColorFabricPlan | null>(null);
+  const colorPlanBlocksMr = !!colorPlan?.applies && !colorPlan.isComplete;
 
   const [splitLotTarget, setSplitLotTarget] = useState<LotRow | null>(null);
   const [splitChildren, setSplitChildren] = useState<string[]>(["", ""]);
@@ -660,6 +664,8 @@ export function ProductionOrderWorkflowPanel({
       )}
 
       <MaterialPlannedVsIssuedPanel productionOrderId={productionOrderId} />
+
+      <ColorFabricPlanPanel productionOrderId={productionOrderId} canEdit={canAct} onPlanChange={setColorPlan} />
 
       <StageTimelinePanel kind="productionOrder" id={productionOrderId} refreshKey={timelineKey} />
 
@@ -1159,6 +1165,12 @@ export function ProductionOrderWorkflowPanel({
                 Explodes this order&apos;s BOM against the planned quantity and raises a Material Request for whatever&apos;s
                 short in stock.
               </p>
+              {colorPlanBlocksMr && (
+                <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                  Pick the fabric and fabric colour for every garment colour in &ldquo;Colour-wise Fabric&rdquo; first
+                  (missing: {colorPlan?.incompleteColors.join(", ")}).
+                </p>
+              )}
               <FormField label="Issue From (Warehouse)" htmlFor="mrWarehouseId" required>
                 <SearchableSelect
                   id="mrWarehouseId"
@@ -1176,7 +1188,7 @@ export function ProductionOrderWorkflowPanel({
                 <button
                   type="button"
                   onClick={submitGenerateMr}
-                  disabled={isBusy || !mrWarehouseId}
+                  disabled={isBusy || !mrWarehouseId || colorPlanBlocksMr}
                   className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
                 >
                   {isBusy ? "Generating…" : "Generate"}

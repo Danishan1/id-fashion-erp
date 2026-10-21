@@ -11,12 +11,12 @@ export async function GET(req: NextRequest) {
     await PermissionService.assert(session.user.id, "inventory", "view");
 
     const query = parseListQuery(req.nextUrl.searchParams, "createdAt");
-    const movementType = req.nextUrl.searchParams.get("movementType")?.trim() || undefined;
-    const { data, totalCount } = await listStockMovements(
-      { companyId: session.user.companyId, userId: session.user.id },
-      query,
-      movementType
-    );
+    const params = req.nextUrl.searchParams;
+    const { data, totalCount } = await listStockMovements({ companyId: session.user.companyId, userId: session.user.id }, query, {
+      movementType: params.get("movementType")?.trim() || undefined,
+      status: params.get("status")?.trim() || undefined,
+      toWarehouseId: params.get("toWarehouseId")?.trim() || undefined,
+    });
 
     return NextResponse.json({ data, meta: buildListMeta(totalCount, query.page, query.pageSize) });
   } catch (error) {

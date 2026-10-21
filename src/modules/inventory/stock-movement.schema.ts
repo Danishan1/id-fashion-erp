@@ -115,3 +115,17 @@ export const createStockMovementSchema = z
     path: ["movementType"],
   });
 export type CreateStockMovementInput = z.infer<typeof createStockMovementSchema>;
+
+// Receive an in-transit raw-material Transfer: the receiver picks where each
+// line is put away in the destination warehouse.
+export const receiveStockMovementSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        itemId: z.string().uuid(),
+        toWarehouseLocationId: z.string().uuid("Pick a destination location"),
+      })
+    )
+    .min(1, "At least one line is required"),
+});
+export type ReceiveStockMovementInput = z.infer<typeof receiveStockMovementSchema>;
