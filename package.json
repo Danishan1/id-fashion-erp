@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "concurrently -n next,worker -c blue,green \"npm:dev:next\" \"npm:worker\"",
     "dev:next": "next dev",
-    "build": "cross-env NODE_OPTIONS=--max-old-space-size=4096 next build",
+    "build": "cross-env NODE_OPTIONS=--max-old-space-size=6144 next build",
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
