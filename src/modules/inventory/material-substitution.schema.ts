@@ -4,6 +4,9 @@ export const MATERIAL_SUBSTITUTION_REASONS = ["ORIGINAL_MATERIAL_NOT_AVAILABLE",
 
 export const proposeMaterialSubstitutionSchema = z.object({
   substituteMaterialId: z.string().uuid(),
+  // Colour of the substitute stock (2026-10-21); null/empty = "No colour"
+  // stock. The same material is a valid substitute in a different colour.
+  substituteColorId: z.string().uuid().nullable().optional().or(z.literal("")),
   quantity: z.number().positive(),
   uomId: z.string().uuid(),
   reason: z.enum(MATERIAL_SUBSTITUTION_REASONS).default("OTHER"),

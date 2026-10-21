@@ -34,12 +34,21 @@ interface LocationStock {
   unassignedQuantity: number;
 }
 
+/** GET /api/v1/inventory/color-stock — one material's stock split by colour. */
+interface ColorStock {
+  onHand: number;
+  colors: Array<{ colorId: string; colorName: string; quantity: number }>;
+  noColorQuantity: number;
+}
+
 interface LineItem {
   productId: string;
   uomId: string;
   quantity: string;
   remarks: string;
   warehouseLocationId: string;
+  /** Colour of the stock moved; "" = "No colour". */
+  colorId: string;
 }
 
 const MOVEMENT_TYPES = [
@@ -49,7 +58,7 @@ const MOVEMENT_TYPES = [
 ] as const;
 
 function emptyLine(): LineItem {
-  return { productId: "", uomId: "", quantity: "", remarks: "", warehouseLocationId: "" };
+  return { productId: "", uomId: "", quantity: "", remarks: "", warehouseLocationId: "", colorId: "" };
 }
 
 export function StockMovementForm() {
@@ -85,6 +94,9 @@ export function StockMovementForm() {
   // Per material (in the source warehouse): which locations hold it and how
   // much. Keyed `${warehouseId}:${productId}` so a warehouse change refetches.
   const [locationStock, setLocationStock] = useState<Record<string, LocationStock>>({});
+  // Same key: the material's stock split by colour, for the Colour picker.
+  const [colorStock, setColorStock] = useState<Record<string, ColorStock>>({});
+  const [allColors, setAllColors] = useState<Array<{ id: string; name: string; isActive?: boolean }>>([]);
 
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -120,6 +132,9 @@ export function StockMovementForm() {
     fetch("/api/v1/units")
       .then((res) => res.json())
       .then((body) => setUnits(body.data ?? []));
+    fetch("/api/v1/colors")
+      .then((res) => (res.ok ? res.json() : { data: [] }))
+      .then((body) => setAllColors((body.data ?? []).filter((c: { isActive?: boolean }) => c.isActive !== false)));
   }, [prefillProductId]);
 
   useEffect(() => {
@@ -141,6 +156,11 @@ export function StockMovementForm() {
         .then((body) => {
           if (body?.data) setLocationStock((prev) => ({ ...prev, [key]: body.data }));
         });
+      fetch(`/api/v1/inventory/color-stock?productId=${productId}&warehouseId=${warehouseId}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((body) => {
+          if (body?.data) setColorStock((prev) => ({ ...prev, [key]: body.data }));
+        });
     }
   }, [warehouseId, productIdsKey]);
 
@@ -159,7 +179,7 @@ export function StockMovementForm() {
   const onMaterialChange = (index: number, productId: string) => {
     const material = materials.find((m) => m.id === productId);
     // A location picked for the previous material may not hold this one.
-    updateLine(index, { productId, uomId: material?.baseUom?.id ?? "", warehouseLocationId: "" });
+    updateLine(index, { productId, uomId: material?.baseUom?.id ?? "", warehouseLocationId: "", colorId: "" });
   };
 
   const addLine = () => setLines((prev) => [...prev, emptyLine()]);
@@ -183,6 +203,7 @@ export function StockMovementForm() {
       quantity: Number(line.quantity),
       remarks: line.remarks || undefined,
       warehouseLocationId: line.warehouseLocationId || undefined,
+      colorId: line.colorId || undefined,
     }));
 
     try {
@@ -421,6 +442,43 @@ export function StockMovementForm() {
                     material is {formatCategoryLabel(material.materialCategory)}. You can still save — just double-check
                     this is intentional.
                   </p>
+                );
+              })()}
+            </FormField>
+
+            <FormField label="Colour" htmlFor={`color-${index}`}>
+              {(() => {
+                const stock = line.productId && warehouseId ? colorStock[`${warehouseId}:${line.productId}`] : undefined;
+                const uom = units.find((u) => u.id === line.uomId)?.code ?? "";
+                // Taking stock out: only colours that are actually in stock.
+                // Adding stock (positive adjustment): any colour.
+                const options = takesStockOut(line)
+                  ? [
+                      { id: "", label: `No colour${stock ? ` — ${stock.noColorQuantity} ${uom}` : ""}` },
+                      ...(stock?.colors ?? []).map((c) => ({ id: c.colorId, label: `${c.colorName} — ${c.quantity} ${uom}` })),
+                    ]
+                  : [{ id: "", label: "No colour" }, ...allColors.map((c) => ({ id: c.id, label: c.name }))];
+                return (
+                  <>
+                    <select
+                      id={`color-${index}`}
+                      value={line.colorId}
+                      onChange={(e) => updateLine(index, { colorId: e.target.value })}
+                      disabled={!line.productId}
+                      className={textInputClass()}
+                    >
+                      {options.map((o) => (
+                        <option key={o.id || "none"} value={o.id}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="mt-1 text-xs text-zinc-500">
+                      {takesStockOut(line)
+                        ? "Stock is taken from this colour only."
+                        : "Tag the stock with its colour so it can be issued against coloured requests."}
+                    </p>
+                  </>
                 );
               })()}
             </FormField>

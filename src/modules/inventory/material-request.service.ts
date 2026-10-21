@@ -17,7 +17,13 @@ import { createPurchaseOrder } from "@/modules/purchasing/purchase-order.service
 import { FabricRollRepository } from "@/modules/purchasing/fabric-roll.repository";
 import { WarehouseRepository } from "@/modules/warehouses/warehouse.repository";
 import { StockBalanceRepository } from "./inventory.repository";
-import { getAvailableQuantity, getAvailableQuantityByDye, recordInventoryTransaction } from "./inventory.service";
+import {
+  getAvailableQuantity,
+  getAvailableQuantityByColor,
+  getAvailableQuantityByDye,
+  getStockColorBreakdown,
+  recordInventoryTransaction,
+} from "./inventory.service";
 import { MaterialRequestItemRepository, MaterialRequestRepository } from "./material-request.repository";
 import { MaterialSubstitutionRepository } from "./material-substitution.repository";
 import type {
@@ -76,8 +82,13 @@ function mapLineInput(line: MaterialRequestItemInput) {
 async function getLineAvailableStock(
   companyId: string,
   warehouseId: string,
-  line: { materialId: string; dyeId: string | null; material: { materialCategory: string | null } }
+  line: { materialId: string; colorId?: string | null; dyeId: string | null; material: { materialCategory: string | null } }
 ): Promise<number> {
+  // Colour-wise stock (2026-10-21): a line with a colour can only use stock
+  // of that colour.
+  if (line.colorId) {
+    return getAvailableQuantityByColor(companyId, line.materialId, warehouseId, line.colorId);
+  }
   if (line.dyeId && line.material.materialCategory === "FABRIC") {
     return getAvailableQuantityByDye(companyId, line.materialId, warehouseId, line.dyeId);
   }
@@ -302,6 +313,9 @@ export async function getMaterialRequestById(actor: { companyId: string; userId:
       ...line,
       ...projectLineQuantities(line),
       availableStockQuantity: await getLineAvailableStock(actor.companyId, request.warehouseId, line),
+      // The material's stock at the request's warehouse split by colour, so
+      // the store can see what other colours exist (to substitute).
+      stockByColor: await getStockColorBreakdown(actor.companyId, line.materialId, request.warehouseId),
     }))
   );
 
@@ -827,7 +841,11 @@ export async function issueMaterialRequestLine(
     // carries the exact same drift risk as the roll itself and wouldn't
     // actually reflect what the ledger guard checks against.
     const flatAvailable = await getAvailableQuantity(actor.companyId, line.materialId, effectiveWarehouseId);
-    const rollAvailable = Math.min(Number(roll.remainingQuantity), flatAvailable);
+    // A coloured line can't take more than its colour holds, roll or not.
+    const colorAvailable = line.colorId
+      ? await getAvailableQuantityByColor(actor.companyId, line.materialId, effectiveWarehouseId, line.colorId)
+      : flatAvailable;
+    const rollAvailable = Math.min(Number(roll.remainingQuantity), flatAvailable, colorAvailable);
     if (baseQuantity > rollAvailable) {
       throw new BusinessRuleError(
         "INSUFFICIENT_RAW_MATERIAL_STOCK",
@@ -840,8 +858,10 @@ export async function issueMaterialRequestLine(
     if (baseQuantity > available) {
       throw new BusinessRuleError(
         "INSUFFICIENT_RAW_MATERIAL_STOCK",
-        `Unable to issue ${issueQuantity} of "${line.material.styleName}" — only ${available} available at this warehouse. Available: ${available}, Requested: ${baseQuantity}.`,
-        { available, requested: baseQuantity }
+        line.color
+          ? `Unable to issue ${issueQuantity} of "${line.material.styleName}" in ${line.color.name} — only ${available} of that colour is available at this warehouse. Use Substitute to issue another colour or material. Available: ${available}, Requested: ${baseQuantity}.`
+          : `Unable to issue ${issueQuantity} of "${line.material.styleName}" — only ${available} available at this warehouse. Available: ${available}, Requested: ${baseQuantity}.`,
+        { available, requested: baseQuantity, colorId: line.colorId }
       );
     }
   }
@@ -871,6 +891,7 @@ export async function issueMaterialRequestLine(
       referenceRecordId: lineId,
       warehouseLocationId: warehouseLocationId || null,
       fabricRollId: roll?.id || null,
+      colorId: line.colorId,
     });
 
     if (roll) {
@@ -1020,12 +1041,19 @@ export async function issueSubstituteMaterial(
 
   const effectiveWarehouseId = options?.issueWarehouseId || line.materialRequest.warehouseId;
 
-  const available = await getAvailableQuantity(actor.companyId, substitution.substituteMaterialId, effectiveWarehouseId);
-  if (substituteBaseQuantity > available) {
+  // Colour-wise stock (2026-10-21): the substitute is issued from its chosen
+  // colour, or from "No colour" stock when none was chosen.
+  const substituteColorId = substitution.substituteColorId ?? null;
+  const byColor = await getStockColorBreakdown(actor.companyId, substitution.substituteMaterialId, effectiveWarehouseId);
+  const available = substituteColorId
+    ? (byColor.colors.find((c) => c.colorId === substituteColorId)?.quantity ?? 0)
+    : byColor.noColorQuantity;
+  if (substituteBaseQuantity > available + 1e-6) {
+    const colorName = substitution.substituteColor?.name ?? "No colour";
     throw new BusinessRuleError(
       "INSUFFICIENT_RAW_MATERIAL_STOCK",
-      `Unable to issue ${substituteQuantity} of "${substituteMaterial.styleName}" — only ${available} available at this warehouse. Available: ${available}, Requested: ${substituteBaseQuantity}.`,
-      { available, requested: substituteBaseQuantity }
+      `Unable to issue ${substituteQuantity} of "${substituteMaterial.styleName}" (${colorName}) — only ${available} of that colour is available at this warehouse. Available: ${available}, Requested: ${substituteBaseQuantity}.`,
+      { available, requested: substituteBaseQuantity, colorId: substituteColorId }
     );
   }
 
@@ -1053,6 +1081,7 @@ export async function issueSubstituteMaterial(
       referenceModule: "MATERIAL_REQUEST",
       referenceRecordId: line.id,
       warehouseLocationId: options?.warehouseLocationId ?? null,
+      colorId: substituteColorId,
     });
 
     await MaterialSubstitutionRepository.setInventoryTransactionInTx(tx, substitutionId, transaction.id);
@@ -1173,13 +1202,24 @@ export async function getOtherWarehouseStockForLine(actor: ActorContext, lineId:
     }
   }
 
+  // A coloured line only counts stock of its own colour elsewhere too.
+  const colorQtyByWarehouse = new Map<string, number>();
+  if (line.colorId) {
+    const colorRows = await prisma.stockColorBalance.findMany({
+      where: { companyId: actor.companyId, productId: line.materialId, colorId: line.colorId, warehouseId: { not: requestWarehouseId } },
+      select: { warehouseId: true, quantityOnHand: true },
+    });
+    for (const row of colorRows) colorQtyByWarehouse.set(row.warehouseId, Number(row.quantityOnHand));
+  }
+
   return balances
     .map((b) => ({
       warehouseId: b.warehouseId,
       warehouseName: warehouseNameById.get(b.warehouseId) ?? "Unknown Warehouse",
-      totalQuantity: Number(b.quantityOnHand),
+      totalQuantity: line.colorId ? (colorQtyByWarehouse.get(b.warehouseId) ?? 0) : Number(b.quantityOnHand),
       rolls: rollsByWarehouse.get(b.warehouseId) ?? [],
     }))
+    .filter((w) => w.totalQuantity > 0)
     .sort((a, b) => a.warehouseName.localeCompare(b.warehouseName));
 }
 

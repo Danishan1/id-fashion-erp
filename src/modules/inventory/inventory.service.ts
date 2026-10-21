@@ -34,6 +34,15 @@ interface RecordInventoryTransactionInput {
   fabricRollId?: string | null;
   notes?: string | null;
   /**
+   * Colour-wise raw-material stock (2026-10-21) — the Colors-master colour of
+   * the stock moved; null/omitted = "No colour". A coloured posting also
+   * moves that colour's StockColorBalance (a coloured decrement can't take
+   * more than that colour holds). An uncoloured decrement takes "No colour"
+   * stock first, then coloured stock, so coloured stock never exceeds the
+   * warehouse total.
+   */
+  colorId?: string | null;
+  /**
    * Finished Goods Inventory module (2026-10-13, FGI-010) — opt-in,
    * additive. When BOTH `productVariantId` and `stockStatus` are supplied,
    * this call ALSO upserts/guarded-decrements the matching
@@ -114,6 +123,7 @@ export async function recordInventoryTransaction(
     notes: input.notes || null,
     productVariantId: input.productVariantId || null,
     stockStatus: input.stockStatus || null,
+    colorId: input.colorId || null,
   });
 
   // A receipt (quantity >= 0) can never drive the balance negative, so a
@@ -143,6 +153,8 @@ export async function recordInventoryTransaction(
       );
     }
   }
+
+  await applyColorBalance(tx, actor.companyId, input);
 
   // Finished Goods Inventory module (FGI-010) — the new, purely additive
   // branch. Runs AFTER the unconditional StockBalance branch above (so a
@@ -174,6 +186,83 @@ export async function recordInventoryTransaction(
   }
 
   return transaction;
+}
+
+/** Keeps StockColorBalance in step with one ledger posting (see RecordInventoryTransactionInput.colorId). */
+async function applyColorBalance(tx: Prisma.TransactionClient, companyId: string, input: RecordInventoryTransactionInput) {
+  const key = { companyId, productId: input.productId, warehouseId: input.warehouseId };
+
+  if (input.colorId) {
+    if (input.quantity >= 0) {
+      await tx.stockColorBalance.upsert({
+        where: { companyId_productId_warehouseId_colorId: { ...key, colorId: input.colorId } },
+        create: { ...key, colorId: input.colorId, quantityOnHand: input.quantity },
+        update: { quantityOnHand: { increment: input.quantity } },
+      });
+      return;
+    }
+    const amount = -input.quantity;
+    const guard = await tx.stockColorBalance.updateMany({
+      where: { ...key, colorId: input.colorId, quantityOnHand: { gte: amount - EPSILON } },
+      data: { quantityOnHand: { decrement: amount } },
+    });
+    if (guard.count === 0) {
+      throw new BusinessRuleError(
+        "INSUFFICIENT_STOCK_FOR_MOVEMENT",
+        `Not enough stock in this colour to post this transaction — requested ${amount}.`,
+        { productId: input.productId, warehouseId: input.warehouseId, colorId: input.colorId, requested: amount }
+      );
+    }
+    return;
+  }
+
+  if (input.quantity >= 0) return;
+  // Uncoloured decrement: whatever goes past the "No colour" stock comes out
+  // of the coloured rows, largest first.
+  const [balance, colorRows] = await Promise.all([
+    tx.stockBalance.findFirst({ where: key, select: { quantityOnHand: true } }),
+    tx.stockColorBalance.findMany({ where: { ...key, quantityOnHand: { gt: 0 } }, orderBy: { quantityOnHand: "desc" } }),
+  ]);
+  const total = Number(balance?.quantityOnHand ?? 0);
+  let overflow = colorRows.reduce((sum, row) => sum + Number(row.quantityOnHand), 0) - total;
+  for (const row of colorRows) {
+    if (overflow <= EPSILON) break;
+    const take = Math.min(overflow, Number(row.quantityOnHand));
+    await tx.stockColorBalance.update({ where: { id: row.id }, data: { quantityOnHand: { decrement: take } } });
+    overflow -= take;
+  }
+}
+
+/** Stock of one material at one warehouse in one Colors-master colour. */
+export async function getAvailableQuantityByColor(companyId: string, productId: string, warehouseId: string, colorId: string): Promise<number> {
+  const row = await prisma.stockColorBalance.findUnique({
+    where: { companyId_productId_warehouseId_colorId: { companyId, productId, warehouseId, colorId } },
+    select: { quantityOnHand: true },
+  });
+  return row ? Number(row.quantityOnHand) : 0;
+}
+
+export interface StockColorBreakdown {
+  onHand: number;
+  colors: Array<{ colorId: string; colorName: string; quantity: number }>;
+  /** Stock not tagged with any colour. */
+  noColorQuantity: number;
+}
+
+/** One material's stock at one warehouse, split by colour (plus "No colour"). */
+export async function getStockColorBreakdown(companyId: string, productId: string, warehouseId: string): Promise<StockColorBreakdown> {
+  const [onHand, rows] = await Promise.all([
+    getAvailableQuantity(companyId, productId, warehouseId),
+    prisma.stockColorBalance.findMany({
+      where: { companyId, productId, warehouseId, quantityOnHand: { gt: EPSILON } },
+      select: { colorId: true, quantityOnHand: true, color: { select: { name: true } } },
+      orderBy: { color: { name: "asc" } },
+    }),
+  ]);
+  const round = (n: number) => Math.round(n * 10000) / 10000;
+  const colors = rows.map((r) => ({ colorId: r.colorId, colorName: r.color.name, quantity: round(Number(r.quantityOnHand)) }));
+  const colored = colors.reduce((sum, c) => sum + c.quantity, 0);
+  return { onHand: round(onHand), colors, noColorQuantity: round(Math.max(0, onHand - colored)) };
 }
 
 /** Available quantity for one product at one specific warehouse — what

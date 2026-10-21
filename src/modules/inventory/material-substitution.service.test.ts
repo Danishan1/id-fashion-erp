@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { assert: vi.fn() } }));
-vi.mock("@/core/db/client", () => ({ prisma: { $transaction: vi.fn((fn: (tx: unknown) => unknown) => fn({})) } }));
+vi.mock("@/core/db/client", () => ({
+  prisma: { $transaction: vi.fn((fn: (tx: unknown) => unknown) => fn({})), color: { findFirst: vi.fn().mockResolvedValue({ id: "col-x" }) } },
+}));
 vi.mock("@/modules/lookups/lookup.repository", () => ({ LookupRepository: { unit: { findUnique: vi.fn() } } }));
 vi.mock("@/modules/products/product.repository", () => ({ ProductRepository: { findMaterialById: vi.fn() } }));
 vi.mock("./material-request.repository", () => ({ MaterialRequestItemRepository: { findWithRequestOwner: vi.fn() } }));
@@ -106,6 +108,23 @@ describe("proposeMaterialSubstitution", () => {
   it("rejects when the substitute material is the same as the line's own original material", async () => {
     vi.mocked(ProductRepository.findMaterialById).mockResolvedValue({ id: "green-fabric" } as never);
     await expect(proposeMaterialSubstitution(actor, "line-1", proposeInput)).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  // Colour-wise stock (2026-10-21).
+  it("allows the same material in a different colour, storing the substitute colour", async () => {
+    vi.mocked(ProductRepository.findMaterialById).mockResolvedValue({ id: "green-fabric" } as never);
+    await proposeMaterialSubstitution(actor, "line-1", { ...proposeInput, substituteMaterialId: "green-fabric", substituteColorId: "col-x" });
+    expect(MaterialSubstitutionRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({ substituteMaterialId: "green-fabric", substituteColorId: "col-x" })
+    );
+  });
+
+  it("rejects the same material in the line's own colour", async () => {
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue({ ...openLine, colorId: "col-x" } as never);
+    vi.mocked(ProductRepository.findMaterialById).mockResolvedValue({ id: "green-fabric" } as never);
+    await expect(
+      proposeMaterialSubstitution(actor, "line-1", { ...proposeInput, substituteMaterialId: "green-fabric", substituteColorId: "col-x" })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
 
   it("rejects when the line's request is CANCELLED/CLOSED/ON_HOLD", async () => {

@@ -98,7 +98,7 @@ export default async function StockMovementDetailPage({ params }: { params: Prom
           canReceive={canReceive}
           lines={movement.items.map((item) => ({
             id: item.id,
-            materialName: `${item.product.styleName} (${item.product.styleCode})`,
+            materialName: `${item.product.styleName} (${item.product.styleCode})${item.color ? ` — ${item.color.name}` : ""}`,
             quantity: Number(item.quantity),
             uomCode: item.uom.code,
             materialCategory: item.product.materialCategory,
@@ -115,6 +115,7 @@ export default async function StockMovementDetailPage({ params }: { params: Prom
                 <th className="px-4 py-2 text-left font-medium text-zinc-500">Material</th>
                 <th className="px-4 py-2 text-left font-medium text-zinc-500">Quantity</th>
                 <th className="px-4 py-2 text-left font-medium text-zinc-500">Unit</th>
+                <th className="px-4 py-2 text-left font-medium text-zinc-500">Colour</th>
                 <th className="px-4 py-2 text-left font-medium text-zinc-500">{isTransfer ? "From Location" : "Location"}</th>
                 {isTransfer && <th className="px-4 py-2 text-left font-medium text-zinc-500">Put Away At</th>}
                 <th className="px-4 py-2 text-left font-medium text-zinc-500">Remarks</th>
@@ -131,6 +132,7 @@ export default async function StockMovementDetailPage({ params }: { params: Prom
                     {formatNumber(Number(item.quantity))}
                   </td>
                   <td className="px-4 py-2 text-zinc-500">{item.uom.code}</td>
+                  <td className="px-4 py-2 text-zinc-500">{item.color?.name ?? "No colour"}</td>
                   <td className="px-4 py-2 text-zinc-500">{item.warehouseLocation?.code ?? "—"}</td>
                   {isTransfer && (
                     <td className="px-4 py-2 text-zinc-500">

@@ -125,10 +125,19 @@ export async function proposeMaterialSubstitution(actor: ActorContext, materialR
   if (!substitute) {
     throw new BusinessRuleError("NOT_FOUND", "The substitute material was not found.", { materialId: input.substituteMaterialId });
   }
-  if (substitute.id === line.materialId) {
-    throw new BusinessRuleError("VALIDATION_ERROR", "The substitute material must be different from the material this line already requests.", {
-      materialId: input.substituteMaterialId,
-    });
+  const substituteColorId = input.substituteColorId || null;
+  // The same material is a valid substitute in another colour (or as
+  // "No colour" stock) — never in the line's own colour.
+  if (substitute.id === line.materialId && substituteColorId === (line.colorId ?? null)) {
+    throw new BusinessRuleError(
+      "VALIDATION_ERROR",
+      "Pick a different material, or the same material in a different colour, as the substitute.",
+      { materialId: input.substituteMaterialId, colorId: substituteColorId }
+    );
+  }
+  if (substituteColorId) {
+    const color = await prisma.color.findFirst({ where: { id: substituteColorId, companyId: actor.companyId }, select: { id: true } });
+    if (!color) throw new BusinessRuleError("NOT_FOUND", "The substitute colour was not found.", { colorId: substituteColorId });
   }
 
   const uom = await LookupRepository.unit.findUnique({ where: { id: input.uomId } });
@@ -157,6 +166,7 @@ export async function proposeMaterialSubstitution(actor: ActorContext, materialR
     materialRequestItemId,
     originalMaterialId: line.materialId,
     substituteMaterialId: input.substituteMaterialId,
+    substituteColorId,
     quantity: input.quantity,
     uomId: input.uomId,
     reason: input.reason,
@@ -175,6 +185,7 @@ export async function proposeMaterialSubstitution(actor: ActorContext, materialR
       materialRequestItemId,
       originalMaterialId: line.materialId,
       substituteMaterialId: input.substituteMaterialId,
+      substituteColorId,
       quantity: input.quantity,
       reason: input.reason,
       status: approvalFields.status,

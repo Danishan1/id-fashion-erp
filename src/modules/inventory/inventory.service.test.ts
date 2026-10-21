@@ -25,6 +25,11 @@ const { recordInventoryTransaction, getAvailableQuantity, getFinishedGoodsSaleab
   await import("./inventory.service");
 
 const actor = { companyId: "co-1", userId: "user-1", branchId: "br-1" };
+// Transaction client for the colour-balance writes (2026-10-21).
+const tx = {
+  stockBalance: { findFirst: vi.fn() },
+  stockColorBalance: { upsert: vi.fn(), updateMany: vi.fn(), findMany: vi.fn(), update: vi.fn() },
+};
 const baseInput = {
   productId: "prod-1",
   warehouseId: "wh-1",
@@ -34,6 +39,11 @@ const baseInput = {
 };
 
 beforeEach(() => {
+  tx.stockBalance.findFirst.mockReset().mockResolvedValue({ quantityOnHand: 100 });
+  tx.stockColorBalance.upsert.mockReset();
+  tx.stockColorBalance.updateMany.mockReset().mockResolvedValue({ count: 1 });
+  tx.stockColorBalance.findMany.mockReset().mockResolvedValue([]);
+  tx.stockColorBalance.update.mockReset();
   vi.mocked(InventoryTransactionRepository.create).mockReset().mockResolvedValue({ id: "txn-1" } as never);
   vi.mocked(StockBalanceRepository.upsertIncrement).mockReset().mockResolvedValue({} as never);
   vi.mocked(StockBalanceRepository.guardedDecrement).mockReset().mockResolvedValue({ count: 1 } as never);
@@ -52,38 +62,38 @@ beforeEach(() => {
 describe("recordInventoryTransaction", () => {
   it("rejects a product that doesn't belong to the acting company", async () => {
     vi.mocked(InventoryScopeRepository.findProductCompanyId).mockResolvedValue({ companyId: "co-2" } as never);
-    await expect(recordInventoryTransaction({} as never, actor, { ...baseInput, quantity: 5 })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(recordInventoryTransaction(tx as never, actor, { ...baseInput, quantity: 5 })).rejects.toMatchObject({ code: "NOT_FOUND" });
     expect(InventoryTransactionRepository.create).not.toHaveBeenCalled();
   });
 
   it("rejects a warehouse that doesn't belong to the acting company", async () => {
     vi.mocked(InventoryScopeRepository.findWarehouseCompanyId).mockResolvedValue({ companyId: "co-2" } as never);
-    await expect(recordInventoryTransaction({} as never, actor, { ...baseInput, quantity: 5 })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(recordInventoryTransaction(tx as never, actor, { ...baseInput, quantity: 5 })).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 
   it("rejects a product/warehouse that doesn't exist at all", async () => {
     vi.mocked(InventoryScopeRepository.findProductCompanyId).mockResolvedValue(null);
-    await expect(recordInventoryTransaction({} as never, actor, { ...baseInput, quantity: 5 })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(recordInventoryTransaction(tx as never, actor, { ...baseInput, quantity: 5 })).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 
   it("uses a plain upsert for a positive quantity (a receipt can never drive the balance negative)", async () => {
-    await recordInventoryTransaction({} as never, actor, { ...baseInput, quantity: 25 });
+    await recordInventoryTransaction(tx as never, actor, { ...baseInput, quantity: 25 });
 
-    expect(StockBalanceRepository.upsertIncrement).toHaveBeenCalledWith({}, "co-1", "prod-1", "wh-1", 25);
+    expect(StockBalanceRepository.upsertIncrement).toHaveBeenCalledWith(tx, "co-1", "prod-1", "wh-1", 25);
     expect(StockBalanceRepository.guardedDecrement).not.toHaveBeenCalled();
   });
 
   it("uses the atomic guarded decrement for a negative quantity, not a plain upsert", async () => {
-    await recordInventoryTransaction({} as never, actor, { ...baseInput, quantity: -10 });
+    await recordInventoryTransaction(tx as never, actor, { ...baseInput, quantity: -10 });
 
-    expect(StockBalanceRepository.guardedDecrement).toHaveBeenCalledWith({}, "co-1", "prod-1", "wh-1", 10, expect.closeTo(10, 3));
+    expect(StockBalanceRepository.guardedDecrement).toHaveBeenCalledWith(tx, "co-1", "prod-1", "wh-1", 10, expect.closeTo(10, 3));
     expect(StockBalanceRepository.upsertIncrement).not.toHaveBeenCalled();
   });
 
   it("rejects the transaction when the guarded decrement affects zero rows — the P0 fix: no balance row, or an insufficient one, must never post", async () => {
     vi.mocked(StockBalanceRepository.guardedDecrement).mockResolvedValue({ count: 0 } as never);
 
-    await expect(recordInventoryTransaction({} as never, actor, { ...baseInput, quantity: -10 })).rejects.toMatchObject({
+    await expect(recordInventoryTransaction(tx as never, actor, { ...baseInput, quantity: -10 })).rejects.toMatchObject({
       code: "INSUFFICIENT_STOCK_FOR_MOVEMENT",
     });
   });
@@ -91,7 +101,7 @@ describe("recordInventoryTransaction", () => {
   it("still writes the InventoryTransaction row before the guard check — the caller's own $transaction rolls it back on throw", async () => {
     vi.mocked(StockBalanceRepository.guardedDecrement).mockResolvedValue({ count: 0 } as never);
 
-    await expect(recordInventoryTransaction({} as never, actor, { ...baseInput, quantity: -10 })).rejects.toThrow();
+    await expect(recordInventoryTransaction(tx as never, actor, { ...baseInput, quantity: -10 })).rejects.toThrow();
     // The ledger row insert still happens — atomicity is the caller's own
     // prisma.$transaction's job (this function never opens its own), so
     // throwing here is what causes the whole transaction to roll back,
@@ -100,16 +110,16 @@ describe("recordInventoryTransaction", () => {
   });
 
   it("passes the exact signed quantity through to the ledger row regardless of direction", async () => {
-    await recordInventoryTransaction({} as never, actor, { ...baseInput, quantity: -10 });
+    await recordInventoryTransaction(tx as never, actor, { ...baseInput, quantity: -10 });
     expect(InventoryTransactionRepository.create).toHaveBeenCalledWith(
-      {},
+      tx,
       expect.objectContaining({ quantity: -10, productId: "prod-1", warehouseId: "wh-1" })
     );
   });
 
   describe("Finished Goods Inventory module (FGI-010) — the new, purely additive branch", () => {
     it("never touches FinishedGoodsStockBalanceRepository at all when productVariantId/stockStatus are omitted — every existing caller's exact behavior", async () => {
-      await recordInventoryTransaction({} as never, actor, { ...baseInput, quantity: 25 });
+      await recordInventoryTransaction(tx as never, actor, { ...baseInput, quantity: 25 });
 
       expect(FinishedGoodsStockBalanceRepository.upsertIncrement).not.toHaveBeenCalled();
       expect(FinishedGoodsStockBalanceRepository.guardedDecrement).not.toHaveBeenCalled();
@@ -117,19 +127,19 @@ describe("recordInventoryTransaction", () => {
 
     it("rejects when productVariantId is supplied without stockStatus — an incomplete key is a caller bug, not a silent partial write", async () => {
       await expect(
-        recordInventoryTransaction({} as never, actor, { ...baseInput, quantity: 5, productVariantId: "var-1" })
+        recordInventoryTransaction(tx as never, actor, { ...baseInput, quantity: 5, productVariantId: "var-1" })
       ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
       expect(InventoryTransactionRepository.create).not.toHaveBeenCalled();
     });
 
     it("rejects when stockStatus is supplied without productVariantId", async () => {
       await expect(
-        recordInventoryTransaction({} as never, actor, { ...baseInput, quantity: 5, stockStatus: "SALEABLE" })
+        recordInventoryTransaction(tx as never, actor, { ...baseInput, quantity: 5, stockStatus: "SALEABLE" })
       ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
     });
 
     it("also records productVariantId/stockStatus directly on the ledger row itself when supplied", async () => {
-      await recordInventoryTransaction({} as never, actor, {
+      await recordInventoryTransaction(tx as never, actor, {
         ...baseInput,
         quantity: 25,
         productVariantId: "var-1",
@@ -137,13 +147,13 @@ describe("recordInventoryTransaction", () => {
       });
 
       expect(InventoryTransactionRepository.create).toHaveBeenCalledWith(
-        {},
+        tx,
         expect.objectContaining({ productVariantId: "var-1", stockStatus: "SALEABLE" })
       );
     });
 
     it("upserts the FinishedGoodsStockBalance row for a positive quantity, keyed on the full tuple including warehouseLocationId", async () => {
-      await recordInventoryTransaction({} as never, actor, {
+      await recordInventoryTransaction(tx as never, actor, {
         ...baseInput,
         warehouseLocationId: "loc-1",
         quantity: 25,
@@ -152,7 +162,7 @@ describe("recordInventoryTransaction", () => {
       });
 
       expect(FinishedGoodsStockBalanceRepository.upsertIncrement).toHaveBeenCalledWith(
-        {},
+        tx,
         {
           companyId: "co-1",
           productId: "prod-1",
@@ -167,7 +177,7 @@ describe("recordInventoryTransaction", () => {
     });
 
     it("defaults warehouseLocationId to null on the FG key when the ledger-level one is omitted (the 'unassigned/staging' bucket)", async () => {
-      await recordInventoryTransaction({} as never, actor, {
+      await recordInventoryTransaction(tx as never, actor, {
         ...baseInput,
         quantity: 25,
         productVariantId: "var-1",
@@ -175,14 +185,14 @@ describe("recordInventoryTransaction", () => {
       });
 
       expect(FinishedGoodsStockBalanceRepository.upsertIncrement).toHaveBeenCalledWith(
-        {},
+        tx,
         expect.objectContaining({ warehouseLocationId: null }),
         25
       );
     });
 
     it("uses the guarded decrement for a negative quantity against the FG balance too, not a plain upsert", async () => {
-      await recordInventoryTransaction({} as never, actor, {
+      await recordInventoryTransaction(tx as never, actor, {
         ...baseInput,
         quantity: -10,
         productVariantId: "var-1",
@@ -190,7 +200,7 @@ describe("recordInventoryTransaction", () => {
       });
 
       expect(FinishedGoodsStockBalanceRepository.guardedDecrement).toHaveBeenCalledWith(
-        {},
+        tx,
         expect.objectContaining({ productVariantId: "var-1", stockStatus: "SALEABLE" }),
         10,
         expect.closeTo(10, 3)
@@ -206,7 +216,7 @@ describe("recordInventoryTransaction", () => {
       vi.mocked(FinishedGoodsStockBalanceRepository.guardedDecrement).mockResolvedValue({ count: 0 } as never);
 
       await expect(
-        recordInventoryTransaction({} as never, actor, {
+        recordInventoryTransaction(tx as never, actor, {
           ...baseInput,
           quantity: -10,
           productVariantId: "var-1",
@@ -219,7 +229,7 @@ describe("recordInventoryTransaction", () => {
       vi.mocked(StockBalanceRepository.guardedDecrement).mockResolvedValue({ count: 0 } as never);
 
       await expect(
-        recordInventoryTransaction({} as never, actor, {
+        recordInventoryTransaction(tx as never, actor, {
           ...baseInput,
           quantity: -10,
           productVariantId: "var-1",
@@ -321,5 +331,60 @@ describe("listStockBalances — real per-location breakdown, opt-in (2026-09-05,
     const result = await listStockBalances("co-1", listQuery, {}, { includeLocationBreakdown: true });
 
     expect(result.data[0]).toMatchObject({ locations: [] });
+  });
+});
+
+// Colour-wise raw-material stock (2026-10-21).
+describe("recordInventoryTransaction — colour balances", () => {
+  beforeEach(() => {
+    vi.mocked(InventoryScopeRepository.findProductCompanyId).mockResolvedValue({ companyId: "co-1" } as never);
+    vi.mocked(InventoryScopeRepository.findWarehouseCompanyId).mockResolvedValue({ companyId: "co-1" } as never);
+  });
+  const key = { companyId: "co-1", productId: "prod-1", warehouseId: "wh-1" };
+
+  it("adds a coloured receipt to that colour's balance and stores the colour on the ledger row", async () => {
+    await recordInventoryTransaction(tx as never, actor, { ...baseInput, quantity: 25, colorId: "col-red" });
+
+    expect(InventoryTransactionRepository.create).toHaveBeenCalledWith(tx, expect.objectContaining({ colorId: "col-red" }));
+    expect(tx.stockColorBalance.upsert).toHaveBeenCalledWith({
+      where: { companyId_productId_warehouseId_colorId: { ...key, colorId: "col-red" } },
+      create: { ...key, colorId: "col-red", quantityOnHand: 25 },
+      update: { quantityOnHand: { increment: 25 } },
+    });
+  });
+
+  it("refuses a coloured issue larger than that colour holds", async () => {
+    tx.stockColorBalance.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(recordInventoryTransaction(tx as never, actor, { ...baseInput, quantity: -10, colorId: "col-red" })).rejects.toMatchObject({
+      code: "INSUFFICIENT_STOCK_FOR_MOVEMENT",
+    });
+    expect(tx.stockColorBalance.updateMany).toHaveBeenCalledWith({
+      where: { ...key, colorId: "col-red", quantityOnHand: { gte: 10 - 0.0001 } },
+      data: { quantityOnHand: { decrement: 10 } },
+    });
+  });
+
+  it("an uncoloured issue takes 'No colour' stock first, then the largest colour", async () => {
+    // After the issue the warehouse holds 30; Red 25 + Green 15 = 40 coloured -> 10 must come out of colours.
+    tx.stockBalance.findFirst.mockResolvedValue({ quantityOnHand: 30 });
+    tx.stockColorBalance.findMany.mockResolvedValue([
+      { id: "row-red", quantityOnHand: 25 },
+      { id: "row-green", quantityOnHand: 15 },
+    ]);
+
+    await recordInventoryTransaction(tx as never, actor, { ...baseInput, quantity: -20 });
+
+    expect(tx.stockColorBalance.update).toHaveBeenCalledTimes(1);
+    expect(tx.stockColorBalance.update).toHaveBeenCalledWith({ where: { id: "row-red" }, data: { quantityOnHand: { decrement: 10 } } });
+  });
+
+  it("an uncoloured issue covered by 'No colour' stock leaves colours untouched", async () => {
+    tx.stockBalance.findFirst.mockResolvedValue({ quantityOnHand: 50 });
+    tx.stockColorBalance.findMany.mockResolvedValue([{ id: "row-red", quantityOnHand: 25 }]);
+
+    await recordInventoryTransaction(tx as never, actor, { ...baseInput, quantity: -20 });
+
+    expect(tx.stockColorBalance.update).not.toHaveBeenCalled();
   });
 });

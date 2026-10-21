@@ -16,6 +16,7 @@ vi.mock("./inventory.service", () => ({
   getAvailableQuantity: vi.fn(),
   getFinishedGoodsSaleableQuantity: vi.fn(),
   getRawMaterialStockByLocation: vi.fn(),
+  getStockColorBreakdown: vi.fn(),
   recordInventoryTransaction: vi.fn(),
 }));
 vi.mock("./stock-movement.repository", () => ({
@@ -47,7 +48,7 @@ vi.mock("@/core/fg-inventory-settings/FgInventorySettingsService", async () => {
 });
 
 const { generateDocumentNumber } = await import("@/core/numbering/DocumentNumberingService");
-const { getAvailableQuantity, getFinishedGoodsSaleableQuantity, getRawMaterialStockByLocation, recordInventoryTransaction } = await import(
+const { getAvailableQuantity, getFinishedGoodsSaleableQuantity, getRawMaterialStockByLocation, getStockColorBreakdown, recordInventoryTransaction } = await import(
   "./inventory.service"
 );
 const { prisma } = await import("@/core/db/client");
@@ -67,6 +68,8 @@ const actor = { companyId: "co-1", userId: "user-1", branchId: "br-1" };
 const BASE_UOM = { id: "uom-1", baseUnitId: null, conversionFactor: 1 };
 
 beforeEach(() => {
+  // Default: all stock is uncoloured ("No colour"), as before colour tracking.
+  vi.mocked(getStockColorBreakdown).mockReset().mockResolvedValue({ onHand: 1000, colors: [], noColorQuantity: 1000 });
   vi.mocked(generateDocumentNumber).mockReset().mockResolvedValue("STK-2026-00001");
   vi.mocked(getAvailableQuantity).mockReset();
   vi.mocked(getFinishedGoodsSaleableQuantity).mockReset();
@@ -923,5 +926,70 @@ describe("receiveStockMovement", () => {
 
     await expect(receiveStockMovement(actor, "sm-1", allPicked)).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
     expect(recordInventoryTransaction).not.toHaveBeenCalled();
+  });
+});
+
+// Colour-wise raw-material stock (2026-10-21).
+describe("createStockMovement — colour", () => {
+  it("refuses to move more of a colour than that colour holds", async () => {
+    vi.mocked(getAvailableQuantity).mockResolvedValue(50);
+    vi.mocked(getStockColorBreakdown).mockResolvedValue({ onHand: 50, colors: [{ colorId: "col-red", colorName: "Red", quantity: 4 }], noColorQuantity: 46 });
+
+    await expect(
+      createStockMovement(actor, {
+        movementType: "RETURN_TO_SUPPLIER",
+        warehouseId: "wh-a",
+        supplierId: "sup-1",
+        items: [{ productId: "mat-1", uomId: "uom-1", quantity: 10, remarks: "", colorId: "col-red" }],
+      } as never)
+    ).rejects.toMatchObject({ code: "INSUFFICIENT_STOCK_FOR_MOVEMENT", message: expect.stringContaining("in Red") });
+  });
+
+  it("an uncoloured line can only move 'No colour' stock", async () => {
+    vi.mocked(getAvailableQuantity).mockResolvedValue(50);
+    vi.mocked(getStockColorBreakdown).mockResolvedValue({ onHand: 50, colors: [{ colorId: "col-red", colorName: "Red", quantity: 45 }], noColorQuantity: 5 });
+
+    await expect(
+      createStockMovement(actor, {
+        movementType: "TRANSFER",
+        warehouseId: "wh-a",
+        toWarehouseId: "wh-b",
+        items: [{ productId: "mat-1", uomId: "uom-1", quantity: 10, remarks: "" }],
+      } as never)
+    ).rejects.toMatchObject({ code: "INSUFFICIENT_STOCK_FOR_MOVEMENT", message: expect.stringContaining("No colour") });
+  });
+
+  it("posts the line's colour — a positive adjustment tags stock with a colour", async () => {
+    await createStockMovement(actor, {
+      movementType: "ADJUSTMENT",
+      warehouseId: "wh-a",
+      reason: "Tag colour",
+      items: [{ productId: "mat-1", uomId: "uom-1", quantity: 10, remarks: "", colorId: "col-green" }],
+    } as never);
+
+    expect(recordInventoryTransaction).toHaveBeenCalledWith(expect.anything(), actor, expect.objectContaining({ quantity: 10, colorId: "col-green" }));
+    expect(StockMovementRepository.createWithItems).toHaveBeenCalledWith(expect.anything(), expect.anything(), [
+      expect.objectContaining({ colorId: "col-green" }),
+    ]);
+  });
+
+  it("receiving a transfer posts the destination side in the line's colour", async () => {
+    vi.mocked(StockMovementRepository.findByIdWithDetails).mockResolvedValue({
+      id: "sm-9",
+      companyId: "co-1",
+      branchId: "br-1",
+      movementType: "TRANSFER",
+      status: "IN_TRANSIT",
+      warehouseId: "wh-a",
+      toWarehouseId: "wh-b",
+      toWarehouse: { name: "B" },
+      items: [{ id: "item-1", productId: "mat-1", uomId: "uom-1", quantity: "3", colorId: "col-red", product: { styleName: "Cotton" } }],
+    } as never);
+    vi.mocked(prisma.warehouseLocation.findMany).mockResolvedValue([{ id: "loc-b1" }] as never);
+    txMock.stockMovement.updateMany.mockResolvedValue({ count: 1 });
+
+    await receiveStockMovement(actor, "sm-9", { items: [{ itemId: "item-1", toWarehouseLocationId: "loc-b1" }] });
+
+    expect(recordInventoryTransaction).toHaveBeenCalledWith(txMock, actor, expect.objectContaining({ warehouseId: "wh-b", quantity: 3, colorId: "col-red" }));
   });
 });

@@ -35,6 +35,9 @@ export const stockMovementItemSchema = z.object({
   // Destination-side location for a Transfer of finished goods -- mirrors
   // warehouseLocationId's own optional-traceability-only shape.
   toWarehouseLocationId: z.string().uuid().optional().or(z.literal("")),
+  // Colour-wise raw-material stock (2026-10-21): the colour of the stock
+  // moved; empty = "No colour". Raw material only.
+  colorId: z.string().uuid().optional().or(z.literal("")),
 });
 export type StockMovementItemInput = z.infer<typeof stockMovementItemSchema>;
 
@@ -108,6 +111,10 @@ export const createStockMovementSchema = z
   })
   .refine((input) => input.itemFamily !== "RAW_MATERIAL" || input.items.every((item) => !item.productVariantId), {
     message: "A colour/size variant cannot be set on a raw-material stock movement line.",
+    path: ["items"],
+  })
+  .refine((input) => input.itemFamily !== "FINISHED_GOODS" || input.items.every((item) => !item.colorId), {
+    message: "A colour can only be set on a raw-material stock movement line.",
     path: ["items"],
   })
   .refine((input) => input.itemFamily !== "FINISHED_GOODS" || input.movementType !== "RETURN_TO_SUPPLIER", {

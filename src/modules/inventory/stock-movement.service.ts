@@ -9,7 +9,13 @@ import { convertUomQuantity } from "@/lib/uom-conversion";
 import { LookupRepository } from "@/modules/lookups/lookup.repository";
 import { ProductRepository, ProductVariantRepository } from "@/modules/products/product.repository";
 import { StockMovementStatus, StockMovementType, type Prisma } from "@prisma/client";
-import { getAvailableQuantity, getFinishedGoodsSaleableQuantity, getRawMaterialStockByLocation, recordInventoryTransaction } from "./inventory.service";
+import {
+  getAvailableQuantity,
+  getFinishedGoodsSaleableQuantity,
+  getRawMaterialStockByLocation,
+  getStockColorBreakdown,
+  recordInventoryTransaction,
+} from "./inventory.service";
 import { getFgInventorySettings, adjustmentNeedsApproval } from "@/core/fg-inventory-settings/FgInventorySettingsService";
 import { StockMovementRepository } from "./stock-movement.repository";
 import type { CreateStockMovementInput, ReceiveStockMovementInput } from "./stock-movement.schema";
@@ -285,6 +291,22 @@ export async function createStockMovement(actor: ActorContext, input: CreateStoc
         { productId: item.productId, warehouseId: input.warehouseId, available, requested: removedQuantity }
       );
     }
+    // Raw material in a specific colour (or "No colour"): that colour must
+    // hold enough (2026-10-21).
+    if (removesStock && !isFinishedGoods) {
+      const byColor = await getStockColorBreakdown(actor.companyId, item.productId, input.warehouseId);
+      const colorAvailable = item.colorId
+        ? (byColor.colors.find((c) => c.colorId === item.colorId)?.quantity ?? 0)
+        : byColor.noColorQuantity;
+      if (removedQuantity > colorAvailable + 1e-6) {
+        const colorName = item.colorId ? (byColor.colors.find((c) => c.colorId === item.colorId)?.colorName ?? "this colour") : "No colour";
+        throw new BusinessRuleError(
+          "INSUFFICIENT_STOCK_FOR_MOVEMENT",
+          `Cannot move ${removedQuantity} of this material in ${colorName} — only ${colorAvailable} is in that colour at the selected warehouse.`,
+          { productId: item.productId, colorId: item.colorId || null, available: colorAvailable, requested: removedQuantity }
+        );
+      }
+    }
     // Raw material taken out of a specific location: that location must hold
     // it (2026-10-21 — the Send page lists only locations holding the material).
     if (removesStock && !isFinishedGoods && item.warehouseLocationId) {
@@ -367,6 +389,7 @@ export async function createStockMovement(actor: ActorContext, input: CreateStoc
           // Raw-material Transfer: the destination location is picked by the
           // receiver, never on the Send page.
           toWarehouseLocationId: isSendOnlyTransfer ? null : item.toWarehouseLocationId || null,
+          colorId: isFinishedGoods ? null : item.colorId || null,
         }))
       );
 
@@ -377,7 +400,9 @@ export async function createStockMovement(actor: ActorContext, input: CreateStoc
         // recordInventoryTransaction() call below only for a Finished Goods
         // document; `{}` for raw material, so those calls are byte-for-byte
         // identical to before this task.
-        const fgFields = isFinishedGoods ? { productVariantId: item.productVariantId!, stockStatus: "SALEABLE" as const } : {};
+        const fgFields = isFinishedGoods
+          ? { productVariantId: item.productVariantId!, stockStatus: "SALEABLE" as const }
+          : { colorId: item.colorId || null };
 
         if (input.movementType === "TRANSFER") {
           // One document, two ledger entries — stock leaves the source and
@@ -546,6 +571,7 @@ export async function receiveStockMovement(actor: ActorContext, id: string, inpu
         referenceModule: "STOCK_MOVEMENT",
         referenceRecordId: movement.id,
         warehouseLocationId: toWarehouseLocationId,
+        colorId: item.colorId,
       });
     }
   });

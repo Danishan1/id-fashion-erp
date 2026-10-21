@@ -70,6 +70,21 @@ function formatRollLabel(r: { rollNumber: string; dye: { name: string; pantone: 
     .join(" · ");
 }
 
+interface ColorStock {
+  onHand: number;
+  colors: Array<{ colorId: string; colorName: string; quantity: number }>;
+  noColorQuantity: number;
+}
+
+/** "No colour 96.5 · Red 4" — the stock in colours other than `exceptColorId`. */
+function otherColorsLabel(stock: ColorStock, exceptColorId: string | null, uomCode: string) {
+  const parts = [
+    ...(stock.noColorQuantity > 0 ? [`No colour ${stock.noColorQuantity}`] : []),
+    ...stock.colors.filter((c) => c.colorId !== exceptColorId).map((c) => `${c.colorName} ${c.quantity}`),
+  ];
+  return parts.length > 0 ? `${parts.join(" · ")} ${uomCode}` : null;
+}
+
 interface LineRow {
   id: string;
   requestedQuantity: string;
@@ -78,7 +93,10 @@ interface LineRow {
   remainingQuantity: number;
   purchaseOrderedQuantity: number;
   availableToOrderQuantity: number;
+  /** For a line with a colour: stock in that colour only (2026-10-21). */
   availableStockQuantity: number;
+  /** The material's stock at the request's warehouse split by colour. */
+  stockByColor?: ColorStock;
   damageReason: string | null;
   remarks: string | null;
   material: { id: string; styleName: string; styleCode: string; materialCategory: string | null };
@@ -166,6 +184,11 @@ export function MaterialRequestWorkflowPanel({
   const [substitutingLine, setSubstitutingLine] = useState<LineRow | null>(null);
   const [materials, setMaterials] = useState<MaterialPickerOption[]>([]);
   const [substituteMaterialId, setSubstituteMaterialId] = useState("");
+  // Colour of the substitute stock: "" = not picked yet, "none" = "No colour"
+  // stock, otherwise a colour id — from the colours the chosen material
+  // actually has in stock at this warehouse.
+  const [substituteColorId, setSubstituteColorId] = useState("");
+  const [substituteColorStock, setSubstituteColorStock] = useState<ColorStock | null>(null);
   const [substituteQuantity, setSubstituteQuantity] = useState("");
   const [substituteReason, setSubstituteReason] = useState<"ORIGINAL_MATERIAL_NOT_AVAILABLE" | "QUALITY_ISSUE" | "OTHER">(
     "ORIGINAL_MATERIAL_NOT_AVAILABLE"
@@ -410,6 +433,7 @@ export function MaterialRequestWorkflowPanel({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             substituteMaterialId,
+            substituteColorId: substituteColorId === "none" ? null : substituteColorId,
             quantity: Number(substituteQuantity),
             uomId: substitutingLine.uom.id,
             reason: substituteReason,
@@ -422,6 +446,8 @@ export function MaterialRequestWorkflowPanel({
     if (ok) {
       setSubstitutingLine(null);
       setSubstituteMaterialId("");
+      setSubstituteColorId("");
+      setSubstituteColorStock(null);
       setSubstituteQuantity("");
       setSubstituteRemarks("");
       setSubstituteAutoApprove(false);
@@ -696,6 +722,12 @@ export function MaterialRequestWorkflowPanel({
                     </td>
                     <td className="py-2 pr-3 text-zinc-700 dark:text-zinc-200">
                       {line.availableStockQuantity} {line.uom.code}
+                      {line.color && <span className="ml-1 text-xs text-zinc-500">({line.color.name})</span>}
+                      {line.color && line.stockByColor && otherColorsLabel(line.stockByColor, line.color.id, line.uom.code) && (
+                        <span className="block text-xs text-zinc-500" title="Stock of this material in other colours — issue it via Substitute">
+                          Other: {otherColorsLabel(line.stockByColor, line.color.id, line.uom.code)}
+                        </span>
+                      )}
                       {line.availableStockQuantity <= 0 && (
                         <button
                           type="button"
@@ -731,7 +763,15 @@ export function MaterialRequestWorkflowPanel({
                       <td className="py-2 pr-3 text-xs text-zinc-500">{line.damageReason ?? "—"}</td>
                     )}
                     <td className="py-2 text-right">
-                      {canIssue && line.remainingQuantity > 0 && (
+                      {canIssue && line.remainingQuantity > 0 && line.color && line.availableStockQuantity <= 0 && (
+                        <span
+                          className="cursor-not-allowed text-xs font-medium text-zinc-400 dark:text-zinc-600"
+                          title={`No ${line.color.name} stock at this warehouse — use Substitute (another colour or material), or check other warehouses.`}
+                        >
+                          Issue
+                        </span>
+                      )}
+                      {canIssue && line.remainingQuantity > 0 && !(line.color && line.availableStockQuantity <= 0) && (
                         <button
                           type="button"
                           // Never pre-emptively blocked on zero stock any
@@ -788,6 +828,8 @@ export function MaterialRequestWorkflowPanel({
                           onClick={() => {
                             setSubstitutingLine(line);
                             setSubstituteMaterialId("");
+                            setSubstituteColorId("");
+                            setSubstituteColorStock(null);
                             setSubstituteQuantity("");
                             setSubstituteReason("ORIGINAL_MATERIAL_NOT_AVAILABLE");
                             setSubstituteRemarks("");
@@ -928,12 +970,66 @@ export function MaterialRequestWorkflowPanel({
             <FormField label="Substitute Material" htmlFor="substituteMaterialId" required>
               <MaterialPicker
                 id="substituteMaterialId"
-                materials={materials.filter((m) => m.id !== substitutingLine.material.id)}
+                materials={materials}
                 value={substituteMaterialId}
-                onChange={setSubstituteMaterialId}
+                onChange={(materialId) => {
+                  setSubstituteMaterialId(materialId);
+                  setSubstituteColorId("");
+                  setSubstituteColorStock(null);
+                  if (!materialId) return;
+                  fetch(`/api/v1/inventory/color-stock?productId=${materialId}&warehouseId=${request.warehouse.id}`)
+                    .then((res) => (res.ok ? res.json() : null))
+                    .then((body) => setSubstituteColorStock(body?.data ?? null));
+                }}
                 required
               />
+              <p className="mt-1 text-xs text-zinc-500">
+                The same material in a different colour is allowed — pick it here and choose the colour below.
+              </p>
             </FormField>
+            {substituteMaterialId && (
+              <FormField label="Colour to issue" htmlFor="substituteColorId" required>
+                {(() => {
+                  const sameMaterial = substituteMaterialId === substitutingLine.material.id;
+                  const lineColorId = substitutingLine.color?.id ?? null;
+                  const options = substituteColorStock
+                    ? [
+                        ...(substituteColorStock.noColorQuantity > 0 && !(sameMaterial && lineColorId === null)
+                          ? [{ id: "none", label: `No colour — ${substituteColorStock.noColorQuantity} ${substitutingLine.uom.code}` }]
+                          : []),
+                        ...substituteColorStock.colors
+                          .filter((c) => !(sameMaterial && c.colorId === lineColorId))
+                          .map((c) => ({ id: c.colorId, label: `${c.colorName} — ${c.quantity} ${substitutingLine.uom.code}` })),
+                      ]
+                    : [];
+                  return (
+                    <>
+                      <select
+                        id="substituteColorId"
+                        value={substituteColorId}
+                        onChange={(e) => setSubstituteColorId(e.target.value)}
+                        disabled={!substituteColorStock || options.length === 0}
+                        className={textInputClass()}
+                      >
+                        <option value="">
+                          {!substituteColorStock
+                            ? "Loading stock…"
+                            : options.length === 0
+                              ? `No other stock at ${request.warehouse.name}`
+                              : "— Pick colour —"}
+                        </option>
+                        {options.map((o) => (
+                          <option key={o.id} value={o.id}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="mt-1 text-xs text-zinc-500">Only colours this material has in stock at {request.warehouse.name}.</p>
+                    </>
+                  );
+                })()}
+              </FormField>
+            )}
             <FormField label={`Quantity (${substitutingLine.uom.code})`} htmlFor="substituteQuantity" required>
               <input
                 id="substituteQuantity"
@@ -987,7 +1083,16 @@ export function MaterialRequestWorkflowPanel({
               <button
                 type="button"
                 onClick={submitSubstitute}
-                disabled={isBusy || !substituteMaterialId || !substituteQuantity || Number(substituteQuantity) <= 0}
+                disabled={
+                  isBusy ||
+                  !substituteMaterialId ||
+                  !substituteColorId ||
+                  !substituteQuantity ||
+                  Number(substituteQuantity) <= 0 ||
+                  // The same material only makes sense in another colour.
+                  (substituteMaterialId === substitutingLine.material.id &&
+                    (substituteColorId === "none" ? null : substituteColorId) === (substitutingLine.color?.id ?? null))
+                }
                 className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
               >
                 {isBusy ? "Saving…" : substituteAutoApprove ? "Approve & Issue" : "Propose"}
