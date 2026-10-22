@@ -7,6 +7,8 @@ import { loadEntitySummaryForLabel } from "@/core/barcode/barcode.service";
 import { getCompanyHeaderLines } from "@/core/documents/company-header";
 import { renderBarcodeLabelPdf, barcodeLabelPdfHeaders, type LabelField } from "@/core/documents/barcode-label-pdf";
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 interface RouteContext {
   params: Promise<{ id: string }>;
 }
@@ -90,8 +92,11 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
     await PermissionService.assert(session.user.id, "barcodes", "print");
 
     const { id } = await params;
+    // The link may carry a barcode id (UUID) or the printed code itself
+    // (e.g. a carton's "DSP-2026-00001-C1"); a code must never reach the
+    // UUID id column, which Postgres rejects.
     const barcode =
-      (await BarcodeRepository.findById(session.user.companyId, id)) ??
+      (UUID_PATTERN.test(id) ? await BarcodeRepository.findById(session.user.companyId, id) : null) ??
       (await BarcodeRepository.findActiveByCode(session.user.companyId, id));
     if (!barcode) throw new BusinessRuleError("NOT_FOUND", "Barcode not found.", { id });
 
