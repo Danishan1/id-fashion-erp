@@ -38,6 +38,8 @@ interface ItemRow {
   uom: { code: string };
   warehouse: { name: string };
   warehouseLocation: { code: string } | null;
+  /** The colour the stock was received in (from the PO line). */
+  purchaseOrderItem?: { color: { id: string; name: string } | null } | null;
   rolls: RollRow[];
 }
 
@@ -253,6 +255,9 @@ export function GoodsReceiptDetailPanel({
               <div className="flex items-center justify-between">
                 <p className="text-sm font-medium text-zinc-900 dark:text-zinc-50">
                   {item.product.styleName} <span className="text-xs text-zinc-400">({item.product.styleCode})</span>
+                  <span className="ml-2 text-xs font-normal text-zinc-500">
+                    Colour: {item.purchaseOrderItem?.color?.name ?? "No colour"}
+                  </span>
                 </p>
                 <p className="text-xs text-zinc-500">
                   {item.receivedQuantity} {item.uom.code} received
@@ -297,7 +302,14 @@ export function GoodsReceiptDetailPanel({
                         <td className="py-1.5 pr-3 text-zinc-700 dark:text-zinc-200">{roll.rollQuantity}</td>
                         <td className="py-1.5 pr-3 text-zinc-700 dark:text-zinc-200">{roll.batchNo ?? "—"}</td>
                         <td className="py-1.5 pr-3 text-zinc-500">
-                          {[roll.gsm?.name, roll.dye?.name, roll.weaveType?.name, roll.width?.name, roll.composition?.name]
+                          {[
+                            `Colour: ${item.purchaseOrderItem?.color?.name ?? "No colour"}`,
+                            roll.gsm?.name,
+                            roll.dye?.name,
+                            roll.weaveType?.name,
+                            roll.width?.name,
+                            roll.composition?.name,
+                          ]
                             .filter(Boolean)
                             .join(" · ") || "—"}
                         </td>

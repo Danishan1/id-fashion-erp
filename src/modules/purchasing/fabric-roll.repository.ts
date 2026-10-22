@@ -7,7 +7,7 @@ export const FabricRollRepository = {
   findByIdWithContext: (companyId: string, id: string) =>
     prisma.fabricRoll.findFirst({
       where: { id, companyId },
-      include: { goodsReceiptItem: true },
+      include: { goodsReceiptItem: { include: { purchaseOrderItem: { select: { colorId: true, color: { select: { name: true } } } } } } },
     }),
 
   /** Every physically in-stock roll of this material at this warehouse,
@@ -18,15 +18,18 @@ export const FabricRollRepository = {
    * FabricRoll has no warehouseId of its own), matching
    * getAvailableQuantityByDye()'s already-established join shape. Ordered by
    * dye name (nulls last) so same-shade rolls group together in the picker. */
-  findAvailableForMaterial: (companyId: string, productId: string, warehouseId: string) =>
+  // `colorId` (2026-10-21): only rolls received in that colour (the colour of
+  // the PO line they were received against).
+  findAvailableForMaterial: (companyId: string, productId: string, warehouseId: string, colorId?: string | null) =>
     prisma.fabricRoll.findMany({
       where: {
         companyId,
         status: "IN_STOCK",
         remainingQuantity: { gt: 0 },
-        goodsReceiptItem: { productId, warehouseId },
+        goodsReceiptItem: { productId, warehouseId, ...(colorId ? { purchaseOrderItem: { colorId } } : {}) },
       },
       include: {
+        goodsReceiptItem: { select: { purchaseOrderItem: { select: { color: { select: { id: true, name: true } } } } } },
         dye: { select: { id: true, name: true, pantone: true } },
         gsm: { select: { id: true, name: true } },
         composition: { select: { id: true, name: true } },
@@ -40,9 +43,14 @@ export const FabricRollRepository = {
    * warehouse shows nothing, and the Issue modal's own "Change Warehouse"
    * picker (2026-09-16) once one of those other warehouses is actually
    * chosen. */
-  findAvailableAcrossWarehousesForMaterial: (companyId: string, productId: string) =>
+  findAvailableAcrossWarehousesForMaterial: (companyId: string, productId: string, colorId?: string | null) =>
     prisma.fabricRoll.findMany({
-      where: { companyId, status: "IN_STOCK", remainingQuantity: { gt: 0 }, goodsReceiptItem: { productId } },
+      where: {
+        companyId,
+        status: "IN_STOCK",
+        remainingQuantity: { gt: 0 },
+        goodsReceiptItem: { productId, ...(colorId ? { purchaseOrderItem: { colorId } } : {}) },
+      },
       include: {
         dye: { select: { id: true, name: true, pantone: true } },
         gsm: { select: { id: true, name: true } },

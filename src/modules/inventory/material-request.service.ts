@@ -829,6 +829,14 @@ export async function issueMaterialRequestLine(
         fabricRollId,
       });
     }
+    // A coloured line can only take a roll received in that colour.
+    if (line.colorId && roll.goodsReceiptItem.purchaseOrderItem?.colorId !== line.colorId) {
+      throw new BusinessRuleError(
+        "VALIDATION_ERROR",
+        `Roll ${roll.rollNumber} is ${roll.goodsReceiptItem.purchaseOrderItem?.color?.name ?? "not coloured"}, but this line needs ${line.color?.name ?? "another colour"}. Use Substitute to issue another colour.`,
+        { fabricRollId, colorId: line.colorId }
+      );
+    }
     // The roll's own remainingQuantity and the real StockBalance ledger can
     // drift out of sync (confirmed live on real data — a roll left over
     // from before every issue kept rolls in sync can still show more
@@ -1125,16 +1133,19 @@ export async function getAvailableRollsForLine(actor: ActorContext, lineId: stri
     throw new BusinessRuleError("NOT_FOUND", "Material request line not found.", { id: lineId });
   }
 
+  // A coloured line only lists rolls received in its own colour.
   const rolls = await FabricRollRepository.findAvailableForMaterial(
     actor.companyId,
     line.materialId,
-    warehouseId || line.materialRequest.warehouseId
+    warehouseId || line.materialRequest.warehouseId,
+    line.colorId
   );
 
   return rolls.map((roll) => ({
     id: roll.id,
     rollNumber: roll.rollNumber,
     remainingQuantity: roll.remainingQuantity,
+    color: roll.goodsReceiptItem.purchaseOrderItem?.color ?? null,
     dye: roll.dye,
     gsm: roll.gsm,
     composition: roll.composition,
@@ -1185,7 +1196,7 @@ export async function getOtherWarehouseStockForLine(actor: ActorContext, lineId:
     }>
   >();
   if (isFabric) {
-    const rolls = await FabricRollRepository.findAvailableAcrossWarehousesForMaterial(actor.companyId, line.materialId);
+    const rolls = await FabricRollRepository.findAvailableAcrossWarehousesForMaterial(actor.companyId, line.materialId, line.colorId);
     for (const roll of rolls) {
       const warehouseId = roll.goodsReceiptItem.warehouseId;
       if (warehouseId === requestWarehouseId) continue;
