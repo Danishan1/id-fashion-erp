@@ -806,6 +806,86 @@ export async function getSampleMaterialRequirement(
  * feature — falls straight through to the plain Sample-or-Style base
  * resolution with zero override layer applied.
  */
+/**
+ * The base explosion items for one order line's requirement source — the
+ * linked Sample's current material list if there is one, otherwise the
+ * Style's approved BOM. Built the exact same way
+ * getStyleMaterialRequirement/getSampleMaterialRequirement do internally
+ * (those return an already-exploded result, not the raw item list).
+ */
+async function buildBaseExplosionItems(
+  companyId: string,
+  sampleRequestId: string | null,
+  productId: string
+): Promise<{ items: ExplosionLineItem[]; bomId: string | null }> {
+  if (sampleRequestId) {
+    const sampleMaterials = await SampleMaterialRepository.findLatestVersionMaterialsForRequirement(sampleRequestId);
+    return {
+      bomId: null,
+      items: sampleMaterials.map((m) => ({
+        materialId: m.materialId,
+        colorId: m.colorId,
+        quantityPerUnit: Number(m.plannedQuantity),
+        wastagePercentage: 0,
+        uom: m.uom,
+        material: {
+          styleName: m.material.styleName,
+          styleCode: m.material.styleCode,
+          baseUom: m.material.baseUom,
+          defaultSupplierId: m.material.defaultSupplierId,
+          unitCost: m.material.unitCost,
+        },
+      })),
+    };
+  }
+  const bom = await BomRepository.findByProductId(companyId, productId);
+  const approvedItems = bom?.approvedVersion?.items ?? [];
+  return {
+    bomId: bom?.id ?? null,
+    items: approvedItems.map((item) => ({
+      materialId: item.materialId,
+      colorId: item.colorId,
+      quantityPerUnit: Number(item.quantityPerUnit),
+      wastagePercentage: Number(item.wastagePercentage),
+      uom: item.uom,
+      material: {
+        styleName: item.material.styleName,
+        styleCode: item.material.styleCode,
+        baseUom: item.material.baseUom,
+        defaultSupplierId: item.material.defaultSupplierId,
+        unitCost: item.material.unitCost,
+      },
+    })),
+  };
+}
+
+/**
+ * The individual (not aggregated) Effective-BOM lines for one order line —
+ * the same source and snapshot/override layering getMaterialRequirementForOrderLine
+ * uses, before explosion. Used by the Production Order's colour-wise fabric
+ * plan, which needs each fabric line and its garment-colour filter
+ * (`colorId`) rather than per-material totals.
+ */
+export async function getEffectiveExplosionItemsForOrderLine(
+  companyId: string,
+  args: { salesOrderItemId: string | null | undefined; productId: string }
+): Promise<ExplosionLineItem[]> {
+  let sampleRequestId: string | null = null;
+  let salesOrderLineId: string | null = null;
+  if (args.salesOrderItemId) {
+    const item = await prisma.salesOrderItem.findFirst({
+      where: { id: args.salesOrderItemId, salesOrder: { companyId } },
+      select: { sampleRequestId: true, salesOrderLineId: true },
+    });
+    sampleRequestId = item?.sampleRequestId ?? null;
+    salesOrderLineId = item?.salesOrderLineId ?? null;
+  }
+  const { items } = await buildBaseExplosionItems(companyId, sampleRequestId, args.productId);
+  if (!salesOrderLineId) return items;
+  const lineSnapshots = await fetchSalesOrderLineSnapshots(companyId, [salesOrderLineId]);
+  return applyEffectiveBomResolution({ explosionItems: items, emptySourceReason: "" }, lineSnapshots.get(salesOrderLineId)).explosionItems;
+}
+
 export async function getMaterialRequirementForOrderLine(
   companyId: string,
   args: { salesOrderItemId: string | null | undefined; productId: string; quantity: number }
@@ -831,49 +911,7 @@ export async function getMaterialRequirementForOrderLine(
       : getStyleMaterialRequirement(companyId, args.productId, args.quantity);
   }
 
-  // Resolve the base explosion items the exact same way
-  // getStyleMaterialRequirement/getSampleMaterialRequirement do internally —
-  // duplicated here (not delegated) because those two functions return an
-  // already-exploded numeric result, not the raw item list this function
-  // needs to layer a snapshot/override on top of before exploding once.
-  let baseExplosionItems: ExplosionLineItem[];
-  let bomId: string | null = null;
-
-  if (sampleRequestId) {
-    const sampleMaterials = await SampleMaterialRepository.findLatestVersionMaterialsForRequirement(sampleRequestId);
-    baseExplosionItems = sampleMaterials.map((m) => ({
-      materialId: m.materialId,
-      colorId: m.colorId,
-      quantityPerUnit: Number(m.plannedQuantity),
-      wastagePercentage: 0,
-      uom: m.uom,
-      material: {
-        styleName: m.material.styleName,
-        styleCode: m.material.styleCode,
-        baseUom: m.material.baseUom,
-        defaultSupplierId: m.material.defaultSupplierId,
-        unitCost: m.material.unitCost,
-      },
-    }));
-  } else {
-    const bom = await BomRepository.findByProductId(companyId, args.productId);
-    bomId = bom?.id ?? null;
-    const approvedItems = bom?.approvedVersion?.items ?? [];
-    baseExplosionItems = approvedItems.map((item) => ({
-      materialId: item.materialId,
-      colorId: item.colorId,
-      quantityPerUnit: Number(item.quantityPerUnit),
-      wastagePercentage: Number(item.wastagePercentage),
-      uom: item.uom,
-      material: {
-        styleName: item.material.styleName,
-        styleCode: item.material.styleCode,
-        baseUom: item.material.baseUom,
-        defaultSupplierId: item.material.defaultSupplierId,
-        unitCost: item.material.unitCost,
-      },
-    }));
-  }
+  const { items: baseExplosionItems, bomId } = await buildBaseExplosionItems(companyId, sampleRequestId, args.productId);
 
   const lineSnapshots = await fetchSalesOrderLineSnapshots(companyId, [salesOrderLineId]);
   const { explosionItems } = applyEffectiveBomResolution({ explosionItems: baseExplosionItems, emptySourceReason: "" }, lineSnapshots.get(salesOrderLineId));

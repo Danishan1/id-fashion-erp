@@ -16,6 +16,7 @@ import { assignedLotWhere, assignedProductionOrderWhere, getProductionRecordScop
 import { LotRepository, ProductionOrderRepository } from "./production.repository";
 import { getProductionOrderProgress } from "./production-progress.service";
 import { materialRequestScopeForOrder } from "./material-request-scope";
+import { buildFabricRequestLines, getColorFabricPlan } from "./color-fabric-plan.service";
 import type { AddExtraProductionQuantityInput, CreateProductionOrderInput, GenerateMaterialRequestInput } from "./production.schema";
 
 const EPSILON = 0.0001;
@@ -337,13 +338,31 @@ export async function generateMaterialRequestForOrder(actor: ActorContext, id: s
   // for materials short in stock, so a fully-stocked material could never be
   // requested (and so never issued) — which the lot material gate now needs.
   const alreadyRequested = await sumRequestedByMaterialForOrder(actor.companyId, id, order.salesOrderItemId);
-  const lines = requirement.materials
-    .map((m) => ({
-      materialId: m.materialId,
-      uomId: m.uomId,
-      requestedQuantity: Math.round((m.neededQuantity - (alreadyRequested.get(m.materialId) ?? 0)) * 10000) / 10000,
-    }))
-    .filter((l) => l.requestedQuantity > EPSILON);
+
+  // Colour-wise fabric (2026-10-21): when the order has garment colours and
+  // its BOM has fabric, the fabric lines come from the colour plan (chosen
+  // fabric + fabric colour per garment colour) — blocked until it's complete.
+  const colorPlan = await getColorFabricPlan(actor.companyId, id);
+  const planFabricIds = new Set(colorPlan.applies ? colorPlan.rows.map((r) => r.bomMaterialId) : []);
+  const fabricLines = colorPlan.applies
+    ? await buildFabricRequestLines(
+        actor.companyId,
+        colorPlan,
+        await sumRequestedByMaterialAndColorForOrder(actor.companyId, id, order.salesOrderItemId)
+      )
+    : [];
+
+  const lines = [
+    ...requirement.materials
+      .filter((m) => !planFabricIds.has(m.materialId))
+      .map((m) => ({
+        materialId: m.materialId,
+        uomId: m.uomId,
+        requestedQuantity: Math.round((m.neededQuantity - (alreadyRequested.get(m.materialId) ?? 0)) * 10000) / 10000,
+      }))
+      .filter((l) => l.requestedQuantity > EPSILON),
+    ...fabricLines,
+  ];
 
   if (lines.length === 0) {
     throw new BusinessRuleError(
@@ -362,6 +381,29 @@ export async function generateMaterialRequestForOrder(actor: ActorContext, id: s
     bomId: requirement.bomId ?? undefined,
     lines,
   });
+}
+
+/** Same as sumRequestedByMaterialForOrder, keyed `${materialId}:${colorId}` (colorId "null" when the line has none) — for the colour-wise fabric lines. */
+async function sumRequestedByMaterialAndColorForOrder(companyId: string, productionOrderId: string, salesOrderItemId: string | null) {
+  const scope = await materialRequestScopeForOrder(companyId, productionOrderId, salesOrderItemId);
+  const lines = await prisma.materialRequestItem.findMany({
+    where: { materialRequest: { ...scope, status: { not: "CANCELLED" } } },
+    select: {
+      materialId: true,
+      colorId: true,
+      requestedQuantity: true,
+      uom: { select: { id: true, baseUnitId: true, conversionFactor: true } },
+      material: { select: { baseUom: { select: { id: true, baseUnitId: true, conversionFactor: true } } } },
+    },
+  });
+  const byKey = new Map<string, number>();
+  for (const line of lines) {
+    const base = line.material.baseUom;
+    const qty = base ? convertUomQuantity(Number(line.requestedQuantity), line.uom, base) ?? 0 : Number(line.requestedQuantity);
+    const key = `${line.materialId}:${line.colorId}`;
+    byKey.set(key, (byKey.get(key) ?? 0) + qty);
+  }
+  return byKey;
 }
 
 /** Everything already requested for this order (non-cancelled requests), per material, in its base unit. */

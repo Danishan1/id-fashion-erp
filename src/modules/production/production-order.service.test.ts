@@ -7,6 +7,10 @@ vi.mock("./material-request-scope", () => ({
   materialRequestScopeForOrder: vi.fn(async (companyId: string, productionOrderId: string) => ({ companyId, OR: [{ productionOrderId }] })),
 }));
 vi.mock("@/modules/bom-mrp/mrp.service", () => ({ getMaterialRequirementForOrderLine: vi.fn() }));
+vi.mock("./color-fabric-plan.service", () => ({
+  getColorFabricPlan: vi.fn().mockResolvedValue({ applies: false, reason: "n/a", rows: [], isComplete: true, incompleteColors: [] }),
+  buildFabricRequestLines: vi.fn(),
+}));
 vi.mock("./production-progress.service", () => ({ getProductionOrderProgress: vi.fn() }));
 vi.mock("./dispatch-readiness.service", () => ({
   attachDispatchReadiness: vi.fn(async (_companyId: string, orders: Array<Record<string, unknown>>) =>
@@ -724,5 +728,68 @@ describe("releaseProductionOrderToDispatch / revokeProductionOrderDispatchReleas
       releasedToDispatchAt: null,
       releasedToDispatchByUserId: null,
     });
+  });
+});
+
+// Colour-wise fabric plan (2026-10-21): when it applies, fabric lines come
+// from the plan and Request Material is blocked until it is complete.
+const { getColorFabricPlan, buildFabricRequestLines } = await import("./color-fabric-plan.service");
+
+describe("generateMaterialRequestForOrder — colour-wise fabric plan", () => {
+  const plan = {
+    applies: true,
+    reason: null,
+    isComplete: true,
+    incompleteColors: [],
+    rows: [{ bomMaterialId: "fabric-1" }],
+  };
+
+  beforeEach(() => {
+    vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue({ id: "po-1", productId: "prod-1", plannedQuantity: 100, salesOrderItemId: "soi-1" } as never);
+    vi.mocked(createMaterialRequest).mockReset().mockResolvedValue({ id: "mr-1" } as never);
+    vi.mocked(prisma.materialRequestItem.findMany).mockResolvedValue([] as never);
+    vi.mocked(getMaterialRequirementForOrderLine).mockResolvedValue({
+      hasApprovedBom: true,
+      bomId: "bom-1",
+      sampleRequestId: null,
+      materials: [
+        { materialId: "fabric-1", uomId: "mtr", neededQuantity: 150 },
+        { materialId: "thread-1", uomId: "pcs", neededQuantity: 100 },
+      ],
+      unconvertibleLines: [],
+    } as never);
+  });
+
+  it("replaces the BOM fabric with the plan's fabric + fabric-colour lines", async () => {
+    vi.mocked(getColorFabricPlan).mockResolvedValue(plan as never);
+    vi.mocked(buildFabricRequestLines).mockResolvedValue([
+      { materialId: "fabric-1", colorId: "col-red", uomId: "mtr", requestedQuantity: 90 },
+      { materialId: "fabric-2", colorId: "col-blue", uomId: "mtr", requestedQuantity: 60 },
+    ]);
+
+    await generateMaterialRequestForOrder(actor, "po-1", { warehouseId: "wh-1" });
+
+    expect(createMaterialRequest).toHaveBeenCalledWith(
+      actor,
+      expect.objectContaining({
+        lines: [
+          { materialId: "thread-1", uomId: "pcs", requestedQuantity: 100 },
+          { materialId: "fabric-1", colorId: "col-red", uomId: "mtr", requestedQuantity: 90 },
+          { materialId: "fabric-2", colorId: "col-blue", uomId: "mtr", requestedQuantity: 60 },
+        ],
+      })
+    );
+  });
+
+  it("is blocked when a garment colour has no fabric colour yet", async () => {
+    vi.mocked(getColorFabricPlan).mockResolvedValue({ ...plan, isComplete: false, incompleteColors: ["Red"] } as never);
+    const actual = await vi.importActual<typeof import("./color-fabric-plan.service")>("./color-fabric-plan.service");
+    vi.mocked(buildFabricRequestLines).mockImplementation(actual.buildFabricRequestLines);
+
+    await expect(generateMaterialRequestForOrder(actor, "po-1", { warehouseId: "wh-1" })).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("missing: Red"),
+    });
+    expect(createMaterialRequest).not.toHaveBeenCalled();
   });
 });

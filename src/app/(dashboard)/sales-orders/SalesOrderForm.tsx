@@ -13,6 +13,7 @@ interface Option {
   id: string;
   name?: string;
   styleName?: string;
+  isActive?: boolean;
 }
 
 interface StyleOption extends Option {
@@ -70,7 +71,12 @@ interface LineItem {
   sampleRequestId: string;
   unitPrice: string;
   notes: string;
+  // Every variant the Style has (lookup only) — the grid itself shows just
+  // the colours/sizes chosen for THIS order line (colorIds/sizeIds), so a new
+  // order never starts with the colours/sizes of earlier orders (2026-10-21).
   variants: VariantOption[];
+  colorIds: string[];
+  sizeIds: string[];
   quantities: Record<string, string>;
   // Effective BOM (2026-09-24) — the stable SalesOrderLine this item
   // reuses on save, so its own frozen BOM/Sample snapshot and any active
@@ -84,7 +90,7 @@ interface LineItem {
 const TODAY = todayIsoDate();
 
 function emptyLine(): LineItem {
-  return { productId: "", sampleRequestId: "", unitPrice: "", notes: "", variants: [], quantities: {} };
+  return { productId: "", sampleRequestId: "", unitPrice: "", notes: "", variants: [], colorIds: [], sizeIds: [], quantities: {} };
 }
 
 export interface InitialOrderItem {
@@ -154,6 +160,8 @@ export function SalesOrderForm({
           unitPrice: item.unitPrice,
           notes: item.notes ?? "",
           variants: [],
+          colorIds: [],
+          sizeIds: [],
           quantities: Object.fromEntries(item.breakdown.map((b) => [b.productVariantId, String(b.orderedQuantity)])),
           salesOrderLineId: item.salesOrderLineId ?? undefined,
         }))
@@ -217,7 +225,7 @@ export function SalesOrderForm({
     // sample's cost/unit text; the stale Unit Price blocked the new style's
     // own Last Order Price from auto-filling, since that only fills an
     // empty field). Reset all of it so the new style starts clean.
-    updateItem(index, { productId, sampleRequestId: "", unitPrice: "", variants: [], quantities: {} });
+    updateItem(index, { productId, sampleRequestId: "", unitPrice: "", variants: [], colorIds: [], sizeIds: [], quantities: {} });
     setHighlightVariantId((prev) => {
       const next = { ...prev };
       delete next[index];
@@ -252,25 +260,112 @@ export function SalesOrderForm({
    */
   const applySampleVariantDefault = async (index: number, sample: SampleOption, currentVariants: VariantOption[], productId: string) => {
     if (!sample.color || !sample.size) return;
+    const colorId = sample.color.id;
+    const sizeId = sample.size.id;
 
-    const existing = currentVariants.find((v) => v.color.id === sample.color!.id && v.size.id === sample.size!.id);
+    // The sample's own colour/size also become this line's starting grid.
+    setItems((prev) =>
+      prev.map((it, i) =>
+        i === index
+          ? {
+              ...it,
+              colorIds: it.colorIds.includes(colorId) ? it.colorIds : [...it.colorIds, colorId],
+              sizeIds: it.sizeIds.includes(sizeId) ? it.sizeIds : [...it.sizeIds, sizeId],
+            }
+          : it
+      )
+    );
+
+    const existing = currentVariants.find((v) => v.color.id === colorId && v.size.id === sizeId);
     if (existing) {
       setHighlightVariantId((prev) => ({ ...prev, [index]: existing.id }));
       return;
     }
 
-    const res = await fetch(`/api/v1/products/${productId}/variants/bulk`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ colorIds: [sample.color.id], sizeIds: [sample.size.id] }),
-    }).catch(() => null);
-    if (!res || !res.ok) return; // e.g. an inactive color/size — leave the grid as-is, no forced failure.
-
-    const refreshed = await fetch(`/api/v1/products/${productId}`).then((r) => r.json());
-    const variants: VariantOption[] = refreshed.data?.variants ?? [];
+    const variants = await ensureVariants(productId, [colorId], [sizeId]);
+    if (!variants) return; // e.g. an inactive color/size — leave the grid as-is, no forced failure.
     updateItem(index, { variants });
-    const created = variants.find((v) => v.color.id === sample.color!.id && v.size.id === sample.size!.id);
+    const created = variants.find((v) => v.color.id === colorId && v.size.id === sizeId);
     if (created) setHighlightVariantId((prev) => ({ ...prev, [index]: created.id }));
+  };
+
+  /**
+   * Creates any missing Style variants for these colours x sizes (the bulk
+   * endpoint skips ones that already exist) and returns the Style's full,
+   * refreshed variant list — or null when the server refused (e.g. an
+   * inactive colour/size).
+   */
+  const ensureVariants = async (productId: string, colorIds: string[], sizeIds: string[]): Promise<VariantOption[] | null> => {
+    if (colorIds.length > 0 && sizeIds.length > 0) {
+      const res = await fetch(`/api/v1/products/${productId}/variants/bulk`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-toast": "errors" },
+        body: JSON.stringify({ colorIds, sizeIds }),
+      }).catch(() => null);
+      if (!res || !res.ok) return null;
+    }
+    const refreshed = await fetch(`/api/v1/products/${productId}`).then((r) => r.json());
+    return refreshed.data?.variants ?? [];
+  };
+
+  const [variantError, setVariantError] = useState<Record<number, string>>({});
+
+  /** Adds a colour or size to one order line's grid (its variants are created by the effect below). */
+  const addGridOption = (index: number, kind: "color" | "size", id: string) => {
+    if (!id) return;
+    setItems((prev) =>
+      prev.map((it, i) => {
+        if (i !== index) return it;
+        if (kind === "color") return it.colorIds.includes(id) ? it : { ...it, colorIds: [...it.colorIds, id] };
+        return it.sizeIds.includes(id) ? it : { ...it, sizeIds: [...it.sizeIds, id] };
+      })
+    );
+  };
+
+  // Every colour x size on a line needs a real Style variant to hold a
+  // quantity. Whenever a line's grid has a combination the Style doesn't have
+  // yet, create it (the bulk endpoint skips existing ones) and refresh the
+  // line's variants. `variantRequests` stops the same request firing twice
+  // while one is in flight.
+  const variantRequests = useRef(new Set<string>());
+  useEffect(() => {
+    items.forEach((item, index) => {
+      if (!item.productId) return;
+      const have = new Set(item.variants.map((v) => `${v.color.id}:${v.size.id}`));
+      const missing = item.colorIds.some((c) => item.sizeIds.some((sz) => !have.has(`${c}:${sz}`)));
+      if (!missing) return;
+      const key = `${index}|${item.productId}|${[...item.colorIds].sort().join(",")}|${[...item.sizeIds].sort().join(",")}`;
+      if (variantRequests.current.has(key)) return;
+      variantRequests.current.add(key);
+      const productId = item.productId;
+      ensureVariants(productId, item.colorIds, item.sizeIds).then((variants) => {
+        if (!variants) {
+          // Left in variantRequests on purpose so a refused combination isn't
+          // retried on every keystroke; removing the colour/size clears it.
+          setVariantError((prev) => ({ ...prev, [index]: "Couldn't add that colour/size to the style (it may be inactive)." }));
+          return;
+        }
+        variantRequests.current.delete(key);
+        setVariantError((prev) => ({ ...prev, [index]: "" }));
+        setItems((prev) => prev.map((it, i) => (i === index && it.productId === productId ? { ...it, variants } : it)));
+      });
+    });
+  }, [items]);
+
+  /** Removes a colour or size from one order line's grid and clears its quantities. */
+  const removeGridOption = (index: number, kind: "color" | "size", id: string) => {
+    setItems((prev) =>
+      prev.map((it, i) => {
+        if (i !== index) return it;
+        const removedVariantIds = new Set(it.variants.filter((v) => (kind === "color" ? v.color.id : v.size.id) === id).map((v) => v.id));
+        return {
+          ...it,
+          colorIds: kind === "color" ? it.colorIds.filter((c) => c !== id) : it.colorIds,
+          sizeIds: kind === "size" ? it.sizeIds.filter((sz) => sz !== id) : it.sizeIds,
+          quantities: Object.fromEntries(Object.entries(it.quantities).filter(([variantId]) => !removedVariantIds.has(variantId))),
+        };
+      })
+    );
   };
 
   // Pre-fill each existing line's variant grid when editing, so entered
@@ -281,7 +376,16 @@ export function SalesOrderForm({
     initialOrder?.items.forEach((item, index) => {
       fetch(`/api/v1/products/${item.productId}`)
         .then((res) => res.json())
-        .then((body) => updateItem(index, { variants: body.data?.variants ?? [] }));
+        .then((body) => {
+          const variants: VariantOption[] = body.data?.variants ?? [];
+          // An existing order shows exactly the colours/sizes it was ordered in.
+          const ordered = variants.filter((v) => item.breakdown.some((b) => b.productVariantId === v.id));
+          updateItem(index, {
+            variants,
+            colorIds: Array.from(new Set(ordered.map((v) => v.color.id))),
+            sizeIds: Array.from(new Set(ordered.map((v) => v.size.id))),
+          });
+        });
     });
   }, [initialOrder]);
 
@@ -603,26 +707,36 @@ export function SalesOrderForm({
               </FormField>
             </div>
 
-            {item.productId && item.variants.length === 0 && (
-              <InlineVariantGenerator
-                productId={item.productId}
-                colors={colors}
-                sizes={sizes}
-                onGenerated={(variants) => updateItem(index, { variants })}
-              />
-            )}
-
-            {item.variants.length > 0 && (
+            {item.productId && (
               <div>
                 <label className="block text-xs font-medium text-zinc-500 dark:text-zinc-400">
                   Quantity by Color / Size
                 </label>
-                <VariantQuantityGrid
-                  variants={item.variants}
-                  quantities={item.quantities}
-                  onChange={(patch) => setQuantities(index, patch)}
-                  highlightVariantId={highlightVariantId[index]}
+                <GridOptionPicker
+                  index={index}
+                  colors={colors.filter((c) => c.isActive !== false && !item.colorIds.includes(c.id))}
+                  sizes={sizes.filter((sz) => sz.isActive !== false && !item.sizeIds.includes(sz.id))}
+                  onAdd={(kind, id) => addGridOption(index, kind, id)}
                 />
+                {variantError[index] && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{variantError[index]}</p>}
+                {item.colorIds.length > 0 && item.sizeIds.length > 0 ? (
+                  <VariantQuantityGrid
+                    variants={item.variants}
+                    colors={item.colorIds.map((id) => ({ id, name: colors.find((c) => c.id === id)?.name ?? variantName(item.variants, "color", id) }))}
+                    sizes={sizes
+                      .filter((sz) => item.sizeIds.includes(sz.id))
+                      .concat(item.sizeIds.filter((id) => !sizes.some((sz) => sz.id === id)).map((id) => ({ id, name: variantName(item.variants, "size", id) })))
+                      .map((sz) => ({ id: sz.id, name: sz.name ?? "" }))}
+                    quantities={item.quantities}
+                    onChange={(patch) => setQuantities(index, patch)}
+                    onRemove={(kind, id) => removeGridOption(index, kind, id)}
+                    highlightVariantId={highlightVariantId[index]}
+                  />
+                ) : (
+                  <p className="mt-1.5 text-xs text-zinc-500 dark:text-zinc-400">
+                    Add the colours and sizes for this order above — the grid appears once there is at least one of each.
+                  </p>
+                )}
               </div>
             )}
 
@@ -694,13 +808,20 @@ export function SalesOrderForm({
  */
 function VariantQuantityGrid({
   variants,
+  colors,
+  sizes,
   quantities,
   onChange,
+  onRemove,
   highlightVariantId,
 }: {
   variants: VariantOption[];
+  /** The colours/sizes chosen for this order line, in display order. */
+  colors: Array<{ id: string; name: string }>;
+  sizes: Array<{ id: string; name: string }>;
   quantities: Record<string, string>;
   onChange: (patch: Record<string, string>) => void;
+  onRemove: (kind: "color" | "size", id: string) => void;
   /** The linked sample's own planned color+size, once resolved to a real
    * variant id — a display default only (see applySampleVariantDefault),
    * never a restriction on which other cells can be filled. */
@@ -714,10 +835,6 @@ function VariantQuantityGrid({
     if (highlightVariantId) highlightRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
   }, [highlightVariantId]);
 
-  const colors = Array.from(new Map(variants.map((v) => [v.color.id, v.color])).values());
-  const sizes = Array.from(new Map(variants.map((v) => [v.size.id, v.size])).values()).sort(
-    (a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)
-  );
   const cellByKey = new Map(variants.map((v) => [`${v.color.id}:${v.size.id}`, v]));
 
   const applyRow = (colorId: string) => {
@@ -773,6 +890,15 @@ function VariantQuantityGrid({
                 className="border-b border-zinc-200 px-1.5 py-1.5 text-center font-medium text-zinc-600 dark:border-zinc-800 dark:text-zinc-300"
               >
                 {size.name}
+                <button
+                  type="button"
+                  onClick={() => onRemove("size", size.id)}
+                  title={`Remove size ${size.name} from this order`}
+                  aria-label={`Remove size ${size.name}`}
+                  className="ml-1 text-zinc-400 hover:text-red-600"
+                >
+                  ×
+                </button>
               </th>
             ))}
           </tr>
@@ -810,6 +936,15 @@ function VariantQuantityGrid({
           {colors.map((color) => (
             <tr key={color.id}>
               <th className="truncate border-b border-r border-zinc-100 px-2 py-1.5 text-left font-medium text-zinc-700 dark:border-zinc-800 dark:text-zinc-200">
+                <button
+                  type="button"
+                  onClick={() => onRemove("color", color.id)}
+                  title={`Remove colour ${color.name} from this order`}
+                  aria-label={`Remove colour ${color.name}`}
+                  className="mr-1 text-zinc-400 hover:text-red-600"
+                >
+                  ×
+                </button>
                 {color.name}
               </th>
               <td className="border-b border-r border-zinc-100 px-1 py-1 dark:border-zinc-800">
@@ -866,107 +1001,58 @@ function VariantQuantityGrid({
   );
 }
 
+/** Display name for a colour/size that isn't in the (active) master list any more. */
+function variantName(variants: VariantOption[], kind: "color" | "size", id: string): string {
+  const v = variants.find((x) => (kind === "color" ? x.color.id : x.size.id) === id);
+  return (kind === "color" ? v?.color.name : v?.size.name) ?? "—";
+}
+
 /**
- * Shown instead of the quantity grid when the selected Style has no
- * Color×Size variants generated yet — reuses the exact same
- * `POST /api/v1/products/:id/variants/bulk` endpoint and Color/Size master
- * picker already built for this in Masters → Products → Variants, so a
- * merchandiser doesn't have to leave the order screen to unblock a new style.
+ * "+ Add colour" / "+ Add size" for one order line (2026-10-21). Lists every
+ * active Color/Size master not already on the line; picking one adds it to the
+ * grid (the needed Style variants are created automatically).
  */
-function InlineVariantGenerator({
-  productId,
+function GridOptionPicker({
+  index,
   colors,
   sizes,
-  onGenerated,
+  onAdd,
 }: {
-  productId: string;
+  index: number;
   colors: Option[];
   sizes: Option[];
-  onGenerated: (variants: VariantOption[]) => void;
+  onAdd: (kind: "color" | "size", id: string) => void;
 }) {
-  const [selectedColorIds, setSelectedColorIds] = useState<string[]>([]);
-  const [selectedSizeIds, setSelectedSizeIds] = useState<string[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const toggle = (list: string[], setList: (v: string[]) => void, id: string) => {
-    setList(list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
-  };
-
-  const handleGenerate = async () => {
-    if (selectedColorIds.length === 0 || selectedSizeIds.length === 0) {
-      setError("Select at least one color and one size.");
-      return;
-    }
-    setIsSubmitting(true);
-    setError(null);
-
-    const res = await fetch(`/api/v1/products/${productId}/variants/bulk`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ colorIds: selectedColorIds, sizeIds: selectedSizeIds }),
-    });
-
-    if (!res.ok) {
-      const body = await res.json().catch(() => null);
-      setError(body?.error?.message ?? "Failed to generate variants.");
-      setIsSubmitting(false);
-      return;
-    }
-
-    const refreshed = await fetch(`/api/v1/products/${productId}`).then((r) => r.json());
-    setIsSubmitting(false);
-    onGenerated(refreshed.data?.variants ?? []);
-  };
-
+  const selectClass =
+    "rounded-md border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200";
   return (
-    <div className="rounded-md border border-dashed border-zinc-300 p-3 dark:border-zinc-700">
-      <p className="mb-2 text-xs text-zinc-500 dark:text-zinc-400">
-        This style has no color/size variants yet. Pick some to generate them now — no need to go to Masters first.
-      </p>
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <p className="mb-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">Colors</p>
-          <div className="max-h-28 space-y-1 overflow-y-auto">
-            {colors.length === 0 && <p className="text-xs text-zinc-400">No colors defined yet.</p>}
-            {colors.map((c) => (
-              <label key={c.id} className="flex items-center gap-1.5 text-xs text-zinc-700 dark:text-zinc-300">
-                <input
-                  type="checkbox"
-                  checked={selectedColorIds.includes(c.id)}
-                  onChange={() => toggle(selectedColorIds, setSelectedColorIds, c.id)}
-                />
-                {c.name}
-              </label>
-            ))}
-          </div>
-        </div>
-        <div>
-          <p className="mb-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">Sizes</p>
-          <div className="max-h-28 space-y-1 overflow-y-auto">
-            {sizes.length === 0 && <p className="text-xs text-zinc-400">No sizes defined yet.</p>}
-            {sizes.map((s) => (
-              <label key={s.id} className="flex items-center gap-1.5 text-xs text-zinc-700 dark:text-zinc-300">
-                <input
-                  type="checkbox"
-                  checked={selectedSizeIds.includes(s.id)}
-                  onChange={() => toggle(selectedSizeIds, setSelectedSizeIds, s.id)}
-                />
-                {s.name}
-              </label>
-            ))}
-          </div>
-        </div>
-      </div>
-      <button
-        type="button"
-        onClick={handleGenerate}
-        disabled={isSubmitting}
-        className="mt-2 rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
+    <div className="mt-1.5 flex flex-wrap items-center gap-2">
+      <select
+        aria-label={`Add colour to line ${index + 1}`}
+        value=""
+        onChange={(e) => onAdd("color", e.target.value)}
+        className={selectClass}
       >
-        {isSubmitting ? "Generating…" : "Generate Variants"}
-      </button>
-      {error && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{error}</p>}
+        <option value="">+ Add colour</option>
+        {colors.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.name}
+          </option>
+        ))}
+      </select>
+      <select
+        aria-label={`Add size to line ${index + 1}`}
+        value=""
+        onChange={(e) => onAdd("size", e.target.value)}
+        className={selectClass}
+      >
+        <option value="">+ Add size</option>
+        {sizes.map((sz) => (
+          <option key={sz.id} value={sz.id}>
+            {sz.name}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }

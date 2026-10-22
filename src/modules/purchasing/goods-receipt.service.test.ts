@@ -2,9 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/numbering/DocumentNumberingService", () => ({ generateDocumentNumber: vi.fn() }));
+const poItemColorFindMany = vi.hoisted(() => vi.fn());
 vi.mock("@/core/db/client", () => ({
   prisma: {
-    $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn({})),
+    $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn({ purchaseOrderItem: { findMany: poItemColorFindMany } })),
     goodsReceiptItem: { findMany: vi.fn() },
     product: { findFirst: vi.fn() },
   },
@@ -95,6 +96,7 @@ const oneRollItem = (overrides: Record<string, unknown> = {}) => ({
 });
 
 beforeEach(() => {
+  poItemColorFindMany.mockReset().mockResolvedValue([]);
   vi.mocked(recordInventoryTransaction).mockReset().mockResolvedValue(undefined as never);
   vi.mocked(MaterialRequestItemRepository.findForReceiptRollupInTx).mockReset();
   vi.mocked(MaterialRequestItemRepository.incrementPurchaseReceived).mockReset();
@@ -271,6 +273,20 @@ describe("createGoodsReceipt", () => {
       expect.objectContaining({ transactionType: "GOODS_RECEIPT", quantity: 50, fabricRollId: "roll-1" })
     );
     expect(PurchaseOrderRepository.updateStatusInTx).toHaveBeenCalledWith(expect.anything(), "po-1", { status: "PARTIALLY_RECEIVED" });
+  });
+
+  // Colour-wise stock (2026-10-21): received stock takes the PO line's colour.
+  it("posts received stock in the PO line's colour", async () => {
+    poItemColorFindMany.mockResolvedValueOnce([{ id: "poi-1", colorId: "col-green" }]);
+    vi.mocked(GoodsReceiptRepository.createWithItemsAndRolls).mockResolvedValue({
+      id: "gr-1",
+      receiptNumber: "REC-2026-00001",
+      items: [{ id: "gri-1", purchaseOrderItemId: "poi-1", productId: "mat-1", warehouseId: "wh-1", warehouseLocationId: null, receivedQuantity: 50, rolls: [{ id: "roll-1", rollQuantity: 50 }] }],
+    } as never);
+
+    await createGoodsReceipt(actor, "po-1", { receivedDate: "2026-08-24", items: [oneRollItem()] });
+
+    expect(recordInventoryTransaction).toHaveBeenCalledWith(expect.anything(), actor, expect.objectContaining({ colorId: "col-green" }));
   });
 
   it("flips the purchase order to FULLY_RECEIVED once every line is fully received", async () => {

@@ -352,6 +352,11 @@ export function SampleWorkflowPanel({
   const [deleteMaterialTarget, setDeleteMaterialTarget] = useState<SampleMaterialRow | null>(null);
   const [deleteAttachmentTarget, setDeleteAttachmentTarget] = useState<AttachmentRow | null>(null);
 
+  // "Start Development" gate — material for the current version must be
+  // issued from the store first (getSampleMaterialIssueStatus). Re-fetched
+  // after every refresh while the sample sits at Tech Pack Ready.
+  const [issueStatus, setIssueStatus] = useState<SampleMaterialIssueStatus | null>(null);
+
   const [attachments, setAttachments] = useState<AttachmentRow[]>([]);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
@@ -400,6 +405,13 @@ export function SampleWorkflowPanel({
       .then((res) => res.json())
       .then((body) => setWarehouses(body.data ?? []));
   }, []);
+
+  useEffect(() => {
+    if (request.status !== "TECH_PACK_READY") return;
+    fetch(`/api/v1/sampling/${sampleRequestId}/material-issue-status`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body) => setIssueStatus(body?.data ?? null));
+  }, [sampleRequestId, request]);
 
   const refresh = async () => {
     const res = await fetch(`/api/v1/sampling/${sampleRequestId}`);
@@ -1130,11 +1142,18 @@ export function SampleWorkflowPanel({
           )
         )}
 
+        {request.status === "TECH_PACK_READY" && <MaterialIssueGate status={issueStatus} />}
+
         {request.status === "TECH_PACK_READY" && (
           canSamplingEdit || canApproveThisSample ? (
             <div className="flex flex-wrap items-center gap-3">
               {canSamplingEdit && (
-                <ActionButton label="Start Development" onClick={() => transitionTo("IN_DEVELOPMENT")} isBusy={isBusy} />
+                <ActionButton
+                  label="Start Development"
+                  onClick={() => transitionTo("IN_DEVELOPMENT")}
+                  isBusy={isBusy}
+                  disabled={!issueStatus?.isFullyIssued}
+                />
               )}
               {canApproveThisSample && (
                 <ActionButton
@@ -2405,6 +2424,77 @@ function VersionForm({
         {file && <p className="mt-1 text-xs text-zinc-400">Selected: {file.name}</p>}
       </FormField>
       <ActionButton label={submitLabel} onClick={onSubmit} isBusy={isBusy} />
+    </div>
+  );
+}
+
+interface SampleMaterialIssueStatus {
+  sampleVersionId: string | null;
+  isFullyIssued: boolean;
+  hasMaterials: boolean;
+  lines: Array<{
+    materialId: string;
+    materialName: string;
+    uomCode: string;
+    plannedQuantity: number;
+    requestedQuantity: number;
+    issuedQuantity: number;
+  }>;
+}
+
+/** What's still missing before "Start Development" is allowed — material added, requested, then issued. */
+function MaterialIssueGate({ status }: { status: SampleMaterialIssueStatus | null }) {
+  if (!status) return <p className="text-sm text-zinc-500 dark:text-zinc-400">Checking issued material…</p>;
+
+  if (!status.hasMaterials) {
+    return (
+      <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+        Development can&apos;t start yet: this version has no raw materials. Add materials to the version below, then use
+        &quot;Generate Material Request&quot; and get them issued from the store.
+      </p>
+    );
+  }
+
+  return (
+    <div
+      className={`space-y-2 rounded-md px-3 py-2 text-sm ${
+        status.isFullyIssued
+          ? "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"
+          : "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
+      }`}
+    >
+      <p>
+        {status.isFullyIssued
+          ? "All sample material has been issued — development can start."
+          : "Development can't start until all sample material is issued. Request it with \"Generate Material Request\" below, then issue it from Material Requests."}
+      </p>
+      <table className="w-full text-left text-xs">
+        <thead>
+          <tr>
+            <th className="py-1 font-medium">Material</th>
+            <th className="py-1 text-right font-medium">Planned</th>
+            <th className="py-1 text-right font-medium">Requested</th>
+            <th className="py-1 text-right font-medium">Issued</th>
+          </tr>
+        </thead>
+        <tbody>
+          {status.lines.map((line) => {
+            const done = line.issuedQuantity + 1e-6 >= line.plannedQuantity;
+            return (
+              <tr key={line.materialId}>
+                <td className="py-1">{line.materialName}</td>
+                <td className="py-1 text-right">
+                  {line.plannedQuantity} {line.uomCode}
+                </td>
+                <td className="py-1 text-right">{line.requestedQuantity}</td>
+                <td className={`py-1 text-right font-medium ${done ? "" : "text-red-700 dark:text-red-400"}`}>
+                  {line.issuedQuantity} {done ? "✓" : ""}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }

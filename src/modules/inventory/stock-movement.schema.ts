@@ -35,6 +35,9 @@ export const stockMovementItemSchema = z.object({
   // Destination-side location for a Transfer of finished goods -- mirrors
   // warehouseLocationId's own optional-traceability-only shape.
   toWarehouseLocationId: z.string().uuid().optional().or(z.literal("")),
+  // Colour-wise raw-material stock (2026-10-21): the colour of the stock
+  // moved; empty = "No colour". Raw material only.
+  colorId: z.string().uuid().optional().or(z.literal("")),
 });
 export type StockMovementItemInput = z.infer<typeof stockMovementItemSchema>;
 
@@ -110,8 +113,26 @@ export const createStockMovementSchema = z
     message: "A colour/size variant cannot be set on a raw-material stock movement line.",
     path: ["items"],
   })
+  .refine((input) => input.itemFamily !== "FINISHED_GOODS" || input.items.every((item) => !item.colorId), {
+    message: "A colour can only be set on a raw-material stock movement line.",
+    path: ["items"],
+  })
   .refine((input) => input.itemFamily !== "FINISHED_GOODS" || input.movementType !== "RETURN_TO_SUPPLIER", {
     message: "Return to Supplier is not valid for a Finished Goods stock movement.",
     path: ["movementType"],
   });
 export type CreateStockMovementInput = z.infer<typeof createStockMovementSchema>;
+
+// Receive an in-transit raw-material Transfer: the receiver picks where each
+// line is put away in the destination warehouse.
+export const receiveStockMovementSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        itemId: z.string().uuid(),
+        toWarehouseLocationId: z.string().uuid("Pick a destination location"),
+      })
+    )
+    .min(1, "At least one line is required"),
+});
+export type ReceiveStockMovementInput = z.infer<typeof receiveStockMovementSchema>;

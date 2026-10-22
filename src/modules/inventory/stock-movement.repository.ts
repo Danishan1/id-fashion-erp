@@ -6,11 +6,14 @@ const DETAIL_INCLUDE = {
   toWarehouse: { select: { id: true, name: true, code: true } },
   supplier: { select: { id: true, name: true, code: true } },
   performedBy: { select: { id: true, fullName: true } },
+  receivedBy: { select: { id: true, fullName: true } },
   items: {
     include: {
       product: { select: { id: true, styleName: true, styleCode: true, materialCategory: true } },
       uom: { select: { id: true, code: true } },
       warehouseLocation: { select: { id: true, code: true, materialCategory: true } },
+      toWarehouseLocation: { select: { id: true, code: true } },
+      color: { select: { id: true, name: true } },
     },
   },
 } satisfies Prisma.StockMovementInclude;

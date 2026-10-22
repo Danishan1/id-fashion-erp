@@ -21,6 +21,9 @@ export type BusinessRuleErrorCode =
   | "PRODUCTION_ORDER_EXISTS"
   | "LOT_GENEALOGY_INVALID"
   | "INSUFFICIENT_STOCK_FOR_MOVEMENT"
+  // Sampling: "Start Development" needs every material line on the current
+  // version issued from the store first (details.lines lists what is missing).
+  | "SAMPLE_MATERIAL_NOT_ISSUED"
   | "DUPLICATE_LEAD_EXISTS"
   // CRM (2026-10-01): a configured "warn" duplicate rule matched — the client
   // may retry with explicit confirmation (details.matches lists the records).
@@ -113,6 +116,7 @@ const HTTP_STATUS_BY_CODE: Record<BusinessRuleErrorCode, number> = {
   PRODUCTION_ORDER_EXISTS: 409,
   LOT_GENEALOGY_INVALID: 409,
   INSUFFICIENT_STOCK_FOR_MOVEMENT: 409,
+  SAMPLE_MATERIAL_NOT_ISSUED: 409,
   DUPLICATE_LEAD_EXISTS: 409,
   CRM_POSSIBLE_DUPLICATE: 409,
   CRM_DUPLICATE_RECORD: 409,
