@@ -44,6 +44,8 @@ interface RollOption {
   dye: { id: string; name: string; pantone: string | null } | null;
   gsm: { id: string; name: string } | null;
   composition: { id: string; name: string } | null;
+  /** The colour the roll was received in (its PO line's colour). */
+  color?: { id: string; name: string } | null;
 }
 
 interface OtherWarehouseStockRow {
@@ -60,8 +62,15 @@ interface OtherWarehouseStockRow {
   }>;
 }
 
-function formatRollLabel(r: { rollNumber: string; dye: { name: string; pantone: string | null } | null; gsm: { name: string } | null; composition: { name: string } | null }) {
+function formatRollLabel(r: {
+  rollNumber: string;
+  color?: { name: string } | null;
+  dye: { name: string; pantone: string | null } | null;
+  gsm: { name: string } | null;
+  composition: { name: string } | null;
+}) {
   return [
+    r.color?.name,
     r.dye ? `${r.dye.name}${r.dye.pantone ? ` (${r.dye.pantone})` : ""}` : `Roll ${r.rollNumber} — no shade recorded`,
     r.gsm?.name,
     r.composition?.name,
@@ -1169,10 +1178,39 @@ export function MaterialRequestWorkflowPanel({
               {!isFabric && (
                 <>
                   {" "}
-                  · {flatAvailable} {issuingLine.uom.code} in stock at {activeWarehouseName}
+                  · {flatAvailable} {issuingLine.uom.code}
+                  {issuingLine.color ? ` ${issuingLine.color.name}` : ""} in stock at {activeWarehouseName}
                 </>
               )}
             </p>
+
+            <div className="flex flex-wrap items-center gap-2 rounded-md bg-zinc-50 px-3 py-2 text-sm dark:bg-zinc-900">
+              <span className="text-zinc-500">Colour:</span>
+              {issuingLine.color ? (
+                <>
+                  {issuingLine.color.hexValue && (
+                    <span
+                      className="inline-block h-3 w-3 rounded-full border border-zinc-300 dark:border-zinc-600"
+                      style={{ backgroundColor: issuingLine.color.hexValue }}
+                    />
+                  )}
+                  <span className="font-medium text-zinc-900 dark:text-zinc-50">{issuingLine.color.name}</span>
+                  {issuingLine.dye && (
+                    <span className="text-zinc-500">
+                      / {issuingLine.dye.name}
+                      {issuingLine.dye.pantone ? ` (${issuingLine.dye.pantone})` : ""}
+                    </span>
+                  )}
+                  <span className="text-xs text-zinc-500">
+                    — only {issuingLine.color.name} stock can be issued. For another colour, use Substitute.
+                  </span>
+                </>
+              ) : (
+                <span className="text-zinc-700 dark:text-zinc-200">
+                  No colour specified — issues from this material&apos;s total stock.
+                </span>
+              )}
+            </div>
 
             {issuingLine.availableStockQuantity <= 0 && (
               <FormField label="Change Warehouse (optional)" htmlFor="issueWarehouseId">

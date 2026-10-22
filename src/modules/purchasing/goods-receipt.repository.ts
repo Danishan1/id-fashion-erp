@@ -26,6 +26,8 @@ export const GoodsReceiptRepository = {
             uom: { select: { id: true, code: true, name: true } },
             warehouse: { select: { id: true, name: true, code: true } },
             warehouseLocation: { select: { id: true, code: true } },
+            // The colour the stock was received in (the PO line's colour).
+            purchaseOrderItem: { select: { color: { select: { id: true, name: true } } } },
             rolls: {
               include: {
                 gsm: { select: { id: true, name: true } },

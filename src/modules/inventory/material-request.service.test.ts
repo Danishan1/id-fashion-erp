@@ -878,6 +878,25 @@ describe("issueMaterialRequestLine — fabric roll (color/shade) selection", () 
     expect(FabricRollRepository.guardedDecrementRemaining).toHaveBeenCalledWith({}, "roll-1", 5);
   });
 
+  // Colour-wise stock (2026-10-21).
+  it("refuses a roll of another colour on a coloured line", async () => {
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue(
+      baseLine({ colorId: "col-black", color: { id: "col-black", name: "Black" } }) as never
+    );
+    vi.mocked(FabricRollRepository.findByIdWithContext).mockResolvedValue(
+      inStockRoll({
+        rollNumber: "R-9",
+        goodsReceiptItem: { productId: "mat-fabric", warehouseId: "wh-1", purchaseOrderItem: { colorId: "col-navy", color: { name: "Navy Blue" } } },
+      }) as never
+    );
+
+    await expect(issueMaterialRequestLine(actor, "line-1", 5, null, "roll-1")).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("Roll R-9 is Navy Blue"),
+    });
+    expect(recordInventoryTransaction).not.toHaveBeenCalled();
+  });
+
   it("rejects a roll that belongs to a different material at this warehouse", async () => {
     vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue(baseLine() as never);
     vi.mocked(FabricRollRepository.findByIdWithContext).mockResolvedValue(
@@ -1364,20 +1383,35 @@ describe("getAvailableRollsForLine", () => {
   it("returns the color/shade breakdown for the line's material at its request's warehouse", async () => {
     vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue({
       materialId: "mat-fabric",
+      colorId: null,
       materialRequest: { companyId: "co-1", warehouseId: "wh-1" },
     } as never);
     vi.mocked(FabricRollRepository.findAvailableForMaterial).mockResolvedValue([
-      { id: "roll-1", rollNumber: "R-1", remainingQuantity: "50", dye: { id: "dye-1", name: "Navy Blue", pantone: "19-4030" } },
-      { id: "roll-2", rollNumber: "R-2", remainingQuantity: "30", dye: null },
+      { id: "roll-1", rollNumber: "R-1", remainingQuantity: "50", dye: { id: "dye-1", name: "Navy Blue", pantone: "19-4030" }, goodsReceiptItem: { purchaseOrderItem: { color: { id: "col-navy", name: "Navy Blue" } } } },
+      { id: "roll-2", rollNumber: "R-2", remainingQuantity: "30", dye: null, goodsReceiptItem: { purchaseOrderItem: null } },
     ] as never);
 
     const rolls = await getAvailableRollsForLine(actor, "line-1");
 
-    expect(FabricRollRepository.findAvailableForMaterial).toHaveBeenCalledWith("co-1", "mat-fabric", "wh-1");
+    expect(FabricRollRepository.findAvailableForMaterial).toHaveBeenCalledWith("co-1", "mat-fabric", "wh-1", null);
     expect(rolls).toEqual([
-      { id: "roll-1", rollNumber: "R-1", remainingQuantity: "50", dye: { id: "dye-1", name: "Navy Blue", pantone: "19-4030" } },
-      { id: "roll-2", rollNumber: "R-2", remainingQuantity: "30", dye: null },
+      { id: "roll-1", rollNumber: "R-1", remainingQuantity: "50", color: { id: "col-navy", name: "Navy Blue" }, dye: { id: "dye-1", name: "Navy Blue", pantone: "19-4030" } },
+      { id: "roll-2", rollNumber: "R-2", remainingQuantity: "30", color: null, dye: null },
     ]);
+  });
+
+  // Colour-wise stock (2026-10-21): a coloured line lists only rolls received in its colour.
+  it("lists only rolls of the line's own colour", async () => {
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue({
+      materialId: "mat-fabric",
+      colorId: "col-black",
+      materialRequest: { companyId: "co-1", warehouseId: "wh-1" },
+    } as never);
+    vi.mocked(FabricRollRepository.findAvailableForMaterial).mockResolvedValue([] as never);
+
+    await getAvailableRollsForLine(actor, "line-1");
+
+    expect(FabricRollRepository.findAvailableForMaterial).toHaveBeenCalledWith("co-1", "mat-fabric", "wh-1", "col-black");
   });
 
   it("rejects a line that doesn't belong to this company", async () => {
