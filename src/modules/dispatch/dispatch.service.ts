@@ -1574,6 +1574,16 @@ export async function reverseDispatch(actor: ActorContext, id: string, input: Re
     throw new BusinessRuleError("VALIDATION_ERROR", "A reason is required to reverse a confirmed dispatch.", {});
   }
 
+  // A partial customer return already put some pieces back; reversing the
+  // whole dispatch now would return them a second time.
+  if ((dispatch.returns?.length ?? 0) > 0) {
+    throw new BusinessRuleError(
+      "INVALID_STATE_TRANSITION",
+      "Some goods on this dispatch were already returned — use Customer Return for the remaining pieces.",
+      { returns: dispatch.returns.map((r) => r.returnNumber) }
+    );
+  }
+
   const uniqueProductIds = [...new Set(dispatch.items.map((i) => i.productId))];
   const activeVariantsByProduct = new Map<string, boolean>(
     await Promise.all(

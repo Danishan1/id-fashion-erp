@@ -903,6 +903,7 @@ model User {
   productionOrderQuantityChanges             ProductionOrderQuantityChange[]
   lotsCreated                                Lot[]                                @relation("LotCreatedBy")
   finishedGoodsReceiptsPosted                FinishedGoodsReceipt[]               @relation("FinishedGoodsReceiptPostedBy")
+  finishedGoodsReceiptPostings              FinishedGoodsReceiptPosting[]        @relation("FinishedGoodsReceiptPostingReceivedBy")
   finishedGoodsPutawaysPerformed              FinishedGoodsPutaway[]               @relation("FinishedGoodsPutawayPerformedBy")
   finishedGoodsPickLinesPicked                FinishedGoodsPickLine[]              @relation("FinishedGoodsPickLinePickedBy")
   barcodesCreated                            Barcode[]                            @relation("BarcodeCreatedBy")
@@ -2004,6 +2005,7 @@ model WarehouseLocation {
   materialRequestItems       MaterialRequestItem[]
   finishedGoodsStockBalances FinishedGoodsStockBalance[]
   finishedGoodsPutawayItems  FinishedGoodsPutawayItem[]
+  finishedGoodsReceiptPostings FinishedGoodsReceiptPosting[]
 
   @@unique([warehouseId, code])
   @@map("warehouse_locations")
@@ -5609,24 +5611,39 @@ model FinishedGoodsReceipt {
   branchId          String?  @map("branch_id") @db.Uuid
   receiptNumber     String   @map("receipt_number")
   productId         String   @map("product_id") @db.Uuid
-  lotId             String   @map("lot_id") @db.Uuid
-  jobOrderId        String   @map("job_order_id") @db.Uuid
-  productionOrderId String   @map("production_order_id") @db.Uuid
+  // Production source only (null for a customer return).
+  lotId             String?  @map("lot_id") @db.Uuid
+  jobOrderId        String?  @map("job_order_id") @db.Uuid
+  productionOrderId String?  @map("production_order_id") @db.Uuid
   warehouseId       String   @map("warehouse_id") @db.Uuid
   totalQuantity     Decimal  @map("total_quantity") @db.Decimal(18, 4)
+  // Receive step (2026-10-22): goods arriving from Packing or from a
+  // customer return wait here as PENDING and only reach Finished Goods stock
+  // when the store receives them into a location. Rows from before this
+  // change were posted straight to stock, so they default to RECEIVED.
+  source            FinishedGoodsReceiptSource @default(PRODUCTION)
+  status            FinishedGoodsReceiptStatus @default(RECEIVED)
+  dispatchId        String?  @map("dispatch_id") @db.Uuid
+  dispatchReturnId  String?  @map("dispatch_return_id") @db.Uuid
+  remarks           String?  @map("remarks")
+  // Who/when the receipt was created (goods arrived at the FG door).
   postedByUserId    String   @map("posted_by_user_id") @db.Uuid
   postedAt          DateTime @default(now()) @map("posted_at")
+  receivedAt        DateTime? @map("received_at")
   createdAt         DateTime @default(now()) @map("created_at")
 
   company         Company                    @relation(fields: [companyId], references: [id])
   branch          Branch?                    @relation(fields: [branchId], references: [id])
   product         Product                    @relation(fields: [productId], references: [id])
-  lot             Lot                        @relation(fields: [lotId], references: [id])
-  jobOrder        JobOrder                   @relation(fields: [jobOrderId], references: [id])
-  productionOrder ProductionOrder            @relation(fields: [productionOrderId], references: [id])
+  lot             Lot?                       @relation(fields: [lotId], references: [id], onDelete: Restrict)
+  jobOrder        JobOrder?                  @relation(fields: [jobOrderId], references: [id], onDelete: Restrict)
+  productionOrder ProductionOrder?           @relation(fields: [productionOrderId], references: [id], onDelete: Restrict)
   warehouse       Warehouse                  @relation(fields: [warehouseId], references: [id])
   postedBy        User                       @relation("FinishedGoodsReceiptPostedBy", fields: [postedByUserId], references: [id])
+  dispatch        Dispatch?                  @relation(fields: [dispatchId], references: [id], onDelete: Restrict)
+  dispatchReturn  DispatchReturn?            @relation(fields: [dispatchReturnId], references: [id], onDelete: Restrict)
   items           FinishedGoodsReceiptItem[]
+  postings        FinishedGoodsReceiptPosting[]
 
   @@unique([companyId, branchId, receiptNumber])
   @@index([lotId])
@@ -5638,8 +5655,13 @@ model FinishedGoodsReceipt {
 model FinishedGoodsReceiptItem {
   id                     String  @id @default(uuid()) @db.Uuid
   finishedGoodsReceiptId String  @map("finished_goods_receipt_id") @db.Uuid
-  productVariantId       String  @map("product_variant_id") @db.Uuid
+  // Null only for a customer return of a style with no colour/size variants.
+  productVariantId       String? @map("product_variant_id") @db.Uuid
   quantity               Decimal @map("quantity") @db.Decimal(18, 4)
+  // How much of quantity has been received into stock so far.
+  receivedQuantity       Decimal @default(0) @map("received_quantity") @db.Decimal(18, 4)
+  // Suggested location (a customer return's original pick location).
+  suggestedLocationId    String? @map("suggested_location_id") @db.Uuid
   // Points at the exact real ledger row this specific variant line posted,
   // inside the same transaction — same established traceability precedent
   // as MaterialSubstitution.inventoryTransactionId. Nullable only because a
@@ -5648,11 +5670,48 @@ model FinishedGoodsReceiptItem {
   inventoryTransactionId String? @map("inventory_transaction_id") @db.Uuid
 
   finishedGoodsReceipt FinishedGoodsReceipt @relation(fields: [finishedGoodsReceiptId], references: [id])
-  productVariant       ProductVariant       @relation(fields: [productVariantId], references: [id])
+  productVariant       ProductVariant?      @relation(fields: [productVariantId], references: [id], onDelete: Restrict)
   inventoryTransaction InventoryTransaction? @relation(fields: [inventoryTransactionId], references: [id])
+  postings             FinishedGoodsReceiptPosting[]
 
   @@index([finishedGoodsReceiptId])
   @@map("finished_goods_receipt_items")
+}
+
+enum FinishedGoodsReceiptSource {
+  PRODUCTION
+  CUSTOMER_RETURN
+}
+
+enum FinishedGoodsReceiptStatus {
+  PENDING
+  PARTIALLY_RECEIVED
+  RECEIVED
+}
+
+// One row per receive action on a receipt line (2026-10-22): how many
+// pieces went into stock, into which location, by whom, and the ledger row
+// it posted — the receive log. Append-only.
+model FinishedGoodsReceiptPosting {
+  id                     String   @id @default(uuid()) @db.Uuid
+  finishedGoodsReceiptId String   @map("finished_goods_receipt_id") @db.Uuid
+  receiptItemId          String   @map("receipt_item_id") @db.Uuid
+  quantity               Decimal  @map("quantity") @db.Decimal(18, 4)
+  // Null = received without a location (warehouse has no locations).
+  warehouseLocationId    String?  @map("warehouse_location_id") @db.Uuid
+  inventoryTransactionId String   @map("inventory_transaction_id") @db.Uuid
+  receivedByUserId       String   @map("received_by_user_id") @db.Uuid
+  remarks                String?  @map("remarks")
+  createdAt              DateTime @default(now()) @map("created_at")
+
+  receipt           FinishedGoodsReceipt     @relation(fields: [finishedGoodsReceiptId], references: [id])
+  receiptItem       FinishedGoodsReceiptItem @relation(fields: [receiptItemId], references: [id])
+  warehouseLocation WarehouseLocation?       @relation(fields: [warehouseLocationId], references: [id], onDelete: Restrict)
+  receivedBy        User                     @relation("FinishedGoodsReceiptPostingReceivedBy", fields: [receivedByUserId], references: [id])
+
+  @@index([finishedGoodsReceiptId])
+  @@index([receiptItemId])
+  @@map("finished_goods_receipt_postings")
 }
 
 // Finished Goods Inventory module (FGI-030) -- a dedicated, minimal header
@@ -6004,6 +6063,8 @@ model Dispatch {
   items       DispatchItem[]
   cartons     Carton[]
   productUnits ProductUnit[]
+  returns     DispatchReturn[]
+  finishedGoodsReceipts FinishedGoodsReceipt[]
 
   @@unique([companyId, branchId, dispatchNumber])
   @@map("dispatches")
@@ -6056,6 +6117,7 @@ model DispatchItem {
   cartonItems    CartonItem[]
   pickLines      FinishedGoodsPickLine[]
   productUnits   ProductUnit[]
+  returnItems    DispatchReturnItem[]
 
   @@index([dispatchId])
   @@index([sourceLotId])
@@ -6088,10 +6150,58 @@ model FinishedGoodsPickLine {
   productVariant    ProductVariant    @relation(fields: [productVariantId], references: [id])
   warehouseLocation WarehouseLocation? @relation(fields: [warehouseLocationId], references: [id], onDelete: Restrict)
   pickedBy          User              @relation("FinishedGoodsPickLinePickedBy", fields: [pickedByUserId], references: [id])
+  returnItems       DispatchReturnItem[]
 
   @@index([dispatchItemId])
   @@index([productVariantId, warehouseLocationId])
   @@map("finished_goods_pick_lines")
+}
+
+// Customer return against a confirmed dispatch (2026-10-22) — whole or
+// partial, with a remark. Each line puts its pieces back into Finished Goods
+// at the same colour/size and the same location they were picked from, and
+// lowers the Sales Order's shipped quantity. Append-only: a return is never
+// edited; "already returned" is always the sum of these lines.
+model DispatchReturn {
+  id               String   @id @default(uuid()) @db.Uuid
+  companyId        String   @map("company_id") @db.Uuid
+  dispatchId       String   @map("dispatch_id") @db.Uuid
+  returnNumber     String   @map("return_number")
+  remarks          String   @map("remarks")
+  totalQuantity    Int      @map("total_quantity")
+  returnedByUserId String   @map("returned_by_user_id") @db.Uuid
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  dispatch Dispatch             @relation(fields: [dispatchId], references: [id])
+  items    DispatchReturnItem[]
+  finishedGoodsReceipts FinishedGoodsReceipt[]
+
+  @@index([dispatchId])
+  @@map("dispatch_returns")
+}
+
+model DispatchReturnItem {
+  id                  String  @id @default(uuid()) @db.Uuid
+  dispatchReturnId    String  @map("dispatch_return_id") @db.Uuid
+  dispatchItemId      String  @map("dispatch_item_id") @db.Uuid
+  // Null for a style with no colour/size variants (no pick lines).
+  pickLineId          String? @map("pick_line_id") @db.Uuid
+  productVariantId    String? @map("product_variant_id") @db.Uuid
+  warehouseLocationId String? @map("warehouse_location_id") @db.Uuid
+  quantity            Int     @map("quantity")
+  // Part of quantity counted against Sales Order fulfillment (the rest
+  // comes off the line's Extra Dispatch Quantity first).
+  regularQuantity     Int     @map("regular_quantity")
+  remark              String? @map("remark")
+
+  dispatchReturn DispatchReturn         @relation(fields: [dispatchReturnId], references: [id])
+  dispatchItem   DispatchItem           @relation(fields: [dispatchItemId], references: [id])
+  pickLine       FinishedGoodsPickLine? @relation(fields: [pickLineId], references: [id])
+
+  @@index([dispatchReturnId])
+  @@index([dispatchItemId])
+  @@index([pickLineId])
+  @@map("dispatch_return_items")
 }
 
 model Carton {

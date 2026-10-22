@@ -8,7 +8,7 @@ import { FinishedGoodsStockBalanceRepository } from "@/modules/inventory/invento
 import { ProductVariantRepository } from "@/modules/products/product.repository";
 import { WarehouseLocationRepository } from "@/modules/warehouses/warehouse.repository";
 import { FinishedGoodsPutawayRepository } from "./finished-goods-putaway.repository";
-import type { PutawayStockInput } from "./finished-goods-putaway.schema";
+import type { BulkPutawayInput, PutawayStockInput } from "./finished-goods-putaway.schema";
 
 const EPSILON = 0.0001; // matches createLot()'s own LotVariantBreakdown sum-tolerance exactly
 
@@ -188,4 +188,37 @@ export async function putawayStock(actor: ActorContext, input: PutawayStockInput
   });
 
   return putaway;
+}
+
+/**
+ * Unlocated stock (2026-10-22): sets the location for many not-yet-put-away
+ * rows in one go. Each row is its own putawayStock() (own document and
+ * transaction), so one bad row never blocks the others; the result says
+ * which rows were done and why any failed.
+ */
+export async function bulkPutawayStock(actor: ActorContext, input: BulkPutawayInput) {
+  const results: Array<{ index: number; ok: boolean; putawayNumber?: string; error?: string }> = [];
+  for (const [index, row] of input.rows.entries()) {
+    try {
+      const putaway = await putawayStock(actor, {
+        productId: row.productId,
+        productVariantId: row.productVariantId,
+        warehouseId: row.warehouseId,
+        stockStatus: row.stockStatus,
+        allocations: [{ warehouseLocationId: row.warehouseLocationId, quantity: row.quantity }],
+      });
+      results.push({ index, ok: true, putawayNumber: putaway.putawayNumber });
+    } catch (error) {
+      results.push({
+        index,
+        ok: false,
+        error: error instanceof BusinessRuleError ? error.message : "Could not update this row.",
+      });
+    }
+  }
+  return {
+    updated: results.filter((r) => r.ok).length,
+    failed: results.filter((r) => !r.ok).length,
+    results,
+  };
 }

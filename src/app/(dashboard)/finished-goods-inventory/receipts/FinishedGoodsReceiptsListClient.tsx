@@ -24,6 +24,10 @@ interface ReceiptRow {
   productionOrder: { orderNumber: string } | null;
   warehouse: { code: string; name: string } | null;
   postedBy: { fullName: string } | null;
+  status: "PENDING" | "PARTIALLY_RECEIVED" | "RECEIVED";
+  source: "PRODUCTION" | "CUSTOMER_RETURN";
+  dispatch: { dispatchNumber: string } | null;
+  dispatchReturn: { returnNumber: string } | null;
 }
 
 export function FinishedGoodsReceiptsListClient() {
@@ -86,8 +90,19 @@ export function FinishedGoodsReceiptsListClient() {
         columns={[
           { key: "receiptNumber", header: "Receipt #" },
           { key: "product", header: "Style", render: (row) => (row.product ? `${row.product.styleCode} — ${row.product.styleName}` : "—") },
-          { key: "lot", header: "Lot", render: (row) => row.lot?.lotNumber ?? "—" },
-          { key: "productionOrder", header: "Production Order", render: (row) => row.productionOrder?.orderNumber ?? "—" },
+          {
+            key: "status",
+            header: "Status",
+            render: (row) => (row.status === "PENDING" ? "Waiting to receive" : row.status === "PARTIALLY_RECEIVED" ? "Partly received" : "Received"),
+          },
+          {
+            key: "source",
+            header: "From",
+            render: (row) =>
+              row.source === "CUSTOMER_RETURN"
+                ? `Customer return ${row.dispatchReturn?.returnNumber ?? ""} (${row.dispatch?.dispatchNumber ?? ""})`
+                : `${row.productionOrder?.orderNumber ?? "—"}${row.lot ? ` · Lot ${row.lot.lotNumber}` : ""}`,
+          },
           { key: "warehouse", header: "Warehouse", render: (row) => row.warehouse?.name ?? "—" },
           { key: "totalQuantity", header: "Quantity", render: (row) => Number(row.totalQuantity).toLocaleString() },
           { key: "postedBy", header: "Posted By", render: (row) => row.postedBy?.fullName ?? "—" },

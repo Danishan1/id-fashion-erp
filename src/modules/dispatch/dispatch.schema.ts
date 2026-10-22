@@ -144,3 +144,19 @@ export const deliverDispatchSchema = z.object({
 });
 
 export type DeliverDispatchInput = z.infer<typeof deliverDispatchSchema>;
+
+// Customer return against a confirmed dispatch (2026-10-22) — whole or
+// partial. Each line is one picked colour/size (pickLineId) or, for a style
+// with no colour/size variants, the dispatch line itself.
+export const dispatchReturnLineSchema = z.object({
+  dispatchItemId: z.string().uuid(),
+  pickLineId: z.string().uuid().nullable().optional(),
+  quantity: z.coerce.number().int("Return whole pieces").positive("Quantity must be greater than 0"),
+  remark: z.string().trim().max(500).optional().nullable(),
+});
+
+export const dispatchReturnSchema = z.object({
+  remarks: z.string().trim().min(1, "A remark is required for a customer return").max(1000),
+  lines: z.array(dispatchReturnLineSchema).min(1, "Enter at least one piece to return"),
+});
+export type DispatchReturnInput = z.infer<typeof dispatchReturnSchema>;

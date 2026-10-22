@@ -6,6 +6,8 @@ import { FinishedGoodsReceiptListRepository } from "./finished-goods-receipt-lis
 export interface FinishedGoodsReceiptListFilters {
   productId?: string;
   warehouseId?: string;
+  status?: "PENDING" | "PARTIALLY_RECEIVED" | "RECEIVED";
+  source?: "PRODUCTION" | "CUSTOMER_RETURN";
 }
 
 /**
@@ -41,6 +43,8 @@ export async function listFinishedGoodsReceipts(companyId: string, query: ListQu
       : {}),
     ...(filters.productId ? { productId: filters.productId } : {}),
     ...(filters.warehouseId ? { warehouseId: filters.warehouseId } : {}),
+    ...(filters.status ? { status: filters.status } : {}),
+    ...(filters.source ? { source: filters.source } : {}),
   };
 
   const [rows, totalCount] = await Promise.all([

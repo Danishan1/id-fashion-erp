@@ -23,3 +23,20 @@ export const putawayStockSchema = z.object({
   allocations: z.array(putawayAllocationLineSchema).min(1, "At least one destination location is required"),
 });
 export type PutawayStockInput = z.infer<typeof putawayStockSchema>;
+
+// Unlocated stock (2026-10-22): bulk "set location" for many not-yet-put-away
+// rows at once. Each row is one staging balance moved (whole or part) into
+// one location of the same warehouse.
+export const bulkPutawayRowSchema = z.object({
+  productId: z.string().uuid(),
+  productVariantId: z.string().uuid(),
+  warehouseId: z.string().uuid(),
+  stockStatus: z.enum(["SALEABLE", "REJECTED"]),
+  warehouseLocationId: z.string().uuid(),
+  quantity: z.coerce.number().positive("Quantity must be greater than 0"),
+});
+
+export const bulkPutawaySchema = z.object({
+  rows: z.array(bulkPutawayRowSchema).min(1, "Select at least one row").max(500, "At most 500 rows at a time"),
+});
+export type BulkPutawayInput = z.infer<typeof bulkPutawaySchema>;

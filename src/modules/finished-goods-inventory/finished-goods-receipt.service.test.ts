@@ -82,78 +82,29 @@ describe("createFinishedGoodsReceiptInTx", () => {
     ).resolves.toBeDefined();
   });
 
-  it("posts exactly one recordInventoryTransaction call per breakdown line, each carrying productVariantId + stockStatus SALEABLE", async () => {
-    vi.mocked(recordInventoryTransaction)
-      .mockResolvedValueOnce({ id: "txn-1" } as never)
-      .mockResolvedValueOnce({ id: "txn-2" } as never);
-
+  it("creates a PENDING receipt from packing and posts NO stock — stock comes only when the store receives it", async () => {
     await createFinishedGoodsReceiptInTx(tx, actor, {
       ...baseParams,
-      quantity: 70,
+      quantity: 30,
       variantBreakdown: [
-        { productVariantId: "var-1", quantity: 50 },
+        { productVariantId: "var-1", quantity: 10 },
         { productVariantId: "var-2", quantity: 20 },
       ],
     });
 
-    expect(recordInventoryTransaction).toHaveBeenCalledTimes(2);
-    expect(recordInventoryTransaction).toHaveBeenNthCalledWith(
-      1,
+    expect(recordInventoryTransaction).not.toHaveBeenCalled();
+    expect(FinishedGoodsReceiptRepository.createWithItemsInTx).toHaveBeenCalledWith(
       tx,
-      actor,
       expect.objectContaining({
-        productId: "prod-1",
-        warehouseId: "wh-1",
-        transactionType: "PRODUCTION_RECEIPT",
-        quantity: 50,
-        referenceModule: "PRODUCTION_ORDER",
-        referenceRecordId: "lot-1",
-        productVariantId: "var-1",
-        stockStatus: "SALEABLE",
+        source: "PRODUCTION",
+        status: "PENDING",
+        totalQuantity: 30,
+        items: [
+          { productVariantId: "var-1", quantity: 10 },
+          { productVariantId: "var-2", quantity: 20 },
+        ],
       })
     );
-    expect(recordInventoryTransaction).toHaveBeenNthCalledWith(
-      2,
-      tx,
-      actor,
-      expect.objectContaining({ productVariantId: "var-2", quantity: 20, stockStatus: "SALEABLE" })
-    );
-  });
-
-  it("the sum of quantities posted via recordInventoryTransaction always exactly equals the flat quantity for the same call (the double-counting-prevention invariant, §4.5 point 2)", async () => {
-    vi.mocked(recordInventoryTransaction)
-      .mockResolvedValueOnce({ id: "txn-1" } as never)
-      .mockResolvedValueOnce({ id: "txn-2" } as never)
-      .mockResolvedValueOnce({ id: "txn-3" } as never);
-
-    await createFinishedGoodsReceiptInTx(tx, actor, {
-      ...baseParams,
-      quantity: 123,
-      variantBreakdown: [
-        { productVariantId: "var-1", quantity: 50 },
-        { productVariantId: "var-2", quantity: 33 },
-        { productVariantId: "var-3", quantity: 40 },
-      ],
-    });
-
-    const postedQuantities = vi.mocked(recordInventoryTransaction).mock.calls.map(([, , input]) => (input as { quantity: number }).quantity);
-    const postedSum = postedQuantities.reduce((a, b) => a + b, 0);
-    expect(postedSum).toBe(123);
-  });
-
-  it("never posts a separate (N+1)th flat-total recordInventoryTransaction call — only the N breakdown lines", async () => {
-    vi.mocked(recordInventoryTransaction).mockResolvedValue({ id: "txn-1" } as never);
-
-    await createFinishedGoodsReceiptInTx(tx, actor, {
-      ...baseParams,
-      quantity: 10,
-      variantBreakdown: [{ productVariantId: "var-1", quantity: 10 }],
-    });
-
-    // Exactly 1 call for 1 breakdown line — never 2 (which would mean a
-    // flat call was added on top of the breakdown, double-posting
-    // StockBalance).
-    expect(recordInventoryTransaction).toHaveBeenCalledTimes(1);
   });
 
   it("generates the receipt number via the FG_RECEIPT document type, scoped to the actor's company/branch", async () => {
@@ -178,31 +129,6 @@ describe("createFinishedGoodsReceiptInTx", () => {
     });
 
     expect(generateDocumentNumber).toHaveBeenCalledWith(expect.objectContaining({ branchId: null }));
-  });
-
-  it("maps each item's own inventoryTransactionId to the real ledger row that specific line posted, not the first/last call's id reused for every item", async () => {
-    vi.mocked(recordInventoryTransaction)
-      .mockResolvedValueOnce({ id: "txn-A" } as never)
-      .mockResolvedValueOnce({ id: "txn-B" } as never);
-
-    await createFinishedGoodsReceiptInTx(tx, actor, {
-      ...baseParams,
-      quantity: 30,
-      variantBreakdown: [
-        { productVariantId: "var-1", quantity: 10 },
-        { productVariantId: "var-2", quantity: 20 },
-      ],
-    });
-
-    expect(FinishedGoodsReceiptRepository.createWithItemsInTx).toHaveBeenCalledWith(
-      tx,
-      expect.objectContaining({
-        items: [
-          { productVariantId: "var-1", quantity: 10, inventoryTransactionId: "txn-A" },
-          { productVariantId: "var-2", quantity: 20, inventoryTransactionId: "txn-B" },
-        ],
-      })
-    );
   });
 
   it("stores totalQuantity as the validated breakdown sum, never an independently re-entered/recomputed number", async () => {

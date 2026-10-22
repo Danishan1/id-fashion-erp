@@ -28,6 +28,16 @@ interface PickLineRow {
   warehouseLocation: WarehouseLocationRef | null;
 }
 
+interface DispatchReturnRow {
+  id: string;
+  returnNumber: string;
+  remarks: string;
+  totalQuantity: number;
+  createdAt: string;
+  items: Array<{ dispatchItemId: string; pickLineId: string | null; quantity: number; remark: string | null }>;
+  finishedGoodsReceipts?: Array<{ id: string; receiptNumber: string; status: "PENDING" | "PARTIALLY_RECEIVED" | "RECEIVED" }>;
+}
+
 interface DispatchItemRow {
   id: string;
   productId: string;
@@ -123,6 +133,7 @@ interface DispatchDetail {
   requestedBy: { fullName: string };
   items: DispatchItemRow[];
   cartons: CartonRow[];
+  returns?: DispatchReturnRow[];
 }
 
 const STATUS_STYLES: Record<string, string> = {
@@ -253,8 +264,14 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
   const [isBusy, setIsBusy] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [showDeliverConfirm, setShowDeliverConfirm] = useState(false);
-  const [showReverseModal, setShowReverseModal] = useState(false);
-  const [reversalReason, setReversalReason] = useState("");
+  // Customer return (2026-10-22): whole or partial, with a remark.
+  const [showReturnModal, setShowReturnModal] = useState(false);
+  const [returnRemarks, setReturnRemarks] = useState("");
+  const [returnQty, setReturnQty] = useState<Record<string, string>>({});
+  const [returnLineRemark, setReturnLineRemark] = useState<Record<string, string>>({});
+  // Pick Lines stay hidden until the user wants to choose stock locations
+  // themselves; while hidden, Save Cartons also saves the auto-filled picks.
+  const [showPickLines, setShowPickLines] = useState(false);
   const [receivedByName, setReceivedByName] = useState("");
   // Barcode Management & Scanning System, Phase 1 (2026-09-29) — scanning
   // every carton before "Mark Packed" is optional, not mandatory: leaving
@@ -375,10 +392,8 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
   const updatePickLine = (index: number, patch: Partial<DraftPickLine>) =>
     setPickLines((prev) => prev.map((line, i) => (i === index ? { ...line, ...patch } : line)));
 
-  const savePickLines = async () => {
-    setIsBusy(true);
-    setError(null);
-    const res = await fetch(`/api/v1/dispatches/${dispatch.id}/pick-lines`, {
+  const putPickLines = () =>
+    fetch(`/api/v1/dispatches/${dispatch.id}/pick-lines`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -392,6 +407,11 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
           })),
       }),
     });
+
+  const savePickLines = async () => {
+    setIsBusy(true);
+    setError(null);
+    const res = await putPickLines();
     setIsBusy(false);
     if (!res.ok) {
       setError(await parseErrorMessage(res, "Failed to save pick lines."));
@@ -530,6 +550,16 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
   const saveCartons = async () => {
     setIsBusy(true);
     setError(null);
+    // Pick Lines hidden: the auto-filled picks are saved together with the
+    // cartons (Confirm needs both to match).
+    if (!showPickLines && pickLines.some((l) => l.dispatchItemId && l.productVariantId && Number(l.quantity) > 0)) {
+      const pickRes = await putPickLines();
+      if (!pickRes.ok) {
+        setIsBusy(false);
+        setError(await parseErrorMessage(pickRes, "Failed to save pick lines."));
+        return;
+      }
+    }
     const res = await fetch(`/api/v1/dispatches/${dispatch.id}/cartons`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -553,6 +583,45 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
       return;
     }
     router.refresh();
+  };
+
+  // One returnable row per picked colour/size (or per line with no variants).
+  const returnRows = dispatch.items.flatMap((item) => {
+    const returned = (dispatch.returns ?? []).flatMap((r) => r.items);
+    if (item.pickLines.length === 0) {
+      const done = returned.filter((x) => x.dispatchItemId === item.id).reduce((sum, x) => sum + x.quantity, 0);
+      return [{ key: item.id, item, pickLine: null as PickLineRow | null, label: "—", location: "—", shipped: item.dispatchedQuantity, returned: done }];
+    }
+    return item.pickLines.map((pl) => ({
+      key: pl.id,
+      item,
+      pickLine: pl as PickLineRow | null,
+      label: `${pl.productVariant.color.name} / ${pl.productVariant.size.name}`,
+      location: pl.warehouseLocation?.code ?? "Not put away",
+      shipped: Number(pl.quantity),
+      returned: returned.filter((x) => x.pickLineId === pl.id).reduce((sum, x) => sum + x.quantity, 0),
+    }));
+  });
+  const returnableTotal = returnRows.reduce((sum, row) => sum + Math.max(0, row.shipped - row.returned), 0);
+  const returnEnteredTotal = returnRows.reduce((sum, row) => sum + (Number(returnQty[row.key]) || 0), 0);
+  const returnOverLimit = returnRows.some((row) => (Number(returnQty[row.key]) || 0) > row.shipped - row.returned);
+
+  const submitReturn = async () => {
+    const lines = returnRows
+      .filter((row) => Number(returnQty[row.key]) > 0)
+      .map((row) => ({
+        dispatchItemId: row.item.id,
+        pickLineId: row.pickLine?.id ?? null,
+        quantity: Number(returnQty[row.key]),
+        remark: returnLineRemark[row.key]?.trim() || null,
+      }));
+    const ok = await runAction(`/api/v1/dispatches/${dispatch.id}/returns`, { remarks: returnRemarks.trim(), lines });
+    if (ok) {
+      setShowReturnModal(false);
+      setReturnQty({});
+      setReturnLineRemark({});
+      setReturnRemarks("");
+    }
   };
 
   const runAction = async (url: string, body?: unknown) => {
@@ -779,7 +848,24 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
       </div>
 
       <div>
-        <h2 className="mb-2 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Step 1 — Pick Lines</h2>
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Step 1 — Pick Lines</h2>
+          <button
+            type="button"
+            onClick={() => setShowPickLines((v) => !v)}
+            className="rounded-md border border-zinc-300 px-3 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+          >
+            {showPickLines ? "Hide pick lines" : "Show pick lines (choose Finished Goods location)"}
+          </button>
+        </div>
+        {!showPickLines ? (
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">
+            {pickLines.filter((l) => Number(l.quantity) > 0).length > 0
+              ? `${pickLines.reduce((sum, l) => sum + (Number(l.quantity) || 0), 0)} pcs picked from Finished Goods automatically${editable ? " — they are saved with Save Cartons" : ""}. Open this only to change which location stock is taken from.`
+              : "No pieces picked yet. Open this to take stock from a Finished Goods location."}
+          </p>
+        ) : (
+        <>
         <p className="mb-2 text-xs text-zinc-500 dark:text-zinc-400">
           <span className="font-medium text-zinc-700 dark:text-zinc-300">Which pieces leave stock, and from where:</span>{" "}
           each colour/size and how many pieces are taken from which location. A partial pick is fine while this
@@ -893,6 +979,8 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
               </tbody>
             </table>
           </div>
+        )}
+        </>
         )}
       </div>
 
@@ -1203,14 +1291,14 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
             <button onClick={() => setShowDeliverConfirm(true)} disabled={isBusy} className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60">
               Mark Delivered
             </button>
-            <button onClick={() => setShowReverseModal(true)} disabled={isBusy} className="rounded-md border border-red-300 px-4 py-2 text-sm text-red-700 hover:bg-red-50 disabled:opacity-60 dark:border-red-800 dark:text-red-400">
-              Reverse Dispatch
+            <button onClick={() => setShowReturnModal(true)} disabled={isBusy} className="rounded-md border border-red-300 px-4 py-2 text-sm text-red-700 hover:bg-red-50 disabled:opacity-60 dark:border-red-800 dark:text-red-400">
+              Customer Return
             </button>
           </>
         )}
         {dispatch.status === "DELIVERED" && (
-          <button onClick={() => setShowReverseModal(true)} disabled={isBusy} className="rounded-md border border-red-300 px-4 py-2 text-sm text-red-700 hover:bg-red-50 disabled:opacity-60 dark:border-red-800 dark:text-red-400">
-            Reverse / Return
+          <button onClick={() => setShowReturnModal(true)} disabled={isBusy} className="rounded-md border border-red-300 px-4 py-2 text-sm text-red-700 hover:bg-red-50 disabled:opacity-60 dark:border-red-800 dark:text-red-400">
+            Customer Return
           </button>
         )}
         {dispatch.status === "ON_HOLD" && (
@@ -1224,6 +1312,55 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
           </>
         )}
       </div>
+
+      {(dispatch.returns ?? []).length > 0 && (
+        <div>
+          <h2 className="mb-2 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Customer Returns</h2>
+          <div className="space-y-2">
+            {(dispatch.returns ?? []).map((ret) => (
+              <div key={ret.id} className="rounded-lg border border-zinc-200 p-3 text-sm dark:border-zinc-800">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-medium text-zinc-900 dark:text-zinc-50">
+                    {ret.returnNumber} · {ret.totalQuantity} pcs returned
+                  </span>
+                  <span className="text-xs text-zinc-500">
+                    <ClientDateTime value={ret.createdAt} />
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-300">Remark: {ret.remarks}</p>
+                {(ret.finishedGoodsReceipts ?? []).length > 0 && (
+                  <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-300">
+                    Finished Goods receipt:{" "}
+                    {(ret.finishedGoodsReceipts ?? []).map((fgr, i) => (
+                      <span key={fgr.id}>
+                        {i > 0 ? ", " : ""}
+                        <Link href={`/finished-goods-inventory/receipts/${fgr.id}`} className="text-indigo-600 hover:underline dark:text-indigo-400">
+                          {fgr.receiptNumber}
+                        </Link>{" "}
+                        ({fgr.status === "RECEIVED" ? "received into stock" : fgr.status === "PARTIALLY_RECEIVED" ? "partly received" : "waiting to be received"})
+                      </span>
+                    ))}
+                  </p>
+                )}
+                <ul className="mt-2 space-y-0.5 text-xs text-zinc-600 dark:text-zinc-300">
+                  {ret.items.map((line, index) => {
+                    const item = dispatch.items.find((i) => i.id === line.dispatchItemId);
+                    const pick = item?.pickLines.find((pl) => pl.id === line.pickLineId);
+                    return (
+                      <li key={index}>
+                        {item?.product.styleCode ?? "—"}
+                        {pick ? ` · ${pick.productVariant.color.name} / ${pick.productVariant.size.name} · ${pick.warehouseLocation?.code ?? "Not put away"}` : ""}
+                        {` · ${line.quantity} pcs`}
+                        {line.remark ? ` — ${line.remark}` : ""}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div>
         <h2 className="mb-3 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Attachments</h2>
@@ -1313,38 +1450,109 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
         </div>
       </Modal>
 
-      <Modal open={showReverseModal} onClose={() => setShowReverseModal(false)} title="Reverse Dispatch">
+      <Modal open={showReturnModal} onClose={() => setShowReturnModal(false)} title="Customer Return" maxWidthClass="max-w-5xl">
         <div className="space-y-4">
           <p className="text-sm text-zinc-600 dark:text-zinc-300">
-            Reversing this dispatch will return all goods to Finished Goods inventory, decrement the sales order fulfillment quantity, and mark this dispatch as REVERSED.
+            Enter how many pieces the customer sent back — all of them or only some. The Sales Order&apos;s shipped
+            quantity goes down now, and the pieces go to Finished Goods → Receive, where the store receives them into
+            stock (the location they were picked from is suggested). When every piece is back, this dispatch becomes
+            Reversed.
           </p>
-          <FormField label="Reversal Reason" htmlFor="reversalReason" required>
+          <div className="max-h-[50vh] overflow-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-zinc-200 text-left text-xs uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
+                  <th className="px-3 py-2 font-medium">Style</th>
+                  <th className="px-3 py-2 font-medium">Colour / Size</th>
+                  <th className="px-3 py-2 font-medium">Picked from</th>
+                  <th className="px-3 py-2 text-right font-medium">Shipped</th>
+                  <th className="px-3 py-2 text-right font-medium">Already returned</th>
+                  <th className="px-3 py-2 font-medium">Return now</th>
+                  <th className="px-3 py-2 font-medium">Remark (optional)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {returnRows.map((row) => {
+                  const left = row.shipped - row.returned;
+                  const value = Number(returnQty[row.key]) || 0;
+                  return (
+                    <tr key={row.key} className="border-b border-zinc-100 last:border-0 dark:border-zinc-800">
+                      <td className="px-3 py-2">{row.item.product.styleCode}</td>
+                      <td className="px-3 py-2">{row.label}</td>
+                      <td className="px-3 py-2">{row.location}</td>
+                      <td className="px-3 py-2 text-right">{row.shipped}</td>
+                      <td className="px-3 py-2 text-right">{row.returned}</td>
+                      <td className="px-3 py-2">
+                        <input
+                          type="number"
+                          min={0}
+                          max={left}
+                          step={1}
+                          disabled={left <= 0}
+                          value={returnQty[row.key] ?? ""}
+                          onChange={(e) => setReturnQty((prev) => ({ ...prev, [row.key]: e.target.value }))}
+                          placeholder={left > 0 ? `max ${left}` : "all back"}
+                          aria-label={`Return quantity for ${row.item.product.styleCode} ${row.label}`}
+                          className={`${textInputClass()} w-24 ${value > left ? "border-red-500" : ""}`}
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <input
+                          value={returnLineRemark[row.key] ?? ""}
+                          onChange={(e) => setReturnLineRemark((prev) => ({ ...prev, [row.key]: e.target.value }))}
+                          disabled={left <= 0}
+                          placeholder="e.g. damaged, wrong size"
+                          className={textInputClass()}
+                        />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+            <button
+              type="button"
+              onClick={() =>
+                setReturnQty(
+                  Object.fromEntries(
+                    returnRows.filter((row) => row.shipped - row.returned > 0).map((row) => [row.key, String(row.shipped - row.returned)])
+                  )
+                )
+              }
+              className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs text-zinc-700 dark:border-zinc-700 dark:text-zinc-200"
+            >
+              Return everything ({returnableTotal} pcs)
+            </button>
+            <span className={returnOverLimit ? "text-red-600 dark:text-red-400" : "text-zinc-600 dark:text-zinc-300"}>
+              {returnOverLimit ? "A quantity is more than can still be returned." : `Returning ${returnEnteredTotal} of ${returnableTotal} pcs`}
+            </span>
+          </div>
+          <FormField label="Return remark" htmlFor="returnRemarks" required>
             <input
-              id="reversalReason"
-              value={reversalReason}
-              onChange={(e) => setReversalReason(e.target.value)}
-              placeholder="e.g. Carrier handover cancelled / Transit damage / Customer return"
+              id="returnRemarks"
+              value={returnRemarks}
+              onChange={(e) => setReturnRemarks(e.target.value)}
+              placeholder="e.g. Customer returned 2 pcs — stitching defect"
               className={textInputClass()}
             />
           </FormField>
           <div className="flex justify-end gap-3">
             <button
               type="button"
-              onClick={() => setShowReverseModal(false)}
+              onClick={() => setShowReturnModal(false)}
               className="rounded-md border border-zinc-300 px-4 py-2 text-sm text-zinc-700 dark:border-zinc-700 dark:text-zinc-200"
             >
               Cancel
             </button>
             <button
               type="button"
-              disabled={isBusy || !reversalReason.trim()}
-              onClick={async () => {
-                const ok = await runAction(`/api/v1/dispatches/${dispatch.id}/reverse`, { reason: reversalReason.trim() });
-                if (ok) setShowReverseModal(false);
-              }}
+              disabled={isBusy || !returnRemarks.trim() || returnEnteredTotal <= 0 || returnOverLimit}
+              onClick={submitReturn}
               className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-500 disabled:opacity-60"
             >
-              Confirm Reversal
+              {returnEnteredTotal > 0 ? `Return ${returnEnteredTotal} pcs` : "Return"}
             </button>
           </div>
         </div>

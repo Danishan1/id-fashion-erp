@@ -14,6 +14,8 @@ export const FinishedGoodsReceiptListRepository = {
         productionOrder: { select: { id: true, orderNumber: true } },
         warehouse: { select: { id: true, code: true, name: true } },
         postedBy: { select: { id: true, fullName: true } },
+        dispatch: { select: { id: true, dispatchNumber: true } },
+        dispatchReturn: { select: { id: true, returnNumber: true } },
       },
       ...args,
     }),
@@ -30,7 +32,18 @@ export const FinishedGoodsReceiptListRepository = {
         productionOrder: { select: { id: true, orderNumber: true } },
         warehouse: { select: { id: true, code: true, name: true } },
         postedBy: { select: { id: true, fullName: true } },
+        dispatch: { select: { id: true, dispatchNumber: true } },
+        dispatchReturn: { select: { id: true, returnNumber: true, remarks: true } },
         items: { include: { productVariant: { include: { color: true, size: true } } } },
+        // Receive log (2026-10-22): every receive action, oldest first.
+        postings: {
+          orderBy: { createdAt: "asc" },
+          include: {
+            receivedBy: { select: { fullName: true } },
+            warehouseLocation: { select: { code: true } },
+            receiptItem: { select: { productVariant: { include: { color: true, size: true } } } },
+          },
+        },
       },
     }),
 };

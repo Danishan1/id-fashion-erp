@@ -1,7 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingService";
-import { recordInventoryTransaction } from "@/modules/inventory/inventory.service";
 import { FinishedGoodsReceiptRepository } from "./finished-goods-receipt.repository";
 
 const EPSILON = 0.0001; // matches createLot()'s own LotVariantBreakdown sum-tolerance exactly
@@ -31,6 +30,11 @@ export interface CreateFinishedGoodsReceiptParams {
 }
 
 /**
+ * CHANGED 2026-10-22: this now creates a PENDING receipt and posts NO stock;
+ * receiveFinishedGoods() (finished-goods-receive.service.ts) posts the ledger
+ * when the store receives the goods into a location. The history below
+ * describes the original immediate-posting design.
+ *
  * Finished Goods Inventory module (FGI-012) — creates a FinishedGoodsReceipt
  * header + one FinishedGoodsReceiptItem per colour/size line, posting one
  * `recordInventoryTransaction()` call per variant line (§6 point 3 of the
@@ -125,21 +129,10 @@ export async function createFinishedGoodsReceiptInTx(
     documentType: "FG_RECEIPT",
   });
 
-  const items: { productVariantId: string; quantity: number; inventoryTransactionId: string }[] = [];
-  for (const row of params.variantBreakdown) {
-    const ledgerRow = await recordInventoryTransaction(tx, actor, {
-      productId: params.productId,
-      warehouseId: params.warehouseId,
-      transactionType: "PRODUCTION_RECEIPT",
-      quantity: row.quantity,
-      referenceModule: "PRODUCTION_ORDER",
-      referenceRecordId: params.lotId,
-      productVariantId: row.productVariantId,
-      stockStatus: "SALEABLE",
-    });
-    items.push({ productVariantId: row.productVariantId, quantity: row.quantity, inventoryTransactionId: ledgerRow.id });
-  }
-
+  // Receive step (2026-10-22): packed goods wait here as PENDING and are
+  // NOT posted to stock yet. The store receives them into a location on the
+  // Finished Goods Receive page (receiveFinishedGoods), which posts the
+  // ledger — so stock shows up only once it is actually received.
   return FinishedGoodsReceiptRepository.createWithItemsInTx(tx, {
     companyId: actor.companyId,
     branchId: actor.branchId ?? null,
@@ -152,7 +145,9 @@ export async function createFinishedGoodsReceiptInTx(
     // The validated breakdown sum, never independently recomputed — the
     // single-shared-input discipline §4.5 point 2 requires.
     totalQuantity: breakdownSum,
+    source: "PRODUCTION",
+    status: "PENDING",
     postedByUserId: actor.userId,
-    items,
+    items: params.variantBreakdown.map((row) => ({ productVariantId: row.productVariantId, quantity: row.quantity })),
   });
 }

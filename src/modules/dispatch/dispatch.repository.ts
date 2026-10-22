@@ -38,6 +38,14 @@ const detailInclude = {
       },
     },
   },
+  // Customer returns against this dispatch (2026-10-22), newest first.
+  returns: {
+    orderBy: { createdAt: "desc" as const },
+    include: {
+      items: true,
+      finishedGoodsReceipts: { select: { id: true, receiptNumber: true, status: true } },
+    },
+  },
 } satisfies Prisma.DispatchInclude;
 
 // Extra Dispatch Quantity (2026-09-30) — the shape buildDispatchItems() in
