@@ -511,13 +511,16 @@ export function SalesOrderForm({
   };
 
   return (
-    <form onSubmit={handleSubmit} className="max-w-3xl space-y-6">
+    <form onSubmit={handleSubmit} className="w-full space-y-6">
       {!initialOrder && originatingOpportunityId && (
         <p className="rounded-md bg-indigo-50 px-3 py-2 text-sm text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-300">
           Creating this order from Opportunity {originatingOpportunityNumber ?? originatingOpportunityId} — the link will be recorded on the order.
         </p>
       )}
-      <div className="grid grid-cols-2 gap-4">
+      {/* One responsive grid for the header fields, so the full-width form
+          puts them side by side on wide screens instead of stretching two
+          columns across the page. */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         <FormField label="Customer" htmlFor="customerId" required>
           <SearchableSelect
             id="customerId"
@@ -545,9 +548,7 @@ export function SalesOrderForm({
             placeholder="Search buyer…"
           />
         </FormField>
-      </div>
 
-      <div className="grid grid-cols-2 gap-4">
         <FormField label="Order Date" htmlFor="orderDate" required>
           <input
             id="orderDate"
@@ -567,9 +568,7 @@ export function SalesOrderForm({
             className={textInputClass()}
           />
         </FormField>
-      </div>
 
-      <div className="grid grid-cols-2 gap-4">
         <FormField label="Customer PO Number (optional)" htmlFor="customerPoNumber">
           <input
             id="customerPoNumber"
@@ -608,7 +607,9 @@ export function SalesOrderForm({
               )}
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            {/* Style | Design and Unit Price | Notes sit in one row on wide screens. */}
+            <div className="grid gap-3 xl:grid-cols-2">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <FormField label="Style" htmlFor={`style-${index}`} required>
                 <SearchableSelect
                   id={`style-${index}`}
@@ -668,7 +669,7 @@ export function SalesOrderForm({
               </FormField>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <FormField label="Unit Price" htmlFor={`price-${index}`} required>
                 <input
                   id={`price-${index}`}
@@ -705,6 +706,7 @@ export function SalesOrderForm({
                   className={textInputClass()}
                 />
               </FormField>
+            </div>
             </div>
 
             {item.productId && (
@@ -859,23 +861,25 @@ function VariantQuantityGrid({
     onChange(patch);
   };
 
-  const fillInputClass =
-    "w-11 rounded border border-dashed border-zinc-300 bg-transparent px-1 py-1 text-center text-xs text-zinc-500 focus:border-indigo-400 focus:outline-none dark:border-zinc-600 dark:text-zinc-400";
-  // w-20 (was w-14) — a 5-digit quantity like "10000" was clipping inside
-  // the old 56px box (2026-09-05); widened to 80px, with the size <col>
-  // below widened to match so the table's own alignment (header/fill-row/
-  // data-rows sharing one <colgroup>) stays consistent.
-  const cellInputClass =
-    "w-20 rounded-md border border-zinc-300 bg-white px-1 py-1.5 text-center text-xs text-zinc-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100";
+  // Quantities run up to 5 digits (10000). Inputs render at the global 15px
+  // input size (not text-xs), so the boxes are sized for that: the cell is
+  // 96px and the fill box 64px. The browser's up/down spinner is hidden — it
+  // is no use for typing large numbers and it covered the digits. The <col>
+  // widths below are widened to match so header, fill row and data rows
+  // (sharing one <colgroup>) stay aligned.
+  const noSpinnerClass =
+    "[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none";
+  const fillInputClass = `w-16 rounded border border-dashed border-zinc-300 bg-transparent px-1 py-1 text-center text-xs text-zinc-500 focus:border-indigo-400 focus:outline-none dark:border-zinc-600 dark:text-zinc-400 ${noSpinnerClass}`;
+  const cellInputClass = `w-24 rounded-md border border-zinc-300 bg-white px-1 py-1.5 text-center text-xs text-zinc-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100 ${noSpinnerClass}`;
 
   return (
     <div className="mt-1.5 overflow-x-auto rounded-md border border-zinc-200 dark:border-zinc-800">
       <table className="w-full table-fixed border-collapse text-xs">
         <colgroup>
           <col style={{ width: 108 }} />
-          <col style={{ width: 84 }} />
+          <col style={{ width: 100 }} />
           {sizes.map((size) => (
-            <col key={size.id} style={{ width: 96 }} />
+            <col key={size.id} style={{ width: 112 }} />
           ))}
         </colgroup>
         <thead>
