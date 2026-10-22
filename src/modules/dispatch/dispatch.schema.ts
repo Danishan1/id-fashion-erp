@@ -119,7 +119,8 @@ export type SetCartonsInput = z.infer<typeof setCartonsSchema>;
 export const pickLineInputSchema = z.object({
   dispatchItemId: z.string().uuid("Dispatch line is required"),
   productVariantId: z.string().uuid("Colour/size variant is required"),
-  warehouseLocationId: z.string().uuid("Warehouse location is required"),
+  // Empty/null = stock not yet put away to a location (staging), 2026-10-22.
+  warehouseLocationId: z.string().uuid().nullable().optional().or(z.literal("")),
   quantity: z.coerce.number().positive("Quantity must be greater than 0"),
 });
 

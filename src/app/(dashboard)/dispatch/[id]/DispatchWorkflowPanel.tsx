@@ -23,7 +23,8 @@ interface PickLineRow {
   productVariantId: string;
   quantity: number;
   productVariant: VariantRefWithIds;
-  warehouseLocation: WarehouseLocationRef;
+  /** null = picked from stock not yet put away to a location. */
+  warehouseLocation: WarehouseLocationRef | null;
 }
 
 interface DispatchItemRow {
@@ -155,6 +156,29 @@ interface DraftPickLine {
   quantity: string;
 }
 
+/** Draft value for "stock not yet put away to a location" ("" means not chosen yet). */
+const STAGING = "staging";
+
+interface SuggestedPickLine {
+  dispatchItemId: string;
+  productVariantId: string;
+  warehouseLocationId: string | null;
+  locationLabel: string;
+  quantity: number;
+}
+
+/** One carton holding every suggested piece, one line per colour/size. */
+function cartonFromPicks(picks: SuggestedPickLine[]): DraftCarton[] {
+  const byVariant = new Map<string, DraftCartonItem>();
+  for (const p of picks) {
+    const key = `${p.dispatchItemId}:${p.productVariantId}`;
+    const existing = byVariant.get(key);
+    if (existing) existing.quantity = String(Number(existing.quantity) + p.quantity);
+    else byVariant.set(key, { dispatchItemId: p.dispatchItemId, productVariantId: p.productVariantId, quantity: String(p.quantity) });
+  }
+  return byVariant.size > 0 ? [{ items: Array.from(byVariant.values()) }] : [];
+}
+
 function formatFileSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -224,7 +248,7 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
       item.pickLines.map((l) => ({
         dispatchItemId: l.dispatchItemId,
         productVariantId: l.productVariantId,
-        warehouseLocationId: l.warehouseLocation.id,
+        warehouseLocationId: l.warehouseLocation?.id ?? STAGING,
         quantity: String(l.quantity),
       }))
     )
@@ -236,6 +260,58 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
       .then((res) => res.json())
       .then((body) => setWarehouseLocations(body.data?.locations ?? []));
   }, [dispatch.warehouse.id]);
+
+  // Auto-fill (2026-10-22): pick lines (and one carton) from the Sales Order
+  // and the Finished Goods in stock, so the user doesn't type each line.
+  // Filled automatically when the dispatch has none yet; never saved until
+  // the user clicks Save.
+  const [autoFillMessage, setAutoFillMessage] = useState<string | null>(null);
+  const loadSuggestions = async (): Promise<SuggestedPickLine[] | null> => {
+    const res = await fetch(`/api/v1/dispatches/${dispatch.id}/suggested-pick-lines`);
+    if (!res.ok) return null;
+    return ((await res.json()).data ?? []) as SuggestedPickLine[];
+  };
+  const describeFill = (picks: SuggestedPickLine[]) => {
+    const total = picks.reduce((sum, p) => sum + p.quantity, 0);
+    const toShip = dispatch.items.reduce((sum, i) => sum + i.dispatchedQuantity, 0);
+    if (picks.length === 0) return "No finished goods of the ordered colours/sizes are in stock at this warehouse to fill.";
+    return total < toShip
+      ? `Filled ${total} of ${toShip} pcs from stock (the rest isn't in finished goods yet). Review, then Save.`
+      : `Filled all ${total} pcs from the Sales Order and stock. Review, then Save.`;
+  };
+  const toDraftPicks = (picks: SuggestedPickLine[]): DraftPickLine[] =>
+    picks.map((p) => ({
+      dispatchItemId: p.dispatchItemId,
+      productVariantId: p.productVariantId,
+      warehouseLocationId: p.warehouseLocationId ?? STAGING,
+      quantity: String(p.quantity),
+    }));
+
+  useEffect(() => {
+    const hasPicks = dispatch.items.some((i) => i.pickLines.length > 0);
+    if (!editable || hasPicks) return;
+    loadSuggestions().then((picks) => {
+      if (!picks || picks.length === 0) return;
+      setPickLines(toDraftPicks(picks));
+      if (dispatch.cartons.length === 0) setCartons(cartonFromPicks(picks));
+      setAutoFillMessage(describeFill(picks));
+    });
+    // Runs once per dispatch (the panel is keyed by id).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const fillPicksFromOrder = async () => {
+    const picks = await loadSuggestions();
+    if (!picks) return;
+    setPickLines(toDraftPicks(picks));
+    setAutoFillMessage(describeFill(picks));
+  };
+  const fillCartonFromPicks = () => {
+    const picks: SuggestedPickLine[] = pickLines
+      .filter((l) => l.dispatchItemId && l.productVariantId && Number(l.quantity) > 0)
+      .map((l) => ({ dispatchItemId: l.dispatchItemId, productVariantId: l.productVariantId, warehouseLocationId: null, locationLabel: "", quantity: Number(l.quantity) }));
+    setCartons(cartonFromPicks(picks));
+  };
 
   const pickedByItemId = new Map<string, number>();
   for (const line of pickLines) {
@@ -261,7 +337,7 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
           .map((l) => ({
             dispatchItemId: l.dispatchItemId,
             productVariantId: l.productVariantId,
-            warehouseLocationId: l.warehouseLocationId,
+            warehouseLocationId: l.warehouseLocationId === STAGING ? null : l.warehouseLocationId,
             quantity: Number(l.quantity),
           })),
       }),
@@ -669,6 +745,7 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
                     className={textInputClass()}
                   >
                     <option value="">— Location —</option>
+                    <option value={STAGING}>Not put away (no location)</option>
                     {warehouseLocations.map((loc) => (
                       <option key={loc.id} value={loc.id}>
                         {loc.code}
@@ -688,7 +765,15 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
                 </div>
               );
             })}
-            <div className="flex gap-3">
+            {autoFillMessage && (
+              <p className="rounded-md bg-indigo-50 px-3 py-2 text-sm text-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-300">
+                {autoFillMessage}
+              </p>
+            )}
+            <div className="flex flex-wrap gap-3">
+              <button type="button" onClick={fillPicksFromOrder} className="rounded-md border border-indigo-300 px-3 py-1.5 text-sm font-medium text-indigo-700 hover:bg-indigo-50 dark:border-indigo-700 dark:text-indigo-300">
+                Fill from Sales Order
+              </button>
               <button type="button" onClick={addPickLine} className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 dark:border-zinc-700 dark:text-zinc-200">
                 + Add Pick Line
               </button>
@@ -723,7 +808,7 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
                       <td className="px-3 py-2">
                         {l.productVariant.color.name} / {l.productVariant.size.name}
                       </td>
-                      <td className="px-3 py-2">{l.warehouseLocation.code}</td>
+                      <td className="px-3 py-2">{l.warehouseLocation?.code ?? "Not put away"}</td>
                       <td className="px-3 py-2">{l.quantity}</td>
                     </tr>
                   ))
@@ -867,7 +952,10 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
                 </div>
               </div>
             ))}
-            <div className="flex gap-3">
+            <div className="flex flex-wrap gap-3">
+              <button type="button" onClick={fillCartonFromPicks} className="rounded-md border border-indigo-300 px-3 py-1.5 text-sm font-medium text-indigo-700 hover:bg-indigo-50 dark:border-indigo-700 dark:text-indigo-300">
+                Fill one carton from picks
+              </button>
               <button type="button" onClick={addCarton} className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 dark:border-zinc-700 dark:text-zinc-200">
                 + Add Carton
               </button>

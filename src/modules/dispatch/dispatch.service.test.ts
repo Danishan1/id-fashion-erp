@@ -41,10 +41,14 @@ vi.mock("@/modules/production/production-progress.service", () => ({
   getSalesOrderItemProductionSummary: vi.fn(),
 }));
 const breakdownFindMany = vi.hoisted(() => vi.fn().mockResolvedValue([]));
+const pickLineFindMany = vi.hoisted(() => vi.fn().mockResolvedValue([]));
+const fgBalanceFindMany = vi.hoisted(() => vi.fn().mockResolvedValue([]));
 vi.mock("@/core/db/client", () => ({
   prisma: {
     $transaction: vi.fn(),
     salesOrderItemBreakdown: { findMany: breakdownFindMany },
+    finishedGoodsPickLine: { findMany: pickLineFindMany },
+    finishedGoodsStockBalance: { findMany: fgBalanceFindMany },
     dispatchItem: { aggregate: vi.fn() },
     product: { findFirst: vi.fn() },
     productionOrder: { findMany: vi.fn() },
@@ -92,6 +96,7 @@ const {
   listDispatches,
   getDispatchById,
   reverseDispatch,
+  getSuggestedPickLines,
 } = await import("./dispatch.service");
 
 const actor = { companyId: "co-1", userId: "user-1", branchId: null };
@@ -1824,3 +1829,65 @@ describe("reverseDispatch — post-confirmation stock restoration, accumulator d
   });
 });
 
+
+// Auto-fill (2026-10-22): pick lines from the Sales Order and Finished Goods stock.
+describe("getSuggestedPickLines", () => {
+  const variantRow = (id: string, color: string, size: string, ordered: number, sortOrder: number) => ({
+    salesOrderItemId: "soi-1",
+    productVariantId: id,
+    orderedQuantity: ordered,
+    productVariant: { color: { name: color }, size: { name: size, sortOrder } },
+  });
+
+  beforeEach(() => {
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(null);
+    vi.mocked(DispatchRepository.findByIdWithDetails).mockResolvedValue({
+      id: "disp-9",
+      branchId: "b-1",
+      warehouseId: "wh-1",
+      items: [{ id: "di-9", productId: "prod-9", salesOrderItemId: "soi-1", dispatchedQuantity: 10, salesOrderItem: { salesOrderLineId: "sol-1" } }],
+    } as never);
+    breakdownFindMany.mockResolvedValue([variantRow("var-S", "Black", "S", 4, 1), variantRow("var-M", "Black", "M", 6, 2)]);
+    pickLineFindMany.mockReset().mockResolvedValue([]);
+    fgBalanceFindMany.mockReset();
+  });
+
+  it("fills each ordered colour/size from the locations holding it, put-away locations first", async () => {
+    vi.mocked(getFinishedGoodsAvailableForOrderLine).mockResolvedValue(100);
+    fgBalanceFindMany.mockImplementation(async ({ where }: { where: { productVariantId: string } }) =>
+      where.productVariantId === "var-S"
+        ? [
+            { warehouseLocationId: null, quantityOnHand: 10, warehouseLocation: null },
+            { warehouseLocationId: "loc-A", quantityOnHand: 3, warehouseLocation: { code: "A" } },
+          ]
+        : [{ warehouseLocationId: null, quantityOnHand: 6, warehouseLocation: null }]
+    );
+
+    const lines = await getSuggestedPickLines(actor, "disp-9");
+
+    expect(lines).toEqual([
+      { dispatchItemId: "di-9", productVariantId: "var-S", warehouseLocationId: "loc-A", locationLabel: "A", quantity: 3 },
+      { dispatchItemId: "di-9", productVariantId: "var-S", warehouseLocationId: null, locationLabel: "Not put away", quantity: 1 },
+      { dispatchItemId: "di-9", productVariantId: "var-M", warehouseLocationId: null, locationLabel: "Not put away", quantity: 6 },
+    ]);
+  });
+
+  it("fills only what's in stock when stock is short (partial)", async () => {
+    vi.mocked(getFinishedGoodsAvailableForOrderLine).mockImplementation(async (_c, _p, variantId) => (variantId === "var-S" ? 2 : 0));
+    fgBalanceFindMany.mockResolvedValue([{ warehouseLocationId: null, quantityOnHand: 2, warehouseLocation: null }]);
+
+    const lines = await getSuggestedPickLines(actor, "disp-9");
+
+    expect(lines).toEqual([{ dispatchItemId: "di-9", productVariantId: "var-S", warehouseLocationId: null, locationLabel: "Not put away", quantity: 2 }]);
+  });
+
+  it("skips what earlier dispatches of the same order line already shipped", async () => {
+    vi.mocked(getFinishedGoodsAvailableForOrderLine).mockResolvedValue(100);
+    pickLineFindMany.mockResolvedValue([{ productVariantId: "var-S", quantity: 4, dispatchItem: { salesOrderItemId: "soi-1" } }]);
+    fgBalanceFindMany.mockResolvedValue([{ warehouseLocationId: null, quantityOnHand: 50, warehouseLocation: null }]);
+
+    const lines = await getSuggestedPickLines(actor, "disp-9");
+
+    expect(lines.map((l) => [l.productVariantId, l.quantity])).toEqual([["var-M", 6]]);
+  });
+});

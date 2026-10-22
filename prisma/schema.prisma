@@ -6076,7 +6076,9 @@ model FinishedGoodsPickLine {
   companyId           String   @map("company_id") @db.Uuid
   dispatchItemId      String   @map("dispatch_item_id") @db.Uuid
   productVariantId    String   @map("product_variant_id") @db.Uuid
-  warehouseLocationId String   @map("warehouse_location_id") @db.Uuid
+  // Null (2026-10-22) = picked from stock received at the warehouse but not
+  // yet put away to a location (the null-location FG balance, "staging").
+  warehouseLocationId String?  @map("warehouse_location_id") @db.Uuid
   quantity            Decimal  @map("quantity") @db.Decimal(18, 4)
   pickedByUserId      String   @map("picked_by_user_id") @db.Uuid
   pickedAt            DateTime @default(now()) @map("picked_at")
@@ -6084,7 +6086,7 @@ model FinishedGoodsPickLine {
   company           Company           @relation(fields: [companyId], references: [id])
   dispatchItem      DispatchItem      @relation(fields: [dispatchItemId], references: [id])
   productVariant    ProductVariant    @relation(fields: [productVariantId], references: [id])
-  warehouseLocation WarehouseLocation @relation(fields: [warehouseLocationId], references: [id])
+  warehouseLocation WarehouseLocation? @relation(fields: [warehouseLocationId], references: [id], onDelete: Restrict)
   pickedBy          User              @relation("FinishedGoodsPickLinePickedBy", fields: [pickedByUserId], references: [id])
 
   @@index([dispatchItemId])

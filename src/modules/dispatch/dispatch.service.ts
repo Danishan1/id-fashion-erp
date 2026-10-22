@@ -218,6 +218,86 @@ export async function getDispatchById(actor: { companyId: string; userId: string
   return { ...dispatch, items };
 }
 
+export interface SuggestedPickLine {
+  dispatchItemId: string;
+  productVariantId: string;
+  /** null = stock not yet put away to a location. */
+  warehouseLocationId: string | null;
+  locationLabel: string;
+  quantity: number;
+}
+
+/**
+ * Auto-fill for picking (2026-10-22): for each colour/size the Sales Order
+ * line ordered, the pieces still to ship (ordered minus what earlier
+ * dispatches of this line already shipped), limited to the line's quantity
+ * on this dispatch and to the Saleable Finished Goods available to this
+ * order, taken from the locations that actually hold them (put-away
+ * locations first, then stock not yet put away). Fills whatever is there —
+ * a partial pick when stock is short. Read-only; the user reviews and saves.
+ */
+export async function getSuggestedPickLines(actor: { companyId: string; userId: string }, id: string): Promise<SuggestedPickLine[]> {
+  const dispatch = await getDispatchById(actor, id);
+
+  const shippedRows = await prisma.finishedGoodsPickLine.findMany({
+    where: {
+      companyId: actor.companyId,
+      dispatchItem: {
+        salesOrderItemId: { in: dispatch.items.map((i) => i.salesOrderItemId) },
+        dispatch: { status: { in: ["DISPATCHED", "DELIVERED"] }, id: { not: dispatch.id } },
+      },
+    },
+    select: { productVariantId: true, quantity: true, dispatchItem: { select: { salesOrderItemId: true } } },
+  });
+  const shipped = new Map<string, number>();
+  for (const row of shippedRows) {
+    const key = `${row.dispatchItem.salesOrderItemId}:${row.productVariantId}`;
+    shipped.set(key, (shipped.get(key) ?? 0) + Number(row.quantity));
+  }
+
+  const lines: SuggestedPickLine[] = [];
+  for (const item of dispatch.items) {
+    let itemLeft = item.dispatchedQuantity;
+    for (const variant of item.orderedVariants) {
+      if (itemLeft <= 0) break;
+      const stillToShip = variant.orderedQuantity - (shipped.get(`${item.salesOrderItemId}:${variant.productVariantId}`) ?? 0);
+      let need = Math.min(stillToShip, itemLeft, Math.max(0, variant.availableQuantity));
+      if (need <= 0) continue;
+
+      const balances = await prisma.finishedGoodsStockBalance.findMany({
+        where: {
+          companyId: actor.companyId,
+          productId: item.productId,
+          productVariantId: variant.productVariantId,
+          warehouseId: dispatch.warehouseId,
+          stockStatus: "SALEABLE",
+          quantityOnHand: { gt: 0 },
+        },
+        select: { warehouseLocationId: true, quantityOnHand: true, warehouseLocation: { select: { code: true } } },
+      });
+      balances.sort((a, b) => {
+        if (!a.warehouseLocationId !== !b.warehouseLocationId) return a.warehouseLocationId ? -1 : 1;
+        return (a.warehouseLocation?.code ?? "").localeCompare(b.warehouseLocation?.code ?? "");
+      });
+      for (const balance of balances) {
+        if (need <= 0) break;
+        const take = Math.min(need, Number(balance.quantityOnHand));
+        if (take <= 0) continue;
+        lines.push({
+          dispatchItemId: item.id,
+          productVariantId: variant.productVariantId,
+          warehouseLocationId: balance.warehouseLocationId,
+          locationLabel: balance.warehouseLocation?.code ?? "Not put away",
+          quantity: take,
+        });
+        need -= take;
+        itemLeft -= take;
+      }
+    }
+  }
+  return lines;
+}
+
 export interface OrderedVariant {
   productVariantId: string;
   colorName: string;
@@ -826,7 +906,7 @@ export async function setPickLines(actor: ActorContext, id: string, input: SetPi
   const variants = variantIds.length > 0 ? await ProductVariantRepository.findManyByIds(variantIds) : [];
   const variantById = new Map(variants.map((v) => [v.id, v]));
 
-  const locationIds = [...new Set(input.pickLines.map((l) => l.warehouseLocationId))];
+  const locationIds = [...new Set(input.pickLines.map((l) => l.warehouseLocationId).filter((x): x is string => !!x))];
   const locationEntries = await Promise.all(
     locationIds.map(async (locationId) => [locationId, await WarehouseLocationRepository.findByIdWithWarehouse(locationId)] as const)
   );
@@ -850,6 +930,8 @@ export async function setPickLines(actor: ActorContext, id: string, input: SetPi
     }
     assertVariantWasOrdered(orderedByItem, line.dispatchItemId, line.productVariantId, item.product.styleName);
 
+    // No location = stock not yet put away (staging) — nothing more to check.
+    if (!line.warehouseLocationId) continue;
     const location = locationById.get(line.warehouseLocationId);
     if (!location || location.warehouse.companyId !== actor.companyId) {
       throw new BusinessRuleError("NOT_FOUND", "Warehouse location not found.", { id: line.warehouseLocationId });
@@ -868,7 +950,7 @@ export async function setPickLines(actor: ActorContext, id: string, input: SetPi
     input.pickLines.map((l) => ({
       dispatchItemId: l.dispatchItemId,
       productVariantId: l.productVariantId,
-      warehouseLocationId: l.warehouseLocationId,
+      warehouseLocationId: l.warehouseLocationId || null,
       quantity: l.quantity,
       companyId: actor.companyId,
       pickedByUserId: actor.userId,

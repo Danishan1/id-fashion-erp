@@ -150,7 +150,7 @@ export const DispatchRepository = {
    */
   setPickLines: (
     dispatchId: string,
-    pickLines: Array<{ dispatchItemId: string; productVariantId: string; warehouseLocationId: string; quantity: number; companyId: string; pickedByUserId: string }>
+    pickLines: Array<{ dispatchItemId: string; productVariantId: string; warehouseLocationId: string | null; quantity: number; companyId: string; pickedByUserId: string }>
   ) =>
     prisma.$transaction(async (tx) => {
       const itemIds = (await tx.dispatchItem.findMany({ where: { dispatchId }, select: { id: true } })).map((i) => i.id);
