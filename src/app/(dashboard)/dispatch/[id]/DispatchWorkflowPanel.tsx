@@ -186,6 +186,55 @@ function formatFileSize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+interface PackBalance {
+  dispatchItemId: string;
+  productVariantId: string;
+  /** Picked (or, with no pick lines yet, ordered) pieces of this colour/size. */
+  toPack: number;
+  /** Already in a carton on this screen. */
+  packed: number;
+  /** Finished Goods in stock for this order line, or null when unknown. */
+  inStock: number | null;
+}
+
+/**
+ * Pieces still to pack per colour/size (2026-10-22): what was picked (or,
+ * with no pick lines yet, ordered) minus what the cartons on screen already
+ * hold — so a new carton can start with exactly what's left.
+ */
+export function computePackBalances(
+  items: Array<Pick<DispatchItemRow, "id" | "orderedVariants">>,
+  pickLines: Array<{ dispatchItemId: string; productVariantId: string; quantity: string }>,
+  cartons: Array<{ items: Array<{ dispatchItemId: string; productVariantId: string; quantity: string }> }>
+): PackBalance[] {
+  const rows = new Map<string, PackBalance>();
+  const rowFor = (dispatchItemId: string, productVariantId: string) => {
+    const key = `${dispatchItemId}:${productVariantId}`;
+    let row = rows.get(key);
+    if (!row) {
+      const ordered = items.find((i) => i.id === dispatchItemId)?.orderedVariants?.find((v) => v.productVariantId === productVariantId);
+      row = { dispatchItemId, productVariantId, toPack: 0, packed: 0, inStock: ordered ? ordered.availableQuantity : null };
+      rows.set(key, row);
+    }
+    return row;
+  };
+  for (const item of items) {
+    const picks = pickLines.filter((l) => l.dispatchItemId === item.id && l.productVariantId && Number(l.quantity) > 0);
+    if (picks.length > 0) {
+      for (const l of picks) rowFor(item.id, l.productVariantId).toPack += Number(l.quantity);
+    } else {
+      for (const v of item.orderedVariants ?? []) rowFor(item.id, v.productVariantId).toPack += v.orderedQuantity;
+    }
+  }
+  for (const carton of cartons) {
+    for (const line of carton.items) {
+      if (!line.dispatchItemId || !line.productVariantId) continue;
+      rowFor(line.dispatchItemId, line.productVariantId).packed += Number(line.quantity) || 0;
+    }
+  }
+  return Array.from(rows.values());
+}
+
 /** Colour/size options for one dispatch line: the Sales Order's ordered variants, or every style variant when none are known. */
 function variantOptionsFor(item: DispatchItemRow | undefined, variantsByProduct: Record<string, VariantRef[]>) {
   if (!item) return [];
@@ -359,12 +408,39 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
     }
   }
 
-  const addCarton = () => setCartons((prev) => [...prev, { items: [] }]);
+  const packBalances = computePackBalances(dispatch.items, pickLines, cartons);
+  const balanceFor = (dispatchItemId: string, productVariantId: string) =>
+    packBalances.find((b) => b.dispatchItemId === dispatchItemId && b.productVariantId === productVariantId);
+
+  // A new carton starts with every piece that is picked but not yet in a
+  // carton, so packing the rest of the order is one click. Empty when all is packed.
+  const addCarton = () =>
+    setCartons((prev) => {
+      const remaining = computePackBalances(dispatch.items, pickLines, prev).filter((b) => b.toPack - b.packed > 0);
+      return [
+        ...prev,
+        {
+          items: remaining.map((b) => ({
+            dispatchItemId: b.dispatchItemId,
+            productVariantId: b.productVariantId,
+            quantity: String(b.toPack - b.packed),
+          })),
+        },
+      ];
+    });
   const removeCarton = (cartonIndex: number) => setCartons((prev) => prev.filter((_, i) => i !== cartonIndex));
+  // Manual line: the style is pre-chosen when the dispatch has only one.
   const addLine = (cartonIndex: number) =>
     setCartons((prev) =>
       prev.map((c, i) =>
-        i === cartonIndex ? { items: [...c.items, { dispatchItemId: "", productVariantId: "", quantity: "" }] } : c
+        i === cartonIndex
+          ? {
+              items: [
+                ...c.items,
+                { dispatchItemId: dispatch.items.length === 1 ? dispatch.items[0].id : "", productVariantId: "", quantity: "" },
+              ],
+            }
+          : c
       )
     );
   const removeLine = (cartonIndex: number, lineIndex: number) =>
@@ -913,9 +989,15 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
                 </div>
                 <div className="space-y-2">
                   {carton.items.map((line, lineIndex) => {
-                    const variants = variantOptionsFor(dispatch.items.find((i) => i.id === line.dispatchItemId), variantsByProduct);
+                    const variants = variantOptionsFor(dispatch.items.find((i) => i.id === line.dispatchItemId), variantsByProduct).map((v) => {
+                      const b = balanceFor(line.dispatchItemId, v.id);
+                      return b ? { ...v, label: `${v.label} · ${Math.max(0, b.toPack - b.packed)} left to pack` } : v;
+                    });
+                    const balance = line.productVariantId ? balanceFor(line.dispatchItemId, line.productVariantId) : undefined;
+                    const left = balance ? balance.toPack - balance.packed : null;
                     return (
-                      <div key={lineIndex} className="grid grid-cols-4 gap-2">
+                      <div key={lineIndex}>
+                      <div className="grid grid-cols-4 gap-2">
                         <select
                           value={line.dispatchItemId}
                           onChange={(e) => updateLine(cartonIndex, lineIndex, { dispatchItemId: e.target.value, productVariantId: "" })}
@@ -951,6 +1033,14 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
                         <button type="button" onClick={() => removeLine(cartonIndex, lineIndex)} className="text-xs text-red-600 hover:text-red-500">
                           Remove Line
                         </button>
+                      </div>
+                      {balance && left !== null && (
+                        <p className={`mt-1 text-xs ${left < 0 ? "text-red-600 dark:text-red-400" : "text-zinc-500 dark:text-zinc-400"}`}>
+                          To pack {balance.toPack} · in cartons {balance.packed} ·{" "}
+                          {left < 0 ? `${-left} more than picked` : `${left} left to pack`}
+                          {balance.inStock !== null && ` · ${balance.inStock} in stock`}
+                        </p>
+                      )}
                       </div>
                     );
                   })}
