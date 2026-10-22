@@ -31,6 +31,26 @@ export const FinishedGoodsReservationRepository = {
    * optionally scoped to one warehouse. Never trusted as the real gate —
    * guardedConsume() below is the actual atomic protection.
    */
+  /** Same as sumActiveUnconsumedForVariant, limited to one sales order line's own reservations. */
+  sumActiveUnconsumedForLineVariant: async (
+    companyId: string,
+    salesOrderLineId: string,
+    productVariantId: string,
+    warehouseId?: string | null
+  ): Promise<number> => {
+    const rows = await prisma.finishedGoodsReservation.findMany({
+      where: {
+        companyId,
+        salesOrderLineId,
+        productVariantId,
+        status: "ACTIVE",
+        ...(warehouseId !== undefined ? { warehouseId } : {}),
+      },
+      select: { reservedQuantity: true, consumedQuantity: true },
+    });
+    return rows.reduce((sum, row) => sum + (Number(row.reservedQuantity) - Number(row.consumedQuantity)), 0);
+  },
+
   sumActiveUnconsumedForVariant: async (
     companyId: string,
     productVariantId: string,

@@ -33,15 +33,18 @@ vi.mock("@/modules/warehouses/warehouse.repository", () => ({
 }));
 vi.mock("@/modules/finished-goods-inventory/finished-goods-reservation.service", () => ({
   getFinishedGoodsAvailableQuantity: vi.fn(),
+  getFinishedGoodsAvailableForOrderLine: vi.fn(),
   consumeReservationForDispatchInTx: vi.fn(),
 }));
 // Packing-produced-quantity gate (process-flow clarity fix, 2026-10-15).
 vi.mock("@/modules/production/production-progress.service", () => ({
   getSalesOrderItemProductionSummary: vi.fn(),
 }));
+const breakdownFindMany = vi.hoisted(() => vi.fn().mockResolvedValue([]));
 vi.mock("@/core/db/client", () => ({
   prisma: {
     $transaction: vi.fn(),
+    salesOrderItemBreakdown: { findMany: breakdownFindMany },
     dispatchItem: { aggregate: vi.fn() },
     product: { findFirst: vi.fn() },
     productionOrder: { findMany: vi.fn() },
@@ -66,7 +69,7 @@ const { replaceCartonBarcodes } = await import("@/core/barcode/barcode.service")
 const { getDispatchSettings } = await import("@/core/dispatch-settings/DispatchSettingsService");
 const { ProductVariantRepository } = await import("@/modules/products/product.repository");
 const { WarehouseLocationRepository } = await import("@/modules/warehouses/warehouse.repository");
-const { getFinishedGoodsAvailableQuantity, consumeReservationForDispatchInTx } = await import(
+const { getFinishedGoodsAvailableQuantity, getFinishedGoodsAvailableForOrderLine, consumeReservationForDispatchInTx } = await import(
   "@/modules/finished-goods-inventory/finished-goods-reservation.service"
 );
 const { getSalesOrderItemProductionSummary } = await import("@/modules/production/production-progress.service");
@@ -134,6 +137,12 @@ beforeEach(() => {
   vi.mocked(ProductVariantRepository.findManyByIds).mockReset().mockResolvedValue([]);
   vi.mocked(WarehouseLocationRepository.findByIdWithWarehouse).mockReset();
   vi.mocked(getFinishedGoodsAvailableQuantity).mockReset().mockResolvedValue(1000);
+  // The order-line-aware figure defers to the plain one in these tests.
+  vi.mocked(getFinishedGoodsAvailableForOrderLine)
+    .mockReset()
+    .mockImplementation((companyId, productId, productVariantId, warehouseId) =>
+      getFinishedGoodsAvailableQuantity(companyId, productId, productVariantId, warehouseId)
+    );
   vi.mocked(consumeReservationForDispatchInTx).mockReset().mockResolvedValue(undefined);
   vi.mocked(prisma.$transaction).mockReset();
   vi.mocked(prisma.dispatchItem.aggregate).mockReset().mockResolvedValue({ _sum: { dispatchedQuantity: 0 } } as never);
@@ -1115,7 +1124,7 @@ describe("branch access enforcement (2026-09-15)", () => {
   });
 
   it("getDispatchById succeeds for a dispatch inside the user's allowed branches", async () => {
-    vi.mocked(DispatchRepository.findByIdWithDetails).mockResolvedValue({ id: "disp-1", branchId: "branch-1" } as never);
+    vi.mocked(DispatchRepository.findByIdWithDetails).mockResolvedValue({ id: "disp-1", branchId: "branch-1", items: [] } as never);
     vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
 
     const dispatch = await getDispatchById(actor, "disp-1");
@@ -1172,6 +1181,39 @@ describe("setPickLines — multi-location picking (FGI-040)", () => {
         pickLines: [{ dispatchItemId: "di-3", productVariantId: "var-A", warehouseLocationId: "loc-A", quantity: 5 }],
       })
     ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  // Only the colour/size variants on the Sales Order line can be dispatched (2026-10-22).
+  it("rejects a colour/size the Sales Order line didn't order", async () => {
+    vi.mocked(DispatchRepository.findByIdWithDetails).mockResolvedValue({
+      ...draftDispatch,
+      items: [{ ...draftDispatch.items[0], salesOrderItemId: "soi-1" }],
+    } as never);
+    breakdownFindMany.mockResolvedValueOnce([
+      { salesOrderItemId: "soi-1", productVariantId: "var-B", orderedQuantity: 3, productVariant: { color: { name: "Black" }, size: { name: "S", sortOrder: 1 } } },
+    ]);
+
+    await expect(
+      setPickLines(actor, "disp-3", {
+        pickLines: [{ dispatchItemId: "di-3", productVariantId: "var-A", warehouseLocationId: "loc-A", quantity: 1 }],
+      })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR", message: expect.stringContaining("Black / S") });
+    expect(DispatchRepository.setPickLines).not.toHaveBeenCalled();
+  });
+
+  it("accepts a colour/size the Sales Order line ordered", async () => {
+    vi.mocked(DispatchRepository.findByIdWithDetails).mockResolvedValue({
+      ...draftDispatch,
+      items: [{ ...draftDispatch.items[0], salesOrderItemId: "soi-1" }],
+    } as never);
+    breakdownFindMany.mockResolvedValueOnce([
+      { salesOrderItemId: "soi-1", productVariantId: "var-A", orderedQuantity: 3, productVariant: { color: { name: "Black" }, size: { name: "S", sortOrder: 1 } } },
+    ]);
+
+    await setPickLines(actor, "disp-3", {
+      pickLines: [{ dispatchItemId: "di-3", productVariantId: "var-A", warehouseLocationId: "loc-A", quantity: 1 }],
+    });
+    expect(DispatchRepository.setPickLines).toHaveBeenCalled();
   });
 
   it("rejects a location belonging to a different company", async () => {

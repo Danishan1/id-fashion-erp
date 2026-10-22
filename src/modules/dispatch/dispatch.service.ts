@@ -14,7 +14,10 @@ import { recordInventoryTransaction, getAvailableQuantity } from "@/modules/inve
 import { getDispatchSettings, extraDispatchNeedsApproval, type DispatchSettingsValue } from "@/core/dispatch-settings/DispatchSettingsService";
 import { ProductVariantRepository } from "@/modules/products/product.repository";
 import { WarehouseLocationRepository } from "@/modules/warehouses/warehouse.repository";
-import { getFinishedGoodsAvailableQuantity, consumeReservationForDispatchInTx } from "@/modules/finished-goods-inventory/finished-goods-reservation.service";
+import {
+  getFinishedGoodsAvailableForOrderLine,
+  consumeReservationForDispatchInTx,
+} from "@/modules/finished-goods-inventory/finished-goods-reservation.service";
 import { getSalesOrderItemProductionSummary } from "@/modules/production/production-progress.service";
 import type { DispatchInput, UpdateDispatchInput, SetCartonsInput, SetPickLinesInput } from "./dispatch.schema";
 import { DispatchRepository } from "./dispatch.repository";
@@ -190,7 +193,92 @@ export async function getDispatchById(actor: { companyId: string; userId: string
     throw new BusinessRuleError("NOT_FOUND", "Dispatch not found.", { id });
   }
 
-  return dispatch;
+  // The colour/size variants each line's Sales Order line ordered — the only
+  // finished goods picking/packing may use (2026-10-22) — with this
+  // warehouse's available Finished Goods stock for each.
+  const orderedByItem = await getOrderedVariantsByDispatchItem(dispatch.items);
+  const items = await Promise.all(
+    dispatch.items.map(async (item) => ({
+      ...item,
+      orderedVariants: await Promise.all(
+        (orderedByItem.get(item.id) ?? []).map(async (v) => ({
+          ...v,
+          availableQuantity: await getFinishedGoodsAvailableForOrderLine(
+            actor.companyId,
+            item.productId,
+            v.productVariantId,
+            dispatch.warehouseId,
+            item.salesOrderItem?.salesOrderLineId ?? null
+          ),
+        }))
+      ),
+    }))
+  );
+
+  return { ...dispatch, items };
+}
+
+export interface OrderedVariant {
+  productVariantId: string;
+  colorName: string;
+  sizeName: string;
+  orderedQuantity: number;
+}
+
+/** dispatchItemId -> the colour/size variants its Sales Order line ordered (sorted by colour, then size order). */
+async function getOrderedVariantsByDispatchItem(
+  items: Array<{ id: string; salesOrderItemId: string }>
+): Promise<Map<string, OrderedVariant[]>> {
+  const salesOrderItemIds = [...new Set(items.map((i) => i.salesOrderItemId))];
+  const rows = salesOrderItemIds.length
+    ? await prisma.salesOrderItemBreakdown.findMany({
+        where: { salesOrderItemId: { in: salesOrderItemIds } },
+        select: {
+          salesOrderItemId: true,
+          productVariantId: true,
+          orderedQuantity: true,
+          productVariant: { select: { color: { select: { name: true } }, size: { select: { name: true, sortOrder: true } } } },
+        },
+      })
+    : [];
+  const sorted = [...rows].sort(
+    (a, b) =>
+      a.productVariant.color.name.localeCompare(b.productVariant.color.name) ||
+      (a.productVariant.size.sortOrder ?? 0) - (b.productVariant.size.sortOrder ?? 0)
+  );
+  const result = new Map<string, OrderedVariant[]>();
+  for (const item of items) {
+    result.set(
+      item.id,
+      sorted
+        .filter((r) => r.salesOrderItemId === item.salesOrderItemId)
+        .map((r) => ({
+          productVariantId: r.productVariantId,
+          colorName: r.productVariant.color.name,
+          sizeName: r.productVariant.size.name,
+          orderedQuantity: Number(r.orderedQuantity),
+        }))
+    );
+  }
+  return result;
+}
+
+/** Refuses a colour/size the dispatch line's Sales Order line didn't order. */
+function assertVariantWasOrdered(
+  orderedByItem: Map<string, OrderedVariant[]>,
+  dispatchItemId: string,
+  productVariantId: string | null | undefined,
+  styleName: string
+) {
+  const ordered = orderedByItem.get(dispatchItemId) ?? [];
+  if (!productVariantId || ordered.length === 0) return;
+  if (!ordered.some((v) => v.productVariantId === productVariantId)) {
+    throw new BusinessRuleError(
+      "VALIDATION_ERROR",
+      `This colour/size of "${styleName}" isn't on the Sales Order — only ${ordered.map((v) => `${v.colorName} / ${v.sizeName}`).join(", ")} can be dispatched.`,
+      { dispatchItemId, productVariantId }
+    );
+  }
 }
 
 /**
@@ -603,6 +691,7 @@ export async function setCartons(actor: ActorContext, id: string, input: SetCart
     )
   );
 
+  const orderedByItem = await getOrderedVariantsByDispatchItem(existing.items);
   const variantIds = [...new Set(input.cartons.flatMap((c) => c.items.map((i) => i.productVariantId).filter(Boolean)))] as string[];
   const variants = variantIds.length > 0 ? await prisma.productVariant.findMany({ where: { id: { in: variantIds } } }) : [];
   const variantProductId = new Map(variants.map((v) => [v.id, v.productId]));
@@ -632,6 +721,7 @@ export async function setCartons(actor: ActorContext, id: string, input: SetCart
           { dispatchItemId: item.dispatchItemId, productVariantId: item.productVariantId }
         );
       }
+      assertVariantWasOrdered(orderedByItem, item.dispatchItemId, item.productVariantId, dispatchItemStyleName.get(item.dispatchItemId) ?? "this style");
     }
     return {
       cartonNumber: index + 1,
@@ -731,6 +821,7 @@ export async function setPickLines(actor: ActorContext, id: string, input: SetPi
 
   const itemById = new Map(existing.items.map((i) => [i.id, i]));
 
+  const orderedByItem = await getOrderedVariantsByDispatchItem(existing.items);
   const variantIds = [...new Set(input.pickLines.map((l) => l.productVariantId))];
   const variants = variantIds.length > 0 ? await ProductVariantRepository.findManyByIds(variantIds) : [];
   const variantById = new Map(variants.map((v) => [v.id, v]));
@@ -757,6 +848,7 @@ export async function setPickLines(actor: ActorContext, id: string, input: SetPi
         { dispatchItemId: line.dispatchItemId, productVariantId: line.productVariantId }
       );
     }
+    assertVariantWasOrdered(orderedByItem, line.dispatchItemId, line.productVariantId, item.product.styleName);
 
     const location = locationById.get(line.warehouseLocationId);
     if (!location || location.warehouse.companyId !== actor.companyId) {
@@ -1053,7 +1145,14 @@ export async function confirmDispatch(actor: ActorContext, id: string) {
   for (const [productVariantId, pickedQuantity] of pickedByVariant) {
     const owningItem = itemsNeedingPickLines.find((item) => item.pickLines.some((line) => line.productVariantId === productVariantId))!;
     const variantLine = owningItem.pickLines.find((line) => line.productVariantId === productVariantId)!;
-    const available = await getFinishedGoodsAvailableQuantity(actor.companyId, owningItem.productId, productVariantId, dispatch.warehouseId);
+    // Stock reserved for this dispatch's own order line counts as available to it.
+    const available = await getFinishedGoodsAvailableForOrderLine(
+      actor.companyId,
+      owningItem.productId,
+      productVariantId,
+      dispatch.warehouseId,
+      owningItem.salesOrderItem?.salesOrderLineId ?? null
+    );
     if (pickedQuantity > available) {
       throw new BusinessRuleError(
         "INSUFFICIENT_FG_STOCK",

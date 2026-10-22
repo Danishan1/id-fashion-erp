@@ -7,6 +7,7 @@ vi.mock("./finished-goods-reservation.repository", () => ({
     findByIdInTx: vi.fn(),
     findActiveForSalesOrderLineIds: vi.fn(),
     sumActiveUnconsumedForVariant: vi.fn(),
+    sumActiveUnconsumedForLineVariant: vi.fn(),
     guardedConsume: vi.fn(),
     guardedRelease: vi.fn(),
     releaseAllActiveForSalesOrderLineIdsInTx: vi.fn(),
@@ -28,6 +29,7 @@ const {
   releaseActiveReservationsForSalesOrderInTx,
   getCommittedReservationQuantity,
   getFinishedGoodsAvailableQuantity,
+  getFinishedGoodsAvailableForOrderLine,
   consumeReservationForDispatchInTx,
   applyPackingCompletionReservationsInTx,
 } = await import("./finished-goods-reservation.service");
@@ -463,5 +465,32 @@ describe("applyPackingCompletionReservationsInTx (process-flow Phase 1, 2026-10-
       tx,
       expect.objectContaining({ branchId: null })
     );
+  });
+});
+
+// 2026-10-22: an order line's own reservation is available to its own dispatch.
+describe("getFinishedGoodsAvailableForOrderLine", () => {
+  it("adds back the line's own reservation — 36 saleable, all 36 reserved for this line = 36 available to it", async () => {
+    vi.mocked(FinishedGoodsStockBalanceRepository.sumSaleableAcrossLocations).mockResolvedValue(36);
+    vi.mocked(FinishedGoodsReservationRepository.sumActiveUnconsumedForVariant).mockResolvedValue(36);
+    vi.mocked(FinishedGoodsReservationRepository.sumActiveUnconsumedForLineVariant).mockResolvedValue(36);
+
+    await expect(getFinishedGoodsAvailableForOrderLine("co-1", "prod-1", "var-1", "wh-1", "sol-1")).resolves.toBe(36);
+    expect(FinishedGoodsReservationRepository.sumActiveUnconsumedForLineVariant).toHaveBeenCalledWith("co-1", "sol-1", "var-1", "wh-1");
+  });
+
+  it("still subtracts other orders' reservations", async () => {
+    vi.mocked(FinishedGoodsStockBalanceRepository.sumSaleableAcrossLocations).mockResolvedValue(10);
+    vi.mocked(FinishedGoodsReservationRepository.sumActiveUnconsumedForVariant).mockResolvedValue(8);
+    vi.mocked(FinishedGoodsReservationRepository.sumActiveUnconsumedForLineVariant).mockResolvedValue(3);
+
+    await expect(getFinishedGoodsAvailableForOrderLine("co-1", "prod-1", "var-1", "wh-1", "sol-1")).resolves.toBe(5);
+  });
+
+  it("is the plain figure with no order line", async () => {
+    vi.mocked(FinishedGoodsStockBalanceRepository.sumSaleableAcrossLocations).mockResolvedValue(10);
+    vi.mocked(FinishedGoodsReservationRepository.sumActiveUnconsumedForVariant).mockResolvedValue(4);
+
+    await expect(getFinishedGoodsAvailableForOrderLine("co-1", "prod-1", "var-1", "wh-1", null)).resolves.toBe(6);
   });
 });

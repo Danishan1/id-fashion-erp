@@ -36,6 +36,14 @@ interface DispatchItemRow {
   extraDispatchRemarks: string | null;
   product: { styleName: string; styleCode: string };
   pickLines: PickLineRow[];
+  /** The colour/sizes this line's Sales Order line ordered — the only ones it can dispatch. */
+  orderedVariants?: Array<{
+    productVariantId: string;
+    colorName: string;
+    sizeName: string;
+    orderedQuantity: number;
+    availableQuantity: number;
+  }>;
 }
 
 const EXTRA_DISPATCH_REASON_LABELS: Record<string, string> = {
@@ -151,6 +159,18 @@ function formatFileSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** Colour/size options for one dispatch line: the Sales Order's ordered variants, or every style variant when none are known. */
+function variantOptionsFor(item: DispatchItemRow | undefined, variantsByProduct: Record<string, VariantRef[]>) {
+  if (!item) return [];
+  if (item.orderedVariants && item.orderedVariants.length > 0) {
+    return item.orderedVariants.map((v) => ({
+      id: v.productVariantId,
+      label: `${v.colorName} / ${v.sizeName} — ordered ${v.orderedQuantity} · ${v.availableQuantity} in stock`,
+    }));
+  }
+  return (variantsByProduct[item.productId] ?? []).map((v) => ({ id: v.id, label: `${v.color.name} / ${v.size.name}` }));
 }
 
 export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }) {
@@ -303,6 +323,18 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
         setGarmentScanMessage({
           ok: false,
           text: `Garment "${trimmed}" (${unit.product?.styleName || "Style"}) does not belong to this dispatch.`,
+        });
+        return;
+      }
+
+      // Only colour/sizes on the Sales Order can be packed.
+      const ordered = matchingDispatchItem.orderedVariants ?? [];
+      if (ordered.length > 0 && !ordered.some((v) => v.productVariantId === unit.productVariantId)) {
+        setGarmentScanMessage({
+          ok: false,
+          text: `Garment "${trimmed}" is a colour/size that isn't on this Sales Order — only ${ordered
+            .map((v) => `${v.colorName} / ${v.sizeName}`)
+            .join(", ")} can be packed.`,
         });
         return;
       }
@@ -603,7 +635,7 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
         {editable ? (
           <div className="space-y-2">
             {pickLines.map((line, index) => {
-              const variants = line.dispatchItemId ? variantsByProduct[dispatch.items.find((i) => i.id === line.dispatchItemId)?.productId ?? ""] ?? [] : [];
+              const variants = variantOptionsFor(dispatch.items.find((i) => i.id === line.dispatchItemId), variantsByProduct);
               return (
                 <div key={index} className="grid grid-cols-5 gap-2">
                   <select
@@ -627,7 +659,7 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
                     <option value="">— Colour / Size —</option>
                     {variants.map((v) => (
                       <option key={v.id} value={v.id}>
-                        {v.color.name} / {v.size.name}
+                        {v.label}
                       </option>
                     ))}
                   </select>
@@ -788,7 +820,7 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
                 </div>
                 <div className="space-y-2">
                   {carton.items.map((line, lineIndex) => {
-                    const variants = line.dispatchItemId ? variantsByProduct[dispatch.items.find((i) => i.id === line.dispatchItemId)?.productId ?? ""] ?? [] : [];
+                    const variants = variantOptionsFor(dispatch.items.find((i) => i.id === line.dispatchItemId), variantsByProduct);
                     return (
                       <div key={lineIndex} className="grid grid-cols-4 gap-2">
                         <select
@@ -812,7 +844,7 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
                           <option value="">— No specific variant —</option>
                           {variants.map((v) => (
                             <option key={v.id} value={v.id}>
-                              {v.color.name} / {v.size.name}
+                              {v.label}
                             </option>
                           ))}
                         </select>

@@ -307,6 +307,25 @@ export async function getFinishedGoodsAvailableQuantity(
 }
 
 /**
+ * Available for one sales order line's own dispatch (2026-10-22): stock
+ * reserved for THAT line is available to it — only other orders'
+ * reservations are subtracted. Without this, an order's own reservation made
+ * its own stock look unavailable to its own dispatch.
+ */
+export async function getFinishedGoodsAvailableForOrderLine(
+  companyId: string,
+  productId: string,
+  productVariantId: string,
+  warehouseId: string,
+  salesOrderLineId: string | null
+): Promise<number> {
+  const available = await getFinishedGoodsAvailableQuantity(companyId, productId, productVariantId, warehouseId);
+  if (!salesOrderLineId) return available;
+  const own = await FinishedGoodsReservationRepository.sumActiveUnconsumedForLineVariant(companyId, salesOrderLineId, productVariantId, warehouseId);
+  return available + own;
+}
+
+/**
  * Finished Goods Inventory module (FGI-041) — reservation consumption as
  * called from confirmDispatch(), one call per pick line, inside the same
  * transaction as that pick line's own recordInventoryTransaction() post
