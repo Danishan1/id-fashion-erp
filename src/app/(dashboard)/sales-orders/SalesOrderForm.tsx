@@ -511,13 +511,16 @@ export function SalesOrderForm({
   };
 
   return (
-    <form onSubmit={handleSubmit} className="max-w-3xl space-y-6">
+    <form onSubmit={handleSubmit} className="w-full space-y-6">
       {!initialOrder && originatingOpportunityId && (
         <p className="rounded-md bg-indigo-50 px-3 py-2 text-sm text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-300">
           Creating this order from Opportunity {originatingOpportunityNumber ?? originatingOpportunityId} — the link will be recorded on the order.
         </p>
       )}
-      <div className="grid grid-cols-2 gap-4">
+      {/* One responsive grid for the header fields, so the full-width form
+          puts them side by side on wide screens instead of stretching two
+          columns across the page. */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         <FormField label="Customer" htmlFor="customerId" required>
           <SearchableSelect
             id="customerId"
@@ -545,9 +548,7 @@ export function SalesOrderForm({
             placeholder="Search buyer…"
           />
         </FormField>
-      </div>
 
-      <div className="grid grid-cols-2 gap-4">
         <FormField label="Order Date" htmlFor="orderDate" required>
           <input
             id="orderDate"
@@ -567,9 +568,7 @@ export function SalesOrderForm({
             className={textInputClass()}
           />
         </FormField>
-      </div>
 
-      <div className="grid grid-cols-2 gap-4">
         <FormField label="Customer PO Number (optional)" htmlFor="customerPoNumber">
           <input
             id="customerPoNumber"
@@ -608,7 +607,9 @@ export function SalesOrderForm({
               )}
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            {/* Style | Design and Unit Price | Notes sit in one row on wide screens. */}
+            <div className="grid gap-3 xl:grid-cols-2">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <FormField label="Style" htmlFor={`style-${index}`} required>
                 <SearchableSelect
                   id={`style-${index}`}
@@ -668,7 +669,7 @@ export function SalesOrderForm({
               </FormField>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <FormField label="Unit Price" htmlFor={`price-${index}`} required>
                 <input
                   id={`price-${index}`}
@@ -705,6 +706,7 @@ export function SalesOrderForm({
                   className={textInputClass()}
                 />
               </FormField>
+            </div>
             </div>
 
             {item.productId && (
