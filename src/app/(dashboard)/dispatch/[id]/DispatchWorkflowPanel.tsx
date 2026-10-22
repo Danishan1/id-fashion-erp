@@ -10,6 +10,7 @@ import { FilePreviewModal } from "@/components/ui/FilePreviewModal";
 import { Barcode } from "@/components/ui/Barcode";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { ClientDateTime } from "@/components/ui/ClientDateTime";
+import { PickedVsPackedSummary, SavedCartonsSummary } from "./DispatchPackingSummary";
 
 // Finished Goods Inventory module (FGI-040) — multi-location picking.
 interface WarehouseLocationRef {
@@ -702,11 +703,11 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
       </div>
 
       <div>
-        <h2 className="mb-2 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Pick Lines</h2>
+        <h2 className="mb-2 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Step 1 — Pick Lines</h2>
         <p className="mb-2 text-xs text-zinc-500 dark:text-zinc-400">
-          For any style with colour/size variants, record exactly which variant and warehouse location each
-          unit is being picked from. A partial pick is fine while this dispatch is still Draft/Packed — the
-          total per style must exactly match its quantity to dispatch only once you Confirm Dispatch.
+          <span className="font-medium text-zinc-700 dark:text-zinc-300">Which pieces leave stock, and from where:</span>{" "}
+          each colour/size and how many pieces are taken from which location. A partial pick is fine while this
+          dispatch is Draft/Packed; at Confirm Dispatch the total per style must match its quantity.
         </p>
         {editable ? (
           <div className="space-y-2">
@@ -820,7 +821,14 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
       </div>
 
       <div>
-        <h2 className="mb-2 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Cartons</h2>
+        <h2 className="mb-2 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Step 2 — Cartons</h2>
+        <p className="mb-2 text-xs text-zinc-500 dark:text-zinc-400">
+          <span className="font-medium text-zinc-700 dark:text-zinc-300">How the picked pieces are packed:</span> which
+          colour/size goes into which carton. Every picked piece must be in a carton — the table below compares them.
+        </p>
+        <div className="mb-3">
+          <PickedVsPackedSummary items={dispatch.items} cartons={dispatch.cartons} />
+        </div>
         {editable ? (
           <div className="space-y-3">
             {/* Live Garment Piece Scanner (Scan into active carton) */}
@@ -967,6 +975,11 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
               >
                 Save Cartons
               </button>
+            </div>
+
+            <div className="space-y-3 border-t border-zinc-200 pt-3 dark:border-zinc-800">
+              <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Saved Cartons</h3>
+              <SavedCartonsSummary items={dispatch.items} cartons={dispatch.cartons} />
             </div>
           </div>
         ) : dispatch.cartons.length === 0 ? (
