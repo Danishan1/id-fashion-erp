@@ -5,38 +5,22 @@ import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { DataTable } from "@/components/ui/DataTable";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { ViewIcon } from "@/components/ui/icons";
+import { MATERIAL_CATEGORIES } from "@/modules/products/product.schema";
 
-interface LocationBalance {
-  code: string;
-  zone: string | null;
-  rack: string | null;
-  bin: string | null;
-  quantity: number;
-}
-
-interface StockBalanceRow {
+interface StockRow {
   id: string;
   productId: string;
-  quantityOnHand: string;
-  updatedAt: string;
-  product: { styleName: string; styleCode: string; baseUom: { code: string } | null } | null;
-  warehouse: { name: string; code: string } | null;
-  // Real per-location net quantity from the ledger (not a single "most
-  // recently touched" guess) — a product genuinely split across several
-  // locations shows every one of them here, each with its own quantity.
-  // Empty when nothing in the ledger for this pair ever recorded a location.
-  locations: LocationBalance[];
-}
-
-function formatLocations(locations: StockBalanceRow["locations"], unitCode: string): string {
-  if (!locations || locations.length === 0) return "—";
-  return locations
-    .map((loc) => {
-      const parts = [loc.zone, loc.rack, loc.bin].filter(Boolean);
-      const label = parts.length > 0 ? `${loc.code} (${parts.join(" / ")})` : loc.code;
-      return `${label}: ${loc.quantity.toLocaleString("en-IN")}${unitCode ? ` ${unitCode}` : ""}`;
-    })
-    .join(", ");
+  materialName: string;
+  materialCode: string;
+  materialCategory: string | null;
+  unit: string | null;
+  totalStock: number;
+  reservedStock: number;
+  availableStock: number;
+  rollCount: number;
+  colourCount: number;
+  breakdownMode: "ROLL" | "COLOUR" | "PLAIN";
+  lastUpdated: string | null;
 }
 
 interface WarehouseOption {
@@ -44,9 +28,19 @@ interface WarehouseOption {
   name: string;
 }
 
+const qty = (n: number) => n.toLocaleString("en-IN");
+const titleCase = (v: string) => v.charAt(0) + v.slice(1).toLowerCase();
+
+function breakdownLabel(row: StockRow) {
+  if (row.breakdownMode === "ROLL") return `${row.rollCount} roll${row.rollCount === 1 ? "" : "s"}`;
+  if (row.breakdownMode === "COLOUR") return `${row.colourCount} colour${row.colourCount === 1 ? "" : "s"}`;
+  return "—";
+}
+
 export function StockBalancesListClient() {
   const [warehouses, setWarehouses] = useState<WarehouseOption[]>([]);
   const [warehouseId, setWarehouseId] = useState("");
+  const [category, setCategory] = useState("");
 
   useEffect(() => {
     fetch("/api/v1/warehouses?pageSize=200")
@@ -56,8 +50,9 @@ export function StockBalancesListClient() {
 
   const params = new URLSearchParams();
   if (warehouseId) params.set("warehouseId", warehouseId);
-  const fetchUrl = `/api/v1/inventory/stock-balances${params.toString() ? `?${params.toString()}` : ""}`;
-  const exportUrl = `/api/v1/inventory/stock-balances/export/xlsx${params.toString() ? `?${params.toString()}` : ""}`;
+  if (category) params.set("materialCategory", category);
+  const qs = params.toString() ? `?${params.toString()}` : "";
+  const exportQs = warehouseId ? `?warehouseId=${warehouseId}` : "";
 
   return (
     <div className="space-y-4">
@@ -66,55 +61,71 @@ export function StockBalancesListClient() {
         <div>
           <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Stock Balances</h1>
           <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-            Current on-hand quantity per material and warehouse, maintained by the inventory ledger.
+            Stock of every raw material from the inventory ledger. Open a material to see it by roll (fabric), by colour, or
+            warehouse-wise.
           </p>
         </div>
         <a
-          href={exportUrl}
+          href={`/api/v1/inventory/stock-balances/export/xlsx${exportQs}`}
           className="whitespace-nowrap rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
         >
           Download Excel
         </a>
       </div>
 
-      <div className="w-64">
-        <SearchableSelect
-          value={warehouseId}
-          onChange={setWarehouseId}
-          options={warehouses.map((w) => ({ id: w.id, label: w.name }))}
-          placeholder="Search warehouse…"
-          emptyOptionLabel="All Warehouses"
-        />
+      <div className="flex flex-wrap gap-3">
+        <div className="w-64">
+          <SearchableSelect
+            value={warehouseId}
+            onChange={setWarehouseId}
+            options={warehouses.map((w) => ({ id: w.id, label: w.name }))}
+            placeholder="Search warehouse…"
+            emptyOptionLabel="All Warehouses"
+          />
+        </div>
+        <select
+          value={category}
+          onChange={(e) => setCategory(e.target.value)}
+          aria-label="Category"
+          className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+        >
+          <option value="">All Categories</option>
+          {MATERIAL_CATEGORIES.map((c) => (
+            <option key={c} value={c}>
+              {titleCase(c)}
+            </option>
+          ))}
+        </select>
       </div>
 
-      <DataTable<StockBalanceRow>
-        key={fetchUrl}
-        fetchUrl={fetchUrl}
+      <DataTable<StockRow>
+        key={qs}
+        fetchUrl={`/api/v1/inventory/stock-balances${qs}`}
         searchPlaceholder="Search by material name or code…"
-        // Clicking a Material's row, or the "View" action in the Actions
-        // column, opens that material's full stock/transaction history —
-        // read-only, so this deliberately overrides DataTable's default
-        // "Edit" row-action label/icon (there's nothing to edit here).
-        rowHref={(row) => `/masters/materials/${row.productId}/stock-history`}
+        rowHref={(row) => `/inventory/stock-balances/${row.productId}${warehouseId ? `?warehouseId=${warehouseId}` : ""}`}
         rowHrefLabel="View"
         rowHrefIcon={<ViewIcon />}
         columns={[
-          { key: "product", header: "Material", render: (row) => (row.product ? `${row.product.styleName} (${row.product.styleCode})` : "—") },
-          { key: "warehouse", header: "Warehouse", render: (row) => row.warehouse?.name ?? "—" },
           {
-            key: "locations",
-            header: "Location(s)",
-            render: (row) => formatLocations(row.locations, row.product?.baseUom?.code ?? ""),
+            key: "materialName",
+            header: "Material",
+            render: (row) => (
+              <span>
+                {row.materialName} <span className="text-xs text-zinc-500">({row.materialCode})</span>
+              </span>
+            ),
           },
+          { key: "materialCategory", header: "Category", render: (row) => (row.materialCategory ? titleCase(row.materialCategory) : "—") },
+          { key: "totalStock", header: "Total Stock", render: (row) => qty(row.totalStock) },
+          { key: "unit", header: "Unit", render: (row) => row.unit ?? "—" },
+          { key: "availableStock", header: "Available Stock", render: (row) => qty(row.availableStock) },
+          { key: "reservedStock", header: "Reserved Stock", render: (row) => qty(row.reservedStock) },
+          { key: "breakdown", header: "Rolls / Colours", render: breakdownLabel },
           {
-            key: "quantityOnHand",
-            header: "Quantity On Hand",
-            render: (row) => {
-              const unit = row.product?.baseUom?.code;
-              return `${Number(row.quantityOnHand).toLocaleString()}${unit ? ` ${unit}` : ""}`;
-            },
+            key: "lastUpdated",
+            header: "Last Updated",
+            render: (row) => (row.lastUpdated ? new Date(row.lastUpdated).toLocaleString("en-IN") : "—"),
           },
-          { key: "updatedAt", header: "Last Updated", render: (row) => new Date(row.updatedAt).toLocaleString() },
         ]}
       />
     </div>

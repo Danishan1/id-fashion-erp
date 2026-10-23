@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireSession, handleApiError } from "@/lib/api-route";
 import { PermissionService } from "@/core/rbac/PermissionService";
-import { getFabricStockDetail } from "@/modules/inventory/fabric-stock.service";
+import { getRawMaterialStockDetail } from "@/modules/inventory/raw-material-stock.service";
 
-/** One fabric's stock, colour-wise, with its rolls. */
+/** One raw material's stock: by roll, by colour, or plain, plus warehouse-wise. */
 export async function GET(req: NextRequest, { params }: { params: Promise<{ productId: string }> }) {
   try {
     const session = await requireSession();
@@ -11,7 +11,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ prod
 
     const { productId } = await params;
     const warehouseId = req.nextUrl.searchParams.get("warehouseId") || undefined;
-    const data = await getFabricStockDetail(session.user.companyId, productId, { warehouseId });
+    const data = await getRawMaterialStockDetail(session.user.companyId, productId, { warehouseId });
 
     return NextResponse.json({ data });
   } catch (error) {

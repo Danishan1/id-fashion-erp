@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/core/db/client", () => ({ prisma: {} }));
 
-const { buildFabricColourGroups } = await import("./fabric-stock.service");
+const { buildFabricColourGroups, buildColourBalanceGroups } = await import("./raw-material-stock.service");
 type Roll = Parameters<typeof buildFabricColourGroups>[0][number];
 
 const m = (id: string, name = id) => ({ id, code: id, name });
@@ -68,5 +68,22 @@ describe("buildFabricColourGroups", () => {
 
   it("returns no colours when there are no rolls", () => {
     expect(buildFabricColourGroups([])).toEqual([]);
+  });
+});
+
+describe("buildColourBalanceGroups", () => {
+  it("sums each colour across warehouses and keeps the per-warehouse split", () => {
+    const groups = buildColourBalanceGroups([
+      { colorId: "red", colorName: "Red", hexValue: "#f00", warehouseName: "Store B", quantity: 4 },
+      { colorId: "black", colorName: "Black", hexValue: null, warehouseName: "Store A", quantity: 10 },
+      { colorId: "red", colorName: "Red", hexValue: "#f00", warehouseName: "Store A", quantity: 6.5 },
+    ]);
+
+    expect(groups.map((g) => g.colorName)).toEqual(["Black", "Red"]);
+    expect(groups[1]).toMatchObject({ quantity: 10.5, warehouses: [{ warehouseName: "Store A", quantity: 6.5 }, { warehouseName: "Store B", quantity: 4 }] });
+  });
+
+  it("drops zero quantities", () => {
+    expect(buildColourBalanceGroups([{ colorId: "red", colorName: "Red", hexValue: null, warehouseName: "A", quantity: 0 }])).toEqual([]);
   });
 });

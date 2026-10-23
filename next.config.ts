@@ -38,6 +38,9 @@ const nextConfig: NextConfig = {
       // only — the API stays /api/v1/forwarders and the table stays forwarders).
       { source: "/masters/forwarders", destination: "/masters/transporters", permanent: true },
       { source: "/masters/forwarders/:path*", destination: "/masters/transporters/:path*", permanent: true },
+      // Fabric Stock was merged into Stock Balances (2026-10-23).
+      { source: "/inventory/fabric-stock", destination: "/inventory/stock-balances", permanent: true },
+      { source: "/inventory/fabric-stock/:productId", destination: "/inventory/stock-balances/:productId", permanent: true },
       // AI Designer's "Catalogue Designs" page route was renamed from
       // /ai-designer/projects (2026-09-14, to match the sidebar label
       // already renamed from "Projects") — this keeps any existing

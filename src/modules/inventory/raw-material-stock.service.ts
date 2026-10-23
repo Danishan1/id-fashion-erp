@@ -2,15 +2,21 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/core/db/client";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import type { ListQuery } from "@/lib/list-query";
+import { MATERIAL_CATEGORIES } from "@/modules/products/product.schema";
+import { getRawMaterialStockByLocation } from "./inventory.service";
 
 /**
- * Fabric Stock (2026-10-23): fabric stock by colour and roll, read-only.
+ * Raw material Stock Balances (2026-10-23): one row per raw material, read-only.
+ * Replaces the separate Fabric Stock page.
  *
  * - Totals come from StockBalance, the ledger-maintained cache.
- * - Colour and roll detail come from FabricRoll.
- *   - A roll's colour is its Purchase Order line's colour.
- *   - Its shade, GSM, width, composition and construction are its own fabric masters.
- * - Rolls with different specs are never merged into one figure.
+ * - A material's detail is shown one of three ways:
+ *   - ROLL: it has rolls in stock (fabric) — by colour and roll, from FabricRoll.
+ *     A roll's colour is its Purchase Order line's colour; its shade, GSM, width,
+ *     composition and construction are its own fabric masters. Rolls with
+ *     different specs are never merged into one figure.
+ *   - COLOUR: no rolls, but colour-wise stock exists (StockColorBalance).
+ *   - PLAIN: neither — just the quantity.
  * - Raw material has no reservation in this ERP, so Reserved is always 0 and Available = On Hand.
  */
 
@@ -23,14 +29,22 @@ const ELIGIBLE_ROLL_WHERE = {
   remainingQuantity: { gt: EPSILON },
 } satisfies Prisma.FabricRollWhereInput;
 
-export async function listFabricStock(companyId: string, query: ListQuery, filters: { warehouseId?: string } = {}) {
+export type StockBreakdownMode = "ROLL" | "COLOUR" | "PLAIN";
+
+export async function listRawMaterialStock(
+  companyId: string,
+  query: ListQuery,
+  filters: { warehouseId?: string; materialCategory?: string } = {}
+) {
   const balanceWhere: Prisma.StockBalanceWhereInput = {
     ...(filters.warehouseId ? { warehouseId: filters.warehouseId } : {}),
   };
+  // An unknown category is ignored rather than passed to Prisma (which would throw).
+  const category = MATERIAL_CATEGORIES.find((c) => c === filters.materialCategory);
   const where: Prisma.ProductWhereInput = {
     companyId,
     itemType: "RAW_MATERIAL",
-    materialCategory: "FABRIC",
+    ...(category ? { materialCategory: category } : {}),
     deletedAt: null,
     stockBalances: { some: balanceWhere },
     ...(query.search
@@ -50,8 +64,9 @@ export async function listFabricStock(companyId: string, query: ListQuery, filte
         id: true,
         styleName: true,
         styleCode: true,
+        materialCategory: true,
         baseUom: { select: { code: true } },
-        stockBalances: { where: balanceWhere, select: { quantityOnHand: true } },
+        stockBalances: { where: balanceWhere, select: { quantityOnHand: true, updatedAt: true } },
       },
       orderBy: { styleName: "asc" },
       skip: query.skip,
@@ -73,18 +88,42 @@ export async function listFabricStock(companyId: string, query: ListQuery, filte
   const rollsByProduct = new Map<string, number>();
   for (const row of rollCounts) rollsByProduct.set(row.productId, (rollsByProduct.get(row.productId) ?? 0) + row._count.rolls);
 
+  const colourRows = products.length
+    ? await prisma.stockColorBalance.findMany({
+        where: {
+          companyId,
+          productId: { in: products.map((p) => p.id) },
+          quantityOnHand: { gt: EPSILON },
+          ...(filters.warehouseId ? { warehouseId: filters.warehouseId } : {}),
+        },
+        select: { productId: true, colorId: true },
+      })
+    : [];
+  const coloursByProduct = new Map<string, Set<string>>();
+  for (const row of colourRows) {
+    if (!coloursByProduct.has(row.productId)) coloursByProduct.set(row.productId, new Set());
+    coloursByProduct.get(row.productId)!.add(row.colorId);
+  }
+
   const data = products.map((p) => {
     const totalStock = round(p.stockBalances.reduce((sum, b) => sum + Number(b.quantityOnHand), 0));
+    const rollCount = rollsByProduct.get(p.id) ?? 0;
+    const colourCount = coloursByProduct.get(p.id)?.size ?? 0;
+    const lastUpdated = p.stockBalances.reduce<Date | null>((latest, b) => (!latest || b.updatedAt > latest ? b.updatedAt : latest), null);
     return {
       id: p.id,
       productId: p.id,
-      fabricName: p.styleName,
-      fabricCode: p.styleCode,
+      materialName: p.styleName,
+      materialCode: p.styleCode,
+      materialCategory: p.materialCategory,
       unit: p.baseUom?.code ?? null,
       totalStock,
       reservedStock: 0,
       availableStock: totalStock,
-      rollCount: rollsByProduct.get(p.id) ?? 0,
+      rollCount,
+      colourCount,
+      breakdownMode: (rollCount > 0 ? "ROLL" : colourCount > 0 ? "COLOUR" : "PLAIN") as StockBreakdownMode,
+      lastUpdated,
     };
   });
   return { data, totalCount };
@@ -192,17 +231,48 @@ export function buildFabricColourGroups(rolls: FabricRollInput[]) {
     .sort((a, b) => (a.colorId === null ? 1 : b.colorId === null ? -1 : a.colorName.localeCompare(b.colorName)));
 }
 
-export async function getFabricStockDetail(companyId: string, productId: string, filters: { warehouseId?: string } = {}) {
+/**
+ * Colour-wise stock for a material with no rolls, from StockColorBalance.
+ * One row per colour (summed over warehouses), each with its per-warehouse split.
+ * Pure, so it is unit-tested directly.
+ */
+export function buildColourBalanceGroups(
+  rows: Array<{ colorId: string; colorName: string; hexValue: string | null; warehouseName: string; quantity: number }>
+) {
+  const groups = new Map<string, { colorId: string; colorName: string; hexValue: string | null; quantity: number; warehouses: Array<{ warehouseName: string; quantity: number }> }>();
+  for (const row of rows) {
+    if (row.quantity <= EPSILON) continue;
+    const group = groups.get(row.colorId) ?? { colorId: row.colorId, colorName: row.colorName, hexValue: row.hexValue, quantity: 0, warehouses: [] };
+    group.quantity += row.quantity;
+    group.warehouses.push({ warehouseName: row.warehouseName, quantity: round(row.quantity) });
+    groups.set(row.colorId, group);
+  }
+  return [...groups.values()]
+    .map((g) => ({ ...g, quantity: round(g.quantity), warehouses: g.warehouses.sort((a, b) => a.warehouseName.localeCompare(b.warehouseName)) }))
+    .sort((a, b) => a.colorName.localeCompare(b.colorName));
+}
+
+export async function getRawMaterialStockDetail(companyId: string, productId: string, filters: { warehouseId?: string } = {}) {
   const product = await prisma.product.findFirst({
     where: { id: productId, companyId, itemType: "RAW_MATERIAL", deletedAt: null },
     select: { id: true, styleName: true, styleCode: true, materialCategory: true, baseUom: { select: { code: true } } },
   });
-  if (!product) throw new BusinessRuleError("NOT_FOUND", "Fabric not found.", { productId });
+  if (!product) throw new BusinessRuleError("NOT_FOUND", "Material not found.", { productId });
 
-  const [balances, rollRows] = await Promise.all([
+  const warehouseFilter = filters.warehouseId ? { warehouseId: filters.warehouseId } : {};
+  const [balances, colourRows, rollRows] = await Promise.all([
     prisma.stockBalance.findMany({
-      where: { companyId, productId, ...(filters.warehouseId ? { warehouseId: filters.warehouseId } : {}) },
-      select: { quantityOnHand: true },
+      where: { companyId, productId, ...warehouseFilter },
+      select: { warehouseId: true, quantityOnHand: true, warehouse: { select: { name: true } } },
+    }),
+    prisma.stockColorBalance.findMany({
+      where: { companyId, productId, quantityOnHand: { gt: EPSILON }, ...warehouseFilter },
+      select: {
+        colorId: true,
+        quantityOnHand: true,
+        color: { select: { name: true, hexValue: true } },
+        warehouse: { select: { name: true } },
+      },
     }),
     prisma.fabricRoll.findMany({
       where: {
@@ -259,11 +329,42 @@ export async function getFabricStockDetail(companyId: string, productId: string,
 
   const totalStock = round(balances.reduce((sum, b) => sum + Number(b.quantityOnHand), 0));
   const rolledStock = round(rolls.reduce((sum, r) => sum + r.remainingQuantity, 0));
+  const colourBalances = buildColourBalanceGroups(
+    colourRows.map((r) => ({
+      colorId: r.colorId,
+      colorName: r.color.name,
+      hexValue: r.color.hexValue,
+      warehouseName: r.warehouse.name,
+      quantity: Number(r.quantityOnHand),
+    }))
+  );
+  const colouredStock = round(colourBalances.reduce((sum, c) => sum + c.quantity, 0));
+  const breakdownMode: StockBreakdownMode = rolls.length > 0 ? "ROLL" : colourBalances.length > 0 ? "COLOUR" : "PLAIN";
+
+  // Warehouse-wise split, with the ledger's own per-location figures.
+  const warehouses = await Promise.all(
+    balances
+      .filter((b) => Number(b.quantityOnHand) > EPSILON)
+      .map(async (b) => {
+        const byLocation = await getRawMaterialStockByLocation(companyId, productId, b.warehouseId);
+        return {
+          warehouseId: b.warehouseId,
+          warehouseName: b.warehouse.name,
+          quantity: round(Number(b.quantityOnHand)),
+          locations: byLocation.locations.map((l) => ({ label: l.label, quantity: l.quantity })),
+          unassignedQuantity: byLocation.unassignedQuantity,
+        };
+      })
+  );
+  warehouses.sort((a, b) => a.warehouseName.localeCompare(b.warehouseName));
+
   return {
-    fabricId: product.id,
-    fabricName: product.styleName,
-    fabricCode: product.styleCode,
+    materialId: product.id,
+    materialName: product.styleName,
+    materialCode: product.styleCode,
+    materialCategory: product.materialCategory,
     unit: product.baseUom?.code ?? null,
+    breakdownMode,
     totalStock,
     reservedStock: 0,
     availableStock: totalStock,
@@ -272,5 +373,9 @@ export async function getFabricStockDetail(companyId: string, productId: string,
     // Stock in the ledger that no roll accounts for (e.g. opening stock, or an issue made without picking a roll).
     notRollTrackedStock: round(Math.max(0, totalStock - rolledStock)),
     colours: buildFabricColourGroups(rolls),
+    colourBalances,
+    // Stock not tagged with any colour (only meaningful in COLOUR mode).
+    noColourStock: round(Math.max(0, totalStock - colouredStock)),
+    warehouses,
   };
 }
