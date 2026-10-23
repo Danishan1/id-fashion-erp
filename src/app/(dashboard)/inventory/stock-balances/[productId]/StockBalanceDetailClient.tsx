@@ -113,6 +113,11 @@ const titleCase = (v: string) => v.charAt(0) + v.slice(1).toLowerCase();
 const sectionTitle = "text-sm font-semibold text-zinc-900 dark:text-zinc-50";
 const tableWrap = "overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800";
 const thead = "bg-zinc-100 text-left text-xs font-semibold uppercase text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200";
+// An open colour is tinted and edged in indigo, and its detail panel carries the same edge plus a thick bottom border,
+// so it is clear where one colour ends and the next begins.
+const OPEN_COLOUR_ROW = "bg-indigo-50 dark:bg-indigo-950/40";
+const OPEN_COLOUR_PANEL = "border-b-4 border-l-4 border-b-zinc-300 border-l-indigo-500 bg-indigo-50/50 px-4 pb-5 pt-3 dark:border-b-zinc-700 dark:bg-indigo-950/20";
+const PANEL_CARD = "rounded-lg border border-indigo-200 bg-white p-3 shadow-sm dark:border-indigo-900 dark:bg-zinc-900";
 
 function ColourDot({ hex }: { hex: string | null }) {
   return hex ? <span className="h-3 w-3 rounded-full border border-zinc-300" style={{ backgroundColor: hex }} /> : null;
@@ -383,8 +388,8 @@ function RollStock({ detail, qty, warehouseId }: { detail: StockDetail; qty: (n:
                 const open = openKeys.has(key);
                 return (
                   <Fragment key={key}>
-                    <tr className="cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-900" onClick={() => toggle(key)}>
-                      <td className="px-3 py-2">
+                    <tr className={`cursor-pointer ${open ? OPEN_COLOUR_ROW : "hover:bg-zinc-50 dark:hover:bg-zinc-900"}`} onClick={() => toggle(key)}>
+                      <td className={`border-l-4 px-3 py-2 ${open ? "border-l-indigo-500" : "border-l-transparent"}`}>
                         <button
                           type="button"
                           aria-expanded={open}
@@ -411,7 +416,7 @@ function RollStock({ detail, qty, warehouseId }: { detail: StockDetail; qty: (n:
                     </tr>
                     {open && (
                       <tr>
-                        <td colSpan={6} className="bg-zinc-50 px-4 py-4 dark:bg-zinc-950">
+                        <td colSpan={6} className={OPEN_COLOUR_PANEL}>
                           <ColourDetail colour={colour} qty={qty} />
                         </td>
                       </tr>
@@ -430,7 +435,14 @@ function RollStock({ detail, qty, warehouseId }: { detail: StockDetail; qty: (n:
 function ColourDetail({ colour, qty }: { colour: FabricColour; qty: (n: number) => string }) {
   const cell = "px-2 py-1.5";
   return (
-    <div className="space-y-4">
+    <div className={`space-y-4 ${PANEL_CARD}`}>
+      <div className="flex items-center gap-2 text-sm font-semibold text-indigo-700 dark:text-indigo-300">
+        {colour.hexValue && <span className="h-3 w-3 rounded-full border border-zinc-300" style={{ backgroundColor: colour.hexValue }} />}
+        {colour.colorName}
+        <span className="text-xs font-normal text-zinc-500 dark:text-zinc-400">
+          · {colour.rollCount} roll{colour.rollCount === 1 ? "" : "s"}
+        </span>
+      </div>
       <div>
         <h3 className="mb-2 text-xs font-semibold uppercase text-zinc-500">Fabric Specifications</h3>
         <div className="overflow-x-auto">

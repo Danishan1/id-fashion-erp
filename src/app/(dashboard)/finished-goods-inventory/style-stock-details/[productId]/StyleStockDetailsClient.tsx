@@ -56,12 +56,27 @@ const colourKey = (c: ColourGroup) => c.colorId ?? "none";
 const sectionTitle = "text-sm font-semibold text-zinc-900 dark:text-zinc-50";
 const tableWrap = "overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800";
 const thead = "bg-zinc-100 text-left text-xs font-semibold uppercase text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200";
+// An open colour is tinted and edged in indigo, and its detail panel carries the same edge plus a thick bottom border,
+// so it is clear where one colour ends and the next begins.
+const OPEN_COLOUR_ROW = "bg-indigo-50 dark:bg-indigo-950/40";
+const OPEN_COLOUR_PANEL = "border-b-4 border-l-4 border-b-zinc-300 border-l-indigo-500 bg-indigo-50/50 px-4 pb-5 pt-3 dark:border-b-zinc-700 dark:bg-indigo-950/20";
+const PANEL_CARD = "rounded-lg border border-indigo-200 bg-white p-3 shadow-sm dark:border-indigo-900 dark:bg-zinc-900";
 
 function StatTile({ label, value }: { label: string; value: string | number }) {
   return (
     <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
       <div className="text-xs font-medium text-zinc-500 dark:text-zinc-400">{label}</div>
       <div className="mt-1 text-2xl font-semibold text-zinc-900 dark:text-zinc-50">{value}</div>
+    </div>
+  );
+}
+
+function PanelTitle({ colour, detail }: { colour: { colorName: string; hexValue: string | null }; detail: string }) {
+  return (
+    <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-indigo-700 dark:text-indigo-300">
+      {colour.hexValue && <span className="h-3 w-3 rounded-full border border-zinc-300" style={{ backgroundColor: colour.hexValue }} />}
+      {colour.colorName}
+      <span className="text-xs font-normal text-zinc-500 dark:text-zinc-400">· {detail}</span>
     </div>
   );
 }
@@ -214,8 +229,8 @@ export function StyleStockDetailsClient({ productId, summary }: { productId: str
                       const open = openKeys.has(key);
                       return (
                         <Fragment key={key}>
-                          <tr className="cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-900" onClick={() => toggle(key)}>
-                            <td className="px-3 py-2">
+                          <tr className={`cursor-pointer ${open ? OPEN_COLOUR_ROW : "hover:bg-zinc-50 dark:hover:bg-zinc-900"}`} onClick={() => toggle(key)}>
+                            <td className={`border-l-4 px-3 py-2 ${open ? "border-l-indigo-500" : "border-l-transparent"}`}>
                               <button
                                 type="button"
                                 aria-expanded={open}
@@ -243,7 +258,9 @@ export function StyleStockDetailsClient({ productId, summary }: { productId: str
                           </tr>
                           {open && (
                             <tr>
-                              <td colSpan={5} className="bg-zinc-50 px-4 py-4 dark:bg-zinc-950">
+                              <td colSpan={5} className={OPEN_COLOUR_PANEL}>
+                                <div className={PANEL_CARD}>
+                                <PanelTitle colour={colour} detail={`${colour.sizes.length} size${colour.sizes.length === 1 ? "" : "s"}`} />
                                 <table className="min-w-full text-xs">
                                   <thead className="bg-zinc-100 text-left font-semibold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">
                                     <tr>
@@ -266,6 +283,7 @@ export function StyleStockDetailsClient({ productId, summary }: { productId: str
                                     ))}
                                   </tbody>
                                 </table>
+                                </div>
                               </td>
                             </tr>
                           )}
