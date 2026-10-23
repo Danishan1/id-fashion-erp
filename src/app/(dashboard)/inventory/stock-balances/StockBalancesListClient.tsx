@@ -107,6 +107,7 @@ export function StockBalancesListClient() {
       <DataTable<StockRow>
         key={qs}
         fetchUrl={`/api/v1/inventory/stock-balances${qs}`}
+        highlightHeader
         searchPlaceholder="Search by material name or code…"
         rowHref={(row) => `/inventory/stock-balances/${row.productId}${warehouseId ? `?warehouseId=${warehouseId}` : ""}`}
         rowHrefLabel="View"

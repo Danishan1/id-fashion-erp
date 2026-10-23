@@ -6,74 +6,43 @@ import { DataTable } from "@/components/ui/DataTable";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { ViewIcon } from "@/components/ui/icons";
 
-interface Option {
+interface StyleStockRow {
   id: string;
-  name?: string;
-  code?: string;
+  productId: string;
+  styleName: string;
+  styleCode: string;
+  categoryName: string | null;
+  saleableStock: number;
+  rejectedStock: number;
+  totalStock: number;
+  colourCount: number;
+  sizeCount: number;
+  warehouseCount: number;
+  lastUpdated: string | null;
 }
 
-interface WarehouseLocationOption {
+interface WarehouseOption {
   id: string;
-  code: string;
+  name: string;
 }
 
-interface StockRow {
-  id: string;
-  quantityOnHand: string;
-  stockStatus: "SALEABLE" | "REJECTED";
-  updatedAt: string;
-  product: { id: string; styleCode: string; styleName: string } | null;
-  productVariant: { color: { name: string }; size: { name: string } } | null;
-  warehouse: { code: string; name: string } | null;
-  warehouseLocation: { code: string } | null;
-}
-
-const STOCK_STATUS_OPTIONS = [
-  { value: "SALEABLE", label: "Saleable" },
-  { value: "REJECTED", label: "Rejected" },
-];
+const qty = (n: number) => n.toLocaleString("en-IN");
 
 export function FinishedGoodsStockListClient() {
-  const [colors, setColors] = useState<Option[]>([]);
-  const [sizes, setSizes] = useState<Option[]>([]);
-  const [warehouses, setWarehouses] = useState<Option[]>([]);
-  const [locations, setLocations] = useState<WarehouseLocationOption[]>([]);
-
-  const [colorId, setColorId] = useState("");
-  const [sizeId, setSizeId] = useState("");
+  const [warehouses, setWarehouses] = useState<WarehouseOption[]>([]);
   const [warehouseId, setWarehouseId] = useState("");
-  const [warehouseLocationId, setWarehouseLocationId] = useState("");
+  const [showZeroStock, setShowZeroStock] = useState(false);
 
   useEffect(() => {
-    fetch("/api/v1/colors?pageSize=200")
-      .then((res) => res.json())
-      .then((body) => setColors(body.data ?? []));
-    fetch("/api/v1/sizes?pageSize=200")
-      .then((res) => res.json())
-      .then((body) => setSizes(body.data ?? []));
     fetch("/api/v1/warehouses?pageSize=200")
       .then((res) => res.json())
       .then((body) => setWarehouses(body.data ?? []));
   }, []);
 
-  // react-hooks/set-state-in-effect — the "clear the dependent Location
-  // field when Warehouse changes" reset happens synchronously in the
-  // SearchableSelect's own onChange handler below, not in this effect's
-  // body (the same established fix pattern this project already uses for
-  // every other "clear a dependent field" case). This effect's only job is
-  // fetching the new warehouse's own locations once a real id is selected.
-  useEffect(() => {
-    if (!warehouseId) return;
-    fetch(`/api/v1/warehouses/${warehouseId}`)
-      .then((res) => res.json())
-      .then((body) => setLocations(body.data?.locations ?? []));
-  }, [warehouseId]);
-
-  const handleWarehouseChange = (id: string) => {
-    setWarehouseId(id);
-    setWarehouseLocationId("");
-    if (!id) setLocations([]);
-  };
+  const params = new URLSearchParams();
+  if (warehouseId) params.set("warehouseId", warehouseId);
+  if (showZeroStock) params.set("showZeroStock", "true");
+  const qs = params.toString() ? `?${params.toString()}` : "";
 
   return (
     <div className="space-y-4">
@@ -87,60 +56,56 @@ export function FinishedGoodsStockListClient() {
       <div>
         <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Finished Goods Stock List</h1>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-          Current on-hand quantity per style, colour/size, warehouse, and location — maintained by the
-          Finished Goods ledger. A blank Colour/Size on a row means this stock predates variant tracking —
-          see the Dashboard&apos;s Unallocated Legacy Stock callout. Click a row, or &quot;View
-          Details&quot;, for that style&apos;s full breakdown (FGI-052).
+          Finished goods stock per style. Open a style to see it colour-wise and size-wise, and warehouse-wise.
         </p>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <SearchableSelect value={colorId} onChange={setColorId} options={colors.map((c) => ({ id: c.id, label: c.name ?? c.code ?? "" }))} placeholder="Search colour…" emptyOptionLabel="All Colours" />
-        <SearchableSelect value={sizeId} onChange={setSizeId} options={sizes.map((s) => ({ id: s.id, label: s.name ?? s.code ?? "" }))} placeholder="Search size…" emptyOptionLabel="All Sizes" />
-        <SearchableSelect value={warehouseId} onChange={handleWarehouseChange} options={warehouses.map((w) => ({ id: w.id, label: w.name ?? w.code ?? "" }))} placeholder="Search warehouse…" emptyOptionLabel="All Warehouses" />
-        <select
-          value={warehouseLocationId}
-          onChange={(e) => setWarehouseLocationId(e.target.value)}
-          disabled={!warehouseId}
-          className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-900 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
-        >
-          <option value="">All Locations</option>
-          {locations.map((loc) => (
-            <option key={loc.id} value={loc.id}>
-              {loc.code}
-            </option>
-          ))}
-        </select>
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="w-64">
+          <SearchableSelect
+            value={warehouseId}
+            onChange={setWarehouseId}
+            options={warehouses.map((w) => ({ id: w.id, label: w.name }))}
+            placeholder="Search warehouse…"
+            emptyOptionLabel="All Warehouses"
+          />
+        </div>
+        <label className="flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+          <input type="checkbox" checked={showZeroStock} onChange={(e) => setShowZeroStock(e.target.checked)} className="h-4 w-4 rounded border-zinc-300" />
+          Show zero stock
+        </label>
       </div>
 
-      <DataTable<StockRow>
-        key={`${colorId}-${sizeId}-${warehouseId}-${warehouseLocationId}`}
-        fetchUrl="/api/v1/finished-goods-inventory/stock-list"
+      <DataTable<StyleStockRow>
+        key={qs}
+        fetchUrl={`/api/v1/finished-goods-inventory/style-stock${qs}`}
+        highlightHeader
         searchPlaceholder="Search by style name or code…"
-        extraParams={{ colorId, sizeId, warehouseId, warehouseLocationId }}
-        statusFilter={{ options: STOCK_STATUS_OPTIONS, allLabel: "All Stock Statuses" }}
-        // FGI-052's own "Style/Colour/Size Stock Details" drill-down — every
-        // row for the same style links to the identical destination, so
-        // clicking any row for a style lands on that one style's full
-        // breakdown page. Read-only (there's nothing to edit here), so the
-        // built-in row-action affordance is relabelled "View Details" with
-        // ViewIcon rather than the default Edit/EditIcon, matching the exact
-        // precedent already used by the Stock Balances sibling list.
-        rowHref={(row) => `/finished-goods-inventory/style-stock-details/${row.product?.id}`}
-        rowHrefLabel="View Details"
+        rowHref={(row) => `/finished-goods-inventory/style-stock-details/${row.productId}${warehouseId ? `?warehouseId=${warehouseId}` : ""}`}
+        rowHrefLabel="View"
         rowHrefIcon={<ViewIcon />}
         columns={[
-          { key: "product", header: "Style", render: (row) => (row.product ? `${row.product.styleCode} — ${row.product.styleName}` : "—") },
           {
-            key: "variant",
-            header: "Colour / Size",
-            render: (row) => (row.productVariant ? `${row.productVariant.color.name} / ${row.productVariant.size.name}` : "— (unallocated) —"),
+            key: "styleName",
+            header: "Style",
+            render: (row) => (
+              <span>
+                {row.styleName} <span className="text-xs text-zinc-500">({row.styleCode})</span>
+              </span>
+            ),
           },
-          { key: "warehouse", header: "Warehouse", render: (row) => row.warehouse?.name ?? "—" },
-          { key: "warehouseLocation", header: "Location", render: (row) => row.warehouseLocation?.code ?? "— (staging) —" },
-          { key: "stockStatus", header: "Status", render: (row) => (row.stockStatus === "SALEABLE" ? "Saleable" : "Rejected") },
-          { key: "quantityOnHand", header: "Quantity On Hand", render: (row) => Number(row.quantityOnHand).toLocaleString() },
-          { key: "updatedAt", header: "Last Updated", render: (row) => new Date(row.updatedAt).toLocaleString() },
+          { key: "categoryName", header: "Category", render: (row) => row.categoryName ?? "—" },
+          { key: "saleableStock", header: "Saleable Stock", render: (row) => qty(row.saleableStock) },
+          { key: "rejectedStock", header: "Rejected Stock", render: (row) => qty(row.rejectedStock) },
+          { key: "totalStock", header: "Total Stock", render: (row) => qty(row.totalStock) },
+          { key: "colourCount", header: "Colours", render: (row) => (row.colourCount ? row.colourCount : "—") },
+          { key: "sizeCount", header: "Sizes", render: (row) => (row.sizeCount ? row.sizeCount : "—") },
+          { key: "warehouseCount", header: "Warehouses", render: (row) => row.warehouseCount },
+          {
+            key: "lastUpdated",
+            header: "Last Updated",
+            render: (row) => (row.lastUpdated ? new Date(row.lastUpdated).toLocaleString("en-IN") : "—"),
+          },
         ]}
       />
     </div>

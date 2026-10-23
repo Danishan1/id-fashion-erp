@@ -125,7 +125,12 @@ interface DataTableProps<T> {
    * When provided, a toggle chevron column is rendered at the start of each row.
    */
   renderExpandedRow?: (row: T) => ReactNode;
+  /** Shaded, bolder header row so the column headings stand apart from the data. Omitted: plain header, as before. */
+  highlightHeader?: boolean;
 }
+
+export const HIGHLIGHTED_TABLE_HEADER_CLASS =
+  "bg-zinc-100 text-zinc-700 [&>th]:font-semibold dark:bg-zinc-800 dark:text-zinc-200";
 
 interface ListResponse<T> {
   data: T[];
@@ -154,6 +159,7 @@ export function DataTable<T extends { id: string }>({
   initialSort,
   onSortChange,
   renderExpandedRow,
+  highlightHeader = false,
 }: DataTableProps<T>) {
   const router = useRouter();
   const [page, setPage] = useState(1);
@@ -343,7 +349,11 @@ export function DataTable<T extends { id: string }>({
       <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-zinc-200 text-left text-xs uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
+            <tr
+              className={`border-b border-zinc-200 text-left text-xs uppercase tracking-wide dark:border-zinc-800 ${
+                highlightHeader ? HIGHLIGHTED_TABLE_HEADER_CLASS : "text-zinc-500 dark:text-zinc-400"
+              }`}
+            >
               {renderExpandedRow && (
                 <th className="w-8 px-2 py-2 text-center" aria-label="Expand row" />
               )}

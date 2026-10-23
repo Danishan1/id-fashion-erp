@@ -112,7 +112,7 @@ const titleCase = (v: string) => v.charAt(0) + v.slice(1).toLowerCase();
 
 const sectionTitle = "text-sm font-semibold text-zinc-900 dark:text-zinc-50";
 const tableWrap = "overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800";
-const thead = "bg-zinc-50 text-left text-xs font-medium uppercase text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400";
+const thead = "bg-zinc-100 text-left text-xs font-semibold uppercase text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200";
 
 function ColourDot({ hex }: { hex: string | null }) {
   return hex ? <span className="h-3 w-3 rounded-full border border-zinc-300" style={{ backgroundColor: hex }} /> : null;
@@ -435,7 +435,7 @@ function ColourDetail({ colour, qty }: { colour: FabricColour; qty: (n: number) 
         <h3 className="mb-2 text-xs font-semibold uppercase text-zinc-500">Fabric Specifications</h3>
         <div className="overflow-x-auto">
           <table className="min-w-full text-xs">
-            <thead className="text-left text-zinc-500">
+            <thead className="bg-zinc-100 text-left font-semibold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">
               <tr>
                 <th className={cell}>Colour</th>
                 <th className={cell}>Shade</th>
@@ -471,7 +471,7 @@ function ColourDetail({ colour, qty }: { colour: FabricColour; qty: (n: number) 
         <h3 className="mb-2 text-xs font-semibold uppercase text-zinc-500">Rolls</h3>
         <div className="overflow-x-auto">
           <table className="min-w-full text-xs">
-            <thead className="text-left text-zinc-500">
+            <thead className="bg-zinc-100 text-left font-semibold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">
               <tr>
                 <th className={cell}>Roll No.</th>
                 <th className={cell}>Lot/Batch No.</th>
