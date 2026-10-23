@@ -13,7 +13,8 @@ export async function GET(req: NextRequest) {
     const query = parseListQuery(req.nextUrl.searchParams, "styleName");
     const warehouseId = req.nextUrl.searchParams.get("warehouseId") || undefined;
     const materialCategory = req.nextUrl.searchParams.get("materialCategory") || undefined;
-    const { data, totalCount } = await listRawMaterialStock(session.user.companyId, query, { warehouseId, materialCategory });
+    const showZeroStock = req.nextUrl.searchParams.get("showZeroStock") === "true";
+    const { data, totalCount } = await listRawMaterialStock(session.user.companyId, query, { warehouseId, materialCategory, showZeroStock });
 
     return NextResponse.json({ data, meta: buildListMeta(totalCount, query.page, query.pageSize) });
   } catch (error) {

@@ -34,7 +34,7 @@ export type StockBreakdownMode = "ROLL" | "COLOUR" | "PLAIN";
 export async function listRawMaterialStock(
   companyId: string,
   query: ListQuery,
-  filters: { warehouseId?: string; materialCategory?: string } = {}
+  filters: { warehouseId?: string; materialCategory?: string; showZeroStock?: boolean } = {}
 ) {
   const balanceWhere: Prisma.StockBalanceWhereInput = {
     ...(filters.warehouseId ? { warehouseId: filters.warehouseId } : {}),
@@ -46,7 +46,8 @@ export async function listRawMaterialStock(
     itemType: "RAW_MATERIAL",
     ...(category ? { materialCategory: category } : {}),
     deletedAt: null,
-    stockBalances: { some: balanceWhere },
+    // Materials whose stock has run out are hidden unless asked for.
+    stockBalances: { some: filters.showZeroStock ? balanceWhere : { ...balanceWhere, quantityOnHand: { gt: EPSILON } } },
     ...(query.search
       ? {
           OR: [

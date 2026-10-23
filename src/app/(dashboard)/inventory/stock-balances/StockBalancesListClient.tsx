@@ -41,6 +41,7 @@ export function StockBalancesListClient() {
   const [warehouses, setWarehouses] = useState<WarehouseOption[]>([]);
   const [warehouseId, setWarehouseId] = useState("");
   const [category, setCategory] = useState("");
+  const [showZeroStock, setShowZeroStock] = useState(false);
 
   useEffect(() => {
     fetch("/api/v1/warehouses?pageSize=200")
@@ -51,6 +52,7 @@ export function StockBalancesListClient() {
   const params = new URLSearchParams();
   if (warehouseId) params.set("warehouseId", warehouseId);
   if (category) params.set("materialCategory", category);
+  if (showZeroStock) params.set("showZeroStock", "true");
   const qs = params.toString() ? `?${params.toString()}` : "";
   const exportQs = warehouseId ? `?warehouseId=${warehouseId}` : "";
 
@@ -96,6 +98,10 @@ export function StockBalancesListClient() {
             </option>
           ))}
         </select>
+        <label className="flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+          <input type="checkbox" checked={showZeroStock} onChange={(e) => setShowZeroStock(e.target.checked)} className="h-4 w-4 rounded border-zinc-300" />
+          Show zero stock
+        </label>
       </div>
 
       <DataTable<StockRow>
