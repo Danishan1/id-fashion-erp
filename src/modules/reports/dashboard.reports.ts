@@ -78,10 +78,10 @@ async function getExecutiveDashboardDescriptor(companyId: string, generatedByNam
     prisma.dispatch.count({ where: { companyId, status: { not: "CANCELLED" }, dispatchDate: { gte: monthStart } } }),
     prisma.salesInvoice.aggregate({ where: { companyId, status: { in: ["POSTED", "PARTIALLY_PAID"] } }, _sum: { totalAmount: true, paidAmount: true } }),
     prisma.purchaseInvoice.aggregate({ where: { companyId, status: { in: ["POSTED", "PARTIALLY_PAID"] } }, _sum: { totalAmount: true, paidAmount: true } }),
-    // PAID only, not "not CANCELLED" — Expense now has a real Approve/Reject/
+    // PAID or PARTIALLY_PAID (money has started going out), not "not CANCELLED" — Expense now has a real Approve/Reject/
     // Pay lifecycle; a PENDING_APPROVAL or REJECTED expense hasn't actually
     // cost the company anything yet and would otherwise inflate this total.
-    prisma.expense.aggregate({ where: { companyId, status: "PAID", expenseDate: { gte: monthStart } }, _sum: { totalAmount: true } }),
+    prisma.expense.aggregate({ where: { companyId, status: { in: ["PAID", "PARTIALLY_PAID"] }, expenseDate: { gte: monthStart } }, _sum: { totalAmount: true } }),
   ]);
 
   const orderCountByStatus = new Map<string, number>(orderCounts.map((o) => [o.status, o._count._all]));
@@ -173,7 +173,7 @@ async function getDailyMisDescriptor(companyId: string, generatedByName: string,
     prisma.dispatch.count({ where: { companyId, status: { not: "CANCELLED" }, dispatchDate: { gte: dayStart, lt: dayEnd } } }),
     prisma.payment.aggregate({ where: { companyId, direction: "RECEIPT", status: "POSTED", paymentDate: { gte: dayStart, lt: dayEnd } }, _sum: { amount: true } }),
     // PAID only — see the identical note on the monthly aggregate above.
-    prisma.expense.aggregate({ where: { companyId, status: "PAID", expenseDate: { gte: dayStart, lt: dayEnd } }, _sum: { totalAmount: true } }),
+    prisma.expense.aggregate({ where: { companyId, status: { in: ["PAID", "PARTIALLY_PAID"] }, expenseDate: { gte: dayStart, lt: dayEnd } }, _sum: { totalAmount: true } }),
     prisma.stockBalance.findMany({ where: { companyId }, select: { quantityOnHand: true, product: { select: { reorderLevel: true } } } }),
     prisma.salesOrder.count({
       where: {

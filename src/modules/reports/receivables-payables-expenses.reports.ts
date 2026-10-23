@@ -314,7 +314,7 @@ async function getExpenseRegisterDescriptor(companyId: string, generatedByName: 
     expenseId: e.id,
     expenseNumber: e.expenseNumber,
     expenseDate: e.expenseDate,
-    account: `${e.account.code} — ${e.account.name}`,
+    account: e.account ? `${e.account.code} — ${e.account.name}` : "Not set",
     supplier: e.supplier?.name ?? "—",
     description: e.description,
     amount: Number(e.amount),
@@ -327,11 +327,11 @@ async function getExpenseRegisterDescriptor(companyId: string, generatedByName: 
   // expense hasn't actually cost the company anything yet, matching the
   // same "rows show every status, totals exclude the non-realized ones"
   // fix already applied to Sales Invoice Register/Purchase Order Register.
-  const paidRows = rows.filter((r) => r.status === "PAID");
+  const paidRows = rows.filter((r) => r.status === "PAID" || r.status === "PARTIALLY_PAID");
 
   return {
     title: "Expense Register",
-    subtitle: "Every non-cancelled Expense matching the selected filters. Totals below sum Paid rows only.",
+    subtitle: "Every non-cancelled Expense matching the selected filters. Totals below sum Paid and Part Paid rows only.",
     filtersApplied: filtersApplied(filters, { dateFrom: "Date From", dateTo: "Date To" }),
     columns: [
       { key: "expenseNumber", label: "Expense Number", linkTo: "expense" },

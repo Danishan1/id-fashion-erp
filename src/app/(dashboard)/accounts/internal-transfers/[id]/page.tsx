@@ -3,6 +3,8 @@ import { auth } from "@/core/auth/auth";
 import { getInternalTransferById } from "@/modules/accounts/internal-transfer.service";
 import { InternalTransferWorkflowPanel } from "./InternalTransferWorkflowPanel";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
+import { AttachmentsPanel } from "@/components/ui/AttachmentsPanel";
+import { PermissionService } from "@/core/rbac/PermissionService";
 
 export default async function InternalTransferDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -10,6 +12,7 @@ export default async function InternalTransferDetailPage({ params }: { params: P
 
   const transfer = await getInternalTransferById(session!.user.companyId, id).catch(() => null);
   if (!transfer) notFound();
+  const canAttach = await PermissionService.can(session!.user.id, "accounts", "create");
 
   return (
     <div className="space-y-6">
@@ -25,6 +28,8 @@ export default async function InternalTransferDetailPage({ params }: { params: P
       </div>
 
       <InternalTransferWorkflowPanel key={id} transfer={JSON.parse(JSON.stringify(transfer))} />
+
+      <AttachmentsPanel module="internal-transfer" recordId={transfer.id} canEdit={canAttach && transfer.status !== "CANCELLED"} />
     </div>
   );
 }

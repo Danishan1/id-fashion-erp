@@ -3,6 +3,8 @@ import { auth } from "@/core/auth/auth";
 import { getPaymentById } from "@/modules/accounts/payment.service";
 import { PaymentWorkflowPanel } from "./PaymentWorkflowPanel";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
+import { AttachmentsPanel } from "@/components/ui/AttachmentsPanel";
+import { PermissionService } from "@/core/rbac/PermissionService";
 
 export default async function PaymentDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -10,6 +12,7 @@ export default async function PaymentDetailPage({ params }: { params: Promise<{ 
 
   const payment = await getPaymentById({ companyId: session!.user.companyId, userId: session!.user.id }, id).catch(() => null);
   if (!payment) notFound();
+  const canAttach = await PermissionService.can(session!.user.id, "payments", "create");
 
   return (
     <div className="space-y-6">
@@ -25,6 +28,8 @@ export default async function PaymentDetailPage({ params }: { params: Promise<{ 
       </div>
 
       <PaymentWorkflowPanel key={id} payment={JSON.parse(JSON.stringify(payment))} />
+
+      <AttachmentsPanel module="payment" recordId={payment.id} canEdit={canAttach && payment.status !== "CANCELLED"} />
     </div>
   );
 }

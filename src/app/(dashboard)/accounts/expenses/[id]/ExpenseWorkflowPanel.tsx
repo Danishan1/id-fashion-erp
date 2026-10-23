@@ -5,21 +5,22 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { Modal } from "@/components/ui/Modal";
-import { FilePreviewModal } from "@/components/ui/FilePreviewModal";
+import { FormField, textInputClass } from "@/components/ui/FormField";
+import { AttachmentsPanel, StagedFilesPicker, uploadFilesToRecord } from "@/components/ui/AttachmentsPanel";
 import { formatCurrency } from "@/lib/currency";
+import { todayIsoDate } from "@/lib/date";
 
-interface Person {
-  fullName: string;
-}
-
-interface AttachmentRow {
+interface ExpensePaymentRow {
   id: string;
-  fileName: string;
-  fileSizeBytes: number;
-  mimeType: string;
-  uploadedAt: string;
-  uploadedBy: Person;
-  contextLabel: string | null;
+  paymentNumber: string;
+  paymentDate: string;
+  amount: string;
+  referenceNumber: string | null;
+  notes: string | null;
+  paymentType: { name: string; type: string };
+  bankAccount: { name: string; bankName: string } | null;
+  journal: { id: string; journalNumber: string };
+  createdBy: { fullName: string };
 }
 
 interface ExpenseDetail {
@@ -32,32 +33,50 @@ interface ExpenseDetail {
   totalAmount: string;
   tdsPercentage: string | null;
   tdsAmount: string;
+  paidAmount: string;
+  source: "STANDARD" | "BILL_UPLOAD";
   referenceNumber: string | null;
-  status: "PENDING_APPROVAL" | "APPROVED" | "REJECTED" | "PAID" | "CANCELLED";
+  status: "PENDING_APPROVAL" | "APPROVED" | "PARTIALLY_PAID" | "REJECTED" | "PAID" | "CANCELLED";
   rejectionReason: string | null;
-  account: { code: string; name: string };
+  account: { code: string; name: string } | null;
   supplier: { name: string } | null;
   taxRate: { name: string } | null;
-  paymentType: { name: string };
+  // Set only on expenses paid the old one-shot way (before part payments).
+  paymentType: { name: string } | null;
   bankAccount: { name: string; bankName: string } | null;
   journal: { id: string; journalNumber: string } | null;
   createdBy: { fullName: string };
   approvedBy: { fullName: string } | null;
   rejectedBy: { fullName: string } | null;
   postedBy: { fullName: string } | null;
+  payments: ExpensePaymentRow[];
+}
+
+interface PaymentTypeOption {
+  id: string;
+  name: string;
+  type: string;
+}
+
+interface BankAccountOption {
+  id: string;
+  name: string;
+  bankName: string;
 }
 
 const STATUS_STYLES: Record<string, string> = {
   PENDING_APPROVAL: "bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400",
   APPROVED: "bg-blue-100 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400",
+  PARTIALLY_PAID: "bg-violet-100 text-violet-700 dark:bg-violet-500/10 dark:text-violet-400",
   REJECTED: "bg-red-100 text-red-700 dark:bg-red-500/10 dark:text-red-400",
   PAID: "bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-400",
   CANCELLED: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
 };
 
-const STATUS_LABELS: Record<string, string> = {
+export const EXPENSE_STATUS_LABELS: Record<string, string> = {
   PENDING_APPROVAL: "Pending Approval",
   APPROVED: "Approved",
+  PARTIALLY_PAID: "Part Paid",
   REJECTED: "Rejected",
   PAID: "Paid",
   CANCELLED: "Cancelled",
@@ -68,38 +87,24 @@ async function parseErrorMessage(res: Response, fallback: string) {
   return body?.error?.message ?? fallback;
 }
 
-function formatFileSize(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
+const round2 = (n: number) => Math.round(n * 100) / 100;
 
 export function ExpenseWorkflowPanel({ expense }: { expense: ExpenseDetail }) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [showApproveConfirm, setShowApproveConfirm] = useState(false);
-  const [showPayConfirm, setShowPayConfirm] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [rejectionReason, setRejectionReason] = useState("");
+  const [showPayModal, setShowPayModal] = useState(false);
+  const [openPaymentFiles, setOpenPaymentFiles] = useState<string | null>(null);
 
-  const [attachments, setAttachments] = useState<AttachmentRow[]>([]);
-  const [uploadFile, setUploadFile] = useState<File | null>(null);
-  const [uploadInputKey, setUploadInputKey] = useState(0);
-  const [previewAttachment, setPreviewAttachment] = useState<AttachmentRow | null>(null);
-
-  const fetchAttachments = async () => {
-    const res = await fetch(`/api/v1/expenses/${expense.id}/attachments`);
-    const body = await res.json();
-    if (res.ok) setAttachments(body.data ?? []);
-  };
-
-  useEffect(() => {
-    fetch(`/api/v1/expenses/${expense.id}/attachments`)
-      .then((res) => res.json())
-      .then((body) => setAttachments(body.data ?? []));
-  }, [expense.id]);
+  const payable = round2(Number(expense.totalAmount) - Number(expense.tdsAmount));
+  const paid = Number(expense.paidAmount);
+  const remaining = round2(payable - paid);
+  const canPay = expense.status === "APPROVED" || expense.status === "PARTIALLY_PAID";
+  const canEditFiles = expense.status !== "CANCELLED" && expense.status !== "REJECTED";
 
   const runAction = async (url: string, body?: unknown) => {
     setIsBusy(true);
@@ -117,48 +122,17 @@ export function ExpenseWorkflowPanel({ expense }: { expense: ExpenseDetail }) {
     return true;
   };
 
-  const uploadAttachment = async () => {
-    if (!uploadFile) return;
-    setIsBusy(true);
-    setError(null);
-
-    const formData = new FormData();
-    formData.append("file", uploadFile);
-    const res = await fetch(`/api/v1/expenses/${expense.id}/attachments`, { method: "POST", body: formData });
-
-    if (!res.ok) {
-      setError(await parseErrorMessage(res, "Failed to upload the file."));
-      setIsBusy(false);
-      return;
-    }
-
-    setUploadFile(null);
-    setUploadInputKey((k) => k + 1);
-    await fetchAttachments();
-    setIsBusy(false);
-  };
-
-  const deleteAttachment = async (attachmentId: string) => {
-    setIsBusy(true);
-    setError(null);
-    const res = await fetch(`/api/v1/expenses/attachments/${attachmentId}`, { method: "DELETE" });
-
-    if (!res.ok) {
-      setError(await parseErrorMessage(res, "Failed to delete the file."));
-      setIsBusy(false);
-      return;
-    }
-
-    await fetchAttachments();
-    setIsBusy(false);
-  };
-
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[expense.status] ?? ""}`}>
-          {STATUS_LABELS[expense.status] ?? expense.status}
+          {EXPENSE_STATUS_LABELS[expense.status] ?? expense.status}
         </span>
+        {expense.source === "BILL_UPLOAD" && (
+          <span className="rounded-full bg-sky-100 px-2 py-0.5 text-xs font-medium text-sky-700 dark:bg-sky-500/10 dark:text-sky-400">
+            Uploaded bill
+          </span>
+        )}
         {expense.journal && (
           <span className="text-sm text-zinc-500 dark:text-zinc-400">
             Journal:{" "}
@@ -177,82 +151,60 @@ export function ExpenseWorkflowPanel({ expense }: { expense: ExpenseDetail }) {
         </div>
       )}
 
+      {expense.status === "PENDING_APPROVAL" && !expense.account && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-500/10 dark:text-amber-300">
+          This bill was uploaded without an expense account. Use <span className="font-medium">Edit</span> to choose the
+          account (and tax, if any) before approving.
+        </div>
+      )}
+
       <dl className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
-        <div>
-          <dt className="text-zinc-500 dark:text-zinc-400">Account</dt>
-          <dd className="font-medium text-zinc-900 dark:text-zinc-50">
-            {expense.account.code} — {expense.account.name}
-          </dd>
-        </div>
-        <div>
-          <dt className="text-zinc-500 dark:text-zinc-400">Description</dt>
-          <dd className="font-medium text-zinc-900 dark:text-zinc-50">{expense.description}</dd>
-        </div>
-        <div>
-          <dt className="text-zinc-500 dark:text-zinc-400">Expense Date</dt>
-          <dd className="font-medium text-zinc-900 dark:text-zinc-50">{expense.expenseDate.slice(0, 10)}</dd>
-        </div>
-        <div>
-          <dt className="text-zinc-500 dark:text-zinc-400">Supplier</dt>
-          <dd className="font-medium text-zinc-900 dark:text-zinc-50">{expense.supplier?.name ?? "—"}</dd>
-        </div>
-        <div>
-          <dt className="text-zinc-500 dark:text-zinc-400">Amount</dt>
-          <dd className="font-medium text-zinc-900 dark:text-zinc-50">₹{formatCurrency(expense.amount)}</dd>
-        </div>
-        <div>
-          <dt className="text-zinc-500 dark:text-zinc-400">Tax</dt>
-          <dd className="font-medium text-zinc-900 dark:text-zinc-50">
-            {expense.taxRate ? `${expense.taxRate.name} (₹${formatCurrency(expense.taxAmount)})` : "—"}
-          </dd>
-        </div>
-        <div>
-          <dt className="text-zinc-500 dark:text-zinc-400">Total</dt>
-          <dd className="font-medium text-zinc-900 dark:text-zinc-50">₹{formatCurrency(expense.totalAmount)}</dd>
-        </div>
+        <Item label="Account" value={expense.account ? `${expense.account.code} — ${expense.account.name}` : "Not set yet"} />
+        <Item label="Description" value={expense.description} />
+        <Item label="Expense Date" value={expense.expenseDate.slice(0, 10)} />
+        <Item label="Supplier" value={expense.supplier?.name ?? "—"} />
+        <Item label="Amount" value={`₹${formatCurrency(expense.amount)}`} />
+        <Item
+          label="Tax"
+          value={expense.taxRate ? `${expense.taxRate.name} (₹${formatCurrency(expense.taxAmount)})` : "—"}
+        />
+        <Item label="Total" value={`₹${formatCurrency(expense.totalAmount)}`} />
         {Number(expense.tdsAmount) > 0 && (
-          <>
-            <div>
-              <dt className="text-zinc-500 dark:text-zinc-400">TDS</dt>
-              <dd className="font-medium text-zinc-900 dark:text-zinc-50">
-                {Number(expense.tdsPercentage)}% (₹{formatCurrency(expense.tdsAmount)})
-              </dd>
-            </div>
-            <div>
-              <dt className="text-zinc-500 dark:text-zinc-400">Net Paid</dt>
-              <dd className="font-medium text-zinc-900 dark:text-zinc-50">
-                ₹{formatCurrency((Number(expense.totalAmount) - Number(expense.tdsAmount)).toString())}
-              </dd>
-            </div>
-          </>
+          <Item
+            label="TDS Withheld"
+            value={`${Number(expense.tdsPercentage)}% (₹${formatCurrency(expense.tdsAmount)})`}
+          />
         )}
-        <div>
-          <dt className="text-zinc-500 dark:text-zinc-400">Payment Type</dt>
-          <dd className="font-medium text-zinc-900 dark:text-zinc-50">{expense.paymentType.name}</dd>
-        </div>
-        <div>
-          <dt className="text-zinc-500 dark:text-zinc-400">Bank Account</dt>
-          <dd className="font-medium text-zinc-900 dark:text-zinc-50">
-            {expense.bankAccount ? `${expense.bankAccount.name} — ${expense.bankAccount.bankName}` : "—"}
-          </dd>
-        </div>
-        <div>
-          <dt className="text-zinc-500 dark:text-zinc-400">Reference No.</dt>
-          <dd className="font-medium text-zinc-900 dark:text-zinc-50">{expense.referenceNumber ?? "—"}</dd>
-        </div>
-        <div>
-          <dt className="text-zinc-500 dark:text-zinc-400">Created By</dt>
-          <dd className="font-medium text-zinc-900 dark:text-zinc-50">{expense.createdBy.fullName}</dd>
-        </div>
-        <div>
-          <dt className="text-zinc-500 dark:text-zinc-400">Approved By</dt>
-          <dd className="font-medium text-zinc-900 dark:text-zinc-50">{expense.approvedBy?.fullName ?? "—"}</dd>
-        </div>
-        <div>
-          <dt className="text-zinc-500 dark:text-zinc-400">Paid By</dt>
-          <dd className="font-medium text-zinc-900 dark:text-zinc-50">{expense.postedBy?.fullName ?? "—"}</dd>
-        </div>
+        <Item label="Bill / Reference No." value={expense.referenceNumber ?? "—"} />
+        <Item label="Created By" value={expense.createdBy.fullName} />
+        <Item label="Approved By" value={expense.approvedBy?.fullName ?? "—"} />
+        {expense.paymentType && (
+          <Item
+            label="Paid From"
+            value={`${expense.paymentType.name}${expense.bankAccount ? ` — ${expense.bankAccount.name}` : ""}`}
+          />
+        )}
       </dl>
+
+      {/* Payment summary */}
+      {(canPay || expense.status === "PAID") && (
+        <div className="grid grid-cols-3 gap-3 rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-sm dark:border-zinc-800 dark:bg-zinc-900">
+          <div>
+            <p className="text-zinc-500 dark:text-zinc-400">To Pay</p>
+            <p className="text-base font-semibold text-zinc-900 dark:text-zinc-50">₹{formatCurrency(payable)}</p>
+          </div>
+          <div>
+            <p className="text-zinc-500 dark:text-zinc-400">Paid</p>
+            <p className="text-base font-semibold text-green-700 dark:text-green-400">₹{formatCurrency(paid)}</p>
+          </div>
+          <div>
+            <p className="text-zinc-500 dark:text-zinc-400">Balance</p>
+            <p className={`text-base font-semibold ${remaining > 0 ? "text-amber-700 dark:text-amber-400" : "text-zinc-900 dark:text-zinc-50"}`}>
+              ₹{formatCurrency(Math.max(remaining, 0))}
+            </p>
+          </div>
+        </div>
+      )}
 
       {expense.status === "PENDING_APPROVAL" && (
         <div className="flex flex-wrap gap-3">
@@ -286,95 +238,113 @@ export function ExpenseWorkflowPanel({ expense }: { expense: ExpenseDetail }) {
         </div>
       )}
 
-      {expense.status === "APPROVED" && (
+      {canPay && (
         <div className="flex flex-wrap gap-3">
           <button
-            onClick={() => setShowPayConfirm(true)}
+            onClick={() => setShowPayModal(true)}
             disabled={isBusy}
             className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
           >
-            Pay
+            {expense.status === "PARTIALLY_PAID" ? "Pay Balance / Next Part" : "Record Payment"}
           </button>
-          <button
-            onClick={() => setShowCancelConfirm(true)}
-            disabled={isBusy}
-            className="rounded-md border border-red-300 px-4 py-2 text-sm text-red-700 hover:bg-red-50 disabled:opacity-60 dark:border-red-800 dark:text-red-400"
-          >
-            Cancel
-          </button>
+          {expense.status === "APPROVED" && (
+            <button
+              onClick={() => setShowCancelConfirm(true)}
+              disabled={isBusy}
+              className="rounded-md border border-red-300 px-4 py-2 text-sm text-red-700 hover:bg-red-50 disabled:opacity-60 dark:border-red-800 dark:text-red-400"
+            >
+              Cancel
+            </button>
+          )}
         </div>
       )}
 
-      <div>
-        <h2 className="mb-3 text-sm font-semibold text-zinc-900 dark:text-zinc-50">
-          Attachments <span className="font-normal text-zinc-400">— a bill/receipt can be attached at any stage</span>
-        </h2>
-        <div className="space-y-2">
-          {attachments.length === 0 && <p className="text-sm text-zinc-500">No files uploaded yet.</p>}
-          {attachments.map((a) => (
-            <div
-              key={a.id}
-              className="flex items-center justify-between rounded-md border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-800"
-            >
-              <div>
-                <button
-                  type="button"
-                  onClick={() => setPreviewAttachment(a)}
-                  className="font-medium text-indigo-600 hover:text-indigo-500"
-                >
-                  {a.fileName}
-                </button>
-                <p className="text-xs text-zinc-400">
-                  {formatFileSize(a.fileSizeBytes)} · {a.uploadedBy.fullName} · {new Date(a.uploadedAt).toLocaleString()}
-                  {a.contextLabel ? ` · ${STATUS_LABELS[a.contextLabel] ?? a.contextLabel}` : ""}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => deleteAttachment(a.id)}
-                disabled={isBusy}
-                className="text-xs font-medium text-red-600 hover:text-red-500 disabled:opacity-50"
-              >
-                Remove
-              </button>
-            </div>
-          ))}
-        </div>
-        <div className="mt-3 flex items-center gap-2">
-          <input
-            key={uploadInputKey}
-            type="file"
-            onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
-            className="text-sm text-zinc-600 dark:text-zinc-300"
-          />
-          <button
-            type="button"
-            onClick={uploadAttachment}
-            disabled={isBusy || !uploadFile}
-            className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200"
-          >
-            Upload
-          </button>
-        </div>
-        <p className="mt-1 text-xs text-zinc-400">A receipt or bill photo — JPEG, PNG, WEBP, PDF, Word, or Excel, up to 20 MB.</p>
-      </div>
+      {/* Payment history */}
+      {expense.payments.length > 0 && (
+        <section className="rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+          <h2 className="border-b border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-900 dark:border-zinc-800 dark:text-zinc-50">
+            Payments ({expense.payments.length})
+          </h2>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-zinc-50 text-left text-xs uppercase text-zinc-500 dark:bg-zinc-800/50 dark:text-zinc-400">
+                <tr>
+                  <th className="px-4 py-2">Payment No.</th>
+                  <th className="px-4 py-2">Date</th>
+                  <th className="px-4 py-2 text-right">Amount</th>
+                  <th className="px-4 py-2">Paid From</th>
+                  <th className="px-4 py-2">Reference</th>
+                  <th className="px-4 py-2">Journal</th>
+                  <th className="px-4 py-2">By</th>
+                  <th className="px-4 py-2" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                {expense.payments.map((p) => (
+                  <tr key={p.id} className="align-top">
+                    <td className="px-4 py-2 font-medium">{p.paymentNumber}</td>
+                    <td className="px-4 py-2">{p.paymentDate.slice(0, 10)}</td>
+                    <td className="px-4 py-2 text-right">₹{formatCurrency(p.amount)}</td>
+                    <td className="px-4 py-2">
+                      {p.paymentType.name}
+                      {p.bankAccount ? ` — ${p.bankAccount.name}` : ""}
+                    </td>
+                    <td className="px-4 py-2">
+                      {p.referenceNumber ?? "—"}
+                      {p.notes && <p className="text-xs text-zinc-500">{p.notes}</p>}
+                    </td>
+                    <td className="px-4 py-2">
+                      <Link href={`/accounts/journals/${p.journal.id}`} className="text-indigo-600 hover:text-indigo-500">
+                        {p.journal.journalNumber}
+                      </Link>
+                    </td>
+                    <td className="px-4 py-2">{p.createdBy.fullName}</td>
+                    <td className="px-4 py-2">
+                      <button
+                        type="button"
+                        onClick={() => setOpenPaymentFiles(p.id)}
+                        className="text-xs font-medium text-indigo-600 hover:underline"
+                      >
+                        Files &amp; voice
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
 
-      {previewAttachment && (
-        <FilePreviewModal
-          key={previewAttachment.id}
-          open
-          onClose={() => setPreviewAttachment(null)}
-          previewUrl={`/api/v1/expenses/attachments/${previewAttachment.id}/download?disposition=inline`}
-          downloadUrl={`/api/v1/expenses/attachments/${previewAttachment.id}/download`}
-          fileName={previewAttachment.fileName}
-          mimeType={previewAttachment.mimeType}
+      <AttachmentsPanel
+        module="expense"
+        recordId={expense.id}
+        canEdit={canEditFiles}
+        title="Bills, Files & Voice Notes"
+        labelForContext={(c) => EXPENSE_STATUS_LABELS[c] ?? c}
+      />
+
+      <Modal open={openPaymentFiles !== null} onClose={() => setOpenPaymentFiles(null)} title="Payment files & voice notes">
+        {openPaymentFiles && <AttachmentsPanel compact module="expense-payment" recordId={openPaymentFiles} canEdit />}
+      </Modal>
+
+      {showPayModal && (
+        <RecordPaymentModal
+          expenseId={expense.id}
+          expenseNumber={expense.expenseNumber}
+          remaining={remaining}
+          onClose={() => setShowPayModal(false)}
+          onSaved={() => {
+            setShowPayModal(false);
+            router.refresh();
+          }}
         />
       )}
 
       <ConfirmModal
         open={showApproveConfirm}
         title="Approve expense?"
-        message="This moves the expense to Approved — no money moves yet, an Accountant still needs to Pay it separately."
+        message="This moves the expense to Approved — no money moves yet. Payments (full or in parts) are recorded after this."
         confirmLabel="Approve"
         isBusy={isBusy}
         onConfirm={async () => {
@@ -382,19 +352,6 @@ export function ExpenseWorkflowPanel({ expense }: { expense: ExpenseDetail }) {
           if (ok) setShowApproveConfirm(false);
         }}
         onCancel={() => setShowApproveConfirm(false)}
-      />
-
-      <ConfirmModal
-        open={showPayConfirm}
-        title="Pay expense?"
-        message={`Paying will lock this expense permanently and auto-create a settlement Journal (Dr ${expense.account.name}${Number(expense.taxAmount) > 0 ? " / Dr GST Input Tax Credit" : ""}${Number(expense.tdsAmount) > 0 ? " / Cr TDS Payable" : ""} / Cr Cash-or-Bank) for ₹${formatCurrency(expense.totalAmount)}.`}
-        confirmLabel="Pay"
-        isBusy={isBusy}
-        onConfirm={async () => {
-          const ok = await runAction(`/api/v1/expenses/${expense.id}/post`);
-          if (ok) setShowPayConfirm(false);
-        }}
-        onCancel={() => setShowPayConfirm(false)}
       />
 
       <ConfirmModal
@@ -450,5 +407,181 @@ export function ExpenseWorkflowPanel({ expense }: { expense: ExpenseDetail }) {
         </div>
       </Modal>
     </div>
+  );
+}
+
+function Item({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <dt className="text-zinc-500 dark:text-zinc-400">{label}</dt>
+      <dd className="font-medium text-zinc-900 dark:text-zinc-50">{value}</dd>
+    </div>
+  );
+}
+
+function RecordPaymentModal({
+  expenseId,
+  expenseNumber,
+  remaining,
+  onClose,
+  onSaved,
+}: {
+  expenseId: string;
+  expenseNumber: string;
+  remaining: number;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [paymentTypes, setPaymentTypes] = useState<PaymentTypeOption[]>([]);
+  const [bankAccounts, setBankAccounts] = useState<BankAccountOption[]>([]);
+  const [paymentDate, setPaymentDate] = useState(todayIsoDate());
+  const [amount, setAmount] = useState(String(remaining));
+  const [paymentTypeId, setPaymentTypeId] = useState("");
+  const [bankAccountId, setBankAccountId] = useState("");
+  const [referenceNumber, setReferenceNumber] = useState("");
+  const [notes, setNotes] = useState("");
+  const [files, setFiles] = useState<File[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  // One key per open modal — a retry after a network error can't double-pay.
+  const [idempotencyKey] = useState(() => crypto.randomUUID());
+
+  useEffect(() => {
+    fetch("/api/v1/payment-types")
+      .then((res) => res.json())
+      .then((body) => setPaymentTypes((body.data ?? []).filter((t: { isActive?: boolean }) => t.isActive !== false)))
+      .catch(() => {});
+    fetch("/api/v1/bank-accounts")
+      .then((res) => res.json())
+      .then((body) => setBankAccounts(body.data ?? []))
+      .catch(() => {});
+  }, []);
+
+  const selectedType = paymentTypes.find((t) => t.id === paymentTypeId);
+  const amountNum = Number(amount) || 0;
+
+  async function submit() {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/v1/expenses/${expenseId}/payments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          paymentDate,
+          amount: amountNum,
+          paymentTypeId,
+          bankAccountId: bankAccountId || undefined,
+          referenceNumber: referenceNumber || undefined,
+          notes: notes || undefined,
+          idempotencyKey,
+        }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(body?.error?.message ?? "Could not record the payment.");
+        return;
+      }
+      const paymentId: string | undefined = body?.data?.recordedPaymentId;
+      if (paymentId && files.length > 0) {
+        try {
+          await uploadFilesToRecord("expense-payment", paymentId, files);
+        } catch (uploadErr) {
+          setError(
+            `${uploadErr instanceof Error ? uploadErr.message : "Files could not be uploaded."} The payment itself was saved — add the files from the Payments table.`
+          );
+          return;
+        }
+      }
+      onSaved();
+    } catch {
+      setError("Could not reach the server. It's safe to try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal open onClose={onClose} title={`Record payment — ${expenseNumber}`}>
+      <div className="space-y-3">
+        <p className="text-sm text-zinc-500 dark:text-zinc-400">
+          Balance to pay: <span className="font-semibold text-zinc-900 dark:text-zinc-50">₹{formatCurrency(remaining)}</span>. Pay it
+          all now or only a part — the rest stays open on this expense.
+        </p>
+        <div className="grid grid-cols-2 gap-3">
+          <FormField label="Payment Date" htmlFor="payDate" required>
+            <input id="payDate" type="date" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} className={textInputClass()} />
+          </FormField>
+          <FormField label="Amount" htmlFor="payAmount" required>
+            <input
+              id="payAmount"
+              type="number"
+              min={0}
+              max={remaining}
+              step="0.01"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              className={textInputClass()}
+            />
+          </FormField>
+          <FormField label="Paid From (Payment Type)" htmlFor="payType" required>
+            <select id="payType" value={paymentTypeId} onChange={(e) => setPaymentTypeId(e.target.value)} className={textInputClass()}>
+              <option value="">— Select —</option>
+              {paymentTypes.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+          </FormField>
+          {selectedType && selectedType.type !== "CASH" ? (
+            <FormField label="Bank Account" htmlFor="payBank">
+              <select id="payBank" value={bankAccountId} onChange={(e) => setBankAccountId(e.target.value)} className={textInputClass()}>
+                <option value="">— None —</option>
+                {bankAccounts.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name} — {b.bankName}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+          ) : (
+            <div />
+          )}
+          <FormField label="Reference No. (cheque/UTR)" htmlFor="payRef">
+            <input id="payRef" value={referenceNumber} onChange={(e) => setReferenceNumber(e.target.value)} className={textInputClass()} />
+          </FormField>
+          <FormField label="Notes" htmlFor="payNotes">
+            <input id="payNotes" value={notes} onChange={(e) => setNotes(e.target.value)} className={textInputClass()} />
+          </FormField>
+        </div>
+        <FormField label="Payment proof / voice note (optional)" htmlFor="payFiles">
+          <StagedFilesPicker files={files} onChange={setFiles} />
+        </FormField>
+        {amountNum > 0 && amountNum < remaining && (
+          <p className="text-xs text-violet-700 dark:text-violet-400">
+            Part payment — ₹{formatCurrency(round2(remaining - amountNum))} will remain to be paid later.
+          </p>
+        )}
+        {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md border border-zinc-300 px-4 py-2 text-sm text-zinc-700 dark:border-zinc-700 dark:text-zinc-200"
+          >
+            Close
+          </button>
+          <button
+            type="button"
+            onClick={() => void submit()}
+            disabled={busy || !paymentTypeId || amountNum <= 0 || amountNum > remaining + 0.005}
+            className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
+          >
+            {busy ? "Saving…" : "Save Payment"}
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 }

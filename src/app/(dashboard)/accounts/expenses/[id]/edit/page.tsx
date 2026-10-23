@@ -23,8 +23,6 @@ export default async function EditExpensePage({ params }: { params: Promise<{ id
     amount: expense.amount.toString(),
     taxRateId: expense.taxRateId,
     tdsPercentage: expense.tdsPercentage?.toString() ?? null,
-    paymentTypeId: expense.paymentTypeId,
-    bankAccountId: expense.bankAccountId,
     referenceNumber: expense.referenceNumber,
   };
 
