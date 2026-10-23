@@ -72,9 +72,12 @@ export async function returnDispatchItems(actor: ActorContext, id: string, input
     }
   }
 
+  // Numbers come from the dispatch's own branch counter (the same series
+  // its production receipts use), never a separate no-branch counter that
+  // would repeat numbers already issued there.
   const returnNumber = await generateDocumentNumber({
     companyId: actor.companyId,
-    branchId: actor.branchId ?? null,
+    branchId: dispatch.branchId ?? null,
     documentType: "CUSTOMER_RETURN",
   });
 
@@ -203,12 +206,12 @@ export async function returnDispatchItems(actor: ActorContext, id: string, input
       if (itemRows.length === 0) continue;
       const receiptNumber = await generateDocumentNumber({
         companyId: actor.companyId,
-        branchId: actor.branchId ?? null,
+        branchId: dispatch.branchId ?? null,
         documentType: "FG_RECEIPT",
       });
       await FinishedGoodsReceiptRepository.createWithItemsInTx(tx, {
         companyId: actor.companyId,
-        branchId: actor.branchId ?? null,
+        branchId: dispatch.branchId ?? null,
         receiptNumber,
         productId: item.productId,
         dispatchId: id,

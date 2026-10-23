@@ -4,6 +4,9 @@ import { PermissionService } from "@/core/rbac/PermissionService";
 import { parseListQuery, buildListMeta } from "@/lib/list-query";
 import { listFinishedGoodsReceipts } from "@/modules/finished-goods-inventory/finished-goods-receipt-list.service";
 
+const STATUSES = ["PENDING", "PARTIALLY_RECEIVED", "RECEIVED"] as const;
+const SOURCES = ["PRODUCTION", "CUSTOMER_RETURN"] as const;
+
 export async function GET(req: NextRequest) {
   try {
     const session = await requireSession();
@@ -14,6 +17,8 @@ export async function GET(req: NextRequest) {
     const filters = {
       productId: params.get("productId") || undefined,
       warehouseId: params.get("warehouseId") || undefined,
+      status: STATUSES.find((v) => v === params.get("status")),
+      source: SOURCES.find((v) => v === params.get("source")),
     };
 
     const { data, totalCount } = await listFinishedGoodsReceipts(session.user.companyId, query, filters);

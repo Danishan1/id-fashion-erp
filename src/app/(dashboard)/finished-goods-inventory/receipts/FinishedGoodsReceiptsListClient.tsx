@@ -35,6 +35,8 @@ export function FinishedGoodsReceiptsListClient() {
   const [warehouses, setWarehouses] = useState<Option[]>([]);
   const [productId, setProductId] = useState("");
   const [warehouseId, setWarehouseId] = useState("");
+  const [status, setStatus] = useState("");
+  const [source, setSource] = useState("");
 
   useEffect(() => {
     fetch("/api/v1/products?pageSize=200")
@@ -57,8 +59,8 @@ export function FinishedGoodsReceiptsListClient() {
       <div>
         <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Finished Goods Receipts</h1>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-          Every batch of finished goods that has entered stock from Production — one receipt per completed
-          lot, posted automatically the moment a job order finishes at its final stage.
+          Every batch of finished goods arriving from Packing or from a customer return. A receipt reaches stock
+          only once it is received into a location on the Receive page.
         </p>
       </div>
 
@@ -77,13 +79,34 @@ export function FinishedGoodsReceiptsListClient() {
           placeholder="Search warehouse…"
           emptyOptionLabel="All Warehouses"
         />
+        <select
+          value={status}
+          onChange={(e) => setStatus(e.target.value)}
+          aria-label="Filter by status"
+          className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+        >
+          <option value="">All statuses</option>
+          <option value="PENDING">Waiting to receive</option>
+          <option value="PARTIALLY_RECEIVED">Partly received</option>
+          <option value="RECEIVED">Received</option>
+        </select>
+        <select
+          value={source}
+          onChange={(e) => setSource(e.target.value)}
+          aria-label="Filter by source"
+          className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+        >
+          <option value="">All sources</option>
+          <option value="PRODUCTION">From packing</option>
+          <option value="CUSTOMER_RETURN">Customer returns</option>
+        </select>
       </div>
 
       <DataTable<ReceiptRow>
-        key={`${productId}-${warehouseId}`}
+        key={`${productId}-${warehouseId}-${status}-${source}`}
         fetchUrl="/api/v1/finished-goods-inventory/receipts"
         searchPlaceholder="Search by receipt number or style…"
-        extraParams={{ productId, warehouseId }}
+        extraParams={{ productId, warehouseId, status, source }}
         rowHref={(row) => `/finished-goods-inventory/receipts/${row.id}`}
         rowHrefLabel="View"
         rowHrefIcon={<ViewIcon />}
@@ -105,8 +128,8 @@ export function FinishedGoodsReceiptsListClient() {
           },
           { key: "warehouse", header: "Warehouse", render: (row) => row.warehouse?.name ?? "—" },
           { key: "totalQuantity", header: "Quantity", render: (row) => Number(row.totalQuantity).toLocaleString() },
-          { key: "postedBy", header: "Posted By", render: (row) => row.postedBy?.fullName ?? "—" },
-          { key: "postedAt", header: "Posted At", render: (row) => new Date(row.postedAt).toLocaleString() },
+          { key: "postedBy", header: "Arrived By", render: (row) => row.postedBy?.fullName ?? "—" },
+          { key: "postedAt", header: "Arrived At", render: (row) => new Date(row.postedAt).toLocaleString() },
         ]}
       />
     </div>

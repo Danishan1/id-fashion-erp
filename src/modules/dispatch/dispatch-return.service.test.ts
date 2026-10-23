@@ -125,6 +125,16 @@ describe("returnDispatchItems", () => {
     );
   });
 
+  it("numbers the return and its FG receipt from the dispatch's own branch series", async () => {
+    vi.mocked(DispatchRepository.findByIdWithDetails).mockResolvedValue(dispatchFixture({ branchId: "br-9" }) as never);
+
+    await returnDispatchItems(actor, "dsp-1", { remarks: "x", lines: [{ dispatchItemId: "di-1", pickLineId: "S", quantity: 1 }] });
+
+    expect(generateDocumentNumber).toHaveBeenCalledWith(expect.objectContaining({ branchId: "br-9", documentType: "CUSTOMER_RETURN" }));
+    expect(generateDocumentNumber).toHaveBeenCalledWith(expect.objectContaining({ branchId: "br-9", documentType: "FG_RECEIPT" }));
+    expect(FinishedGoodsReceiptRepository.createWithItemsInTx).toHaveBeenCalledWith(tx, expect.objectContaining({ branchId: "br-9" }));
+  });
+
   it("is blocked while a posted sales invoice exists", async () => {
     vi.mocked(DispatchRepository.findByIdWithDetails).mockResolvedValue(dispatchFixture() as never);
     tx.salesInvoice.findMany.mockResolvedValue([{ invoiceNumber: "INV-1" }]);

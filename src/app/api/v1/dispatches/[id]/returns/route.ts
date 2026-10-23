@@ -4,7 +4,7 @@ import { PermissionService } from "@/core/rbac/PermissionService";
 import { returnDispatchItems } from "@/modules/dispatch/dispatch-return.service";
 import { dispatchReturnSchema } from "@/modules/dispatch/dispatch.schema";
 
-/** Customer return (whole or partial, with a remark): pieces go back to the same colour/size and location. */
+/** Customer return (whole or partial, with a remark): lowers the order's shipped qty and sends the pieces to Finished Goods → Receive. */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const session = await requireSession();
