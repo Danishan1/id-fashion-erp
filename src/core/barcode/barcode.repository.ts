@@ -61,4 +61,9 @@ export const BarcodeRepository = {
     if (entityIds.length === 0) return Promise.resolve({ count: 0 });
     return prisma.barcode.deleteMany({ where: { companyId, entityType, entityId: { in: entityIds } } });
   },
+
+  /** Every CARTON barcode of one dispatch ("<dispatchNumber>-C<n>"), whatever carton id it points at — cartons are recreated with new ids on every edit, so old rows can't be found by id alone. */
+  deleteCartonCodesForDispatch(companyId: string, dispatchNumber: string) {
+    return prisma.barcode.deleteMany({ where: { companyId, entityType: "CARTON", code: { startsWith: `${dispatchNumber}-C` } } });
+  },
 };

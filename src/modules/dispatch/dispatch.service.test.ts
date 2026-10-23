@@ -55,7 +55,7 @@ vi.mock("@/core/db/client", () => ({
     salesOrderItem: { findFirst: vi.fn() },
   },
 }));
-vi.mock("@/core/barcode/barcode.service", () => ({ replaceCartonBarcodes: vi.fn() }));
+vi.mock("@/core/barcode/barcode.service", () => ({ replaceCartonBarcodes: vi.fn(), clearCartonBarcodes: vi.fn() }));
 vi.mock("@/core/dispatch-settings/DispatchSettingsService", async () => {
   const actual = await vi.importActual<typeof import("@/core/dispatch-settings/DispatchSettingsService")>(
     "@/core/dispatch-settings/DispatchSettingsService"

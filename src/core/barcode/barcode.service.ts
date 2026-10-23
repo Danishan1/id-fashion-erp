@@ -83,6 +83,11 @@ export async function registerBarcode(
   }
 }
 
+/** Removes a dispatch's carton barcodes after its cartons were deleted (e.g. its lines were edited). */
+export async function clearCartonBarcodes(actor: ActorContext, dispatchNumber: string) {
+  await BarcodeRepository.deleteCartonCodesForDispatch(actor.companyId, dispatchNumber);
+}
+
 /**
  * Mints a brand-new FABRIC_ROLL barcode code (prefix FR, never resets — the
  * same atomic document_sequences counter every other master code uses) and
@@ -135,6 +140,10 @@ export async function replaceCartonBarcodes(
   input: { previousCartonIds: string[]; dispatchNumber: string; newCartons: { id: string; cartonNumber: number }[] }
 ) {
   await BarcodeRepository.deleteManyByEntityIds(actor.companyId, "CARTON", input.previousCartonIds);
+  // Also clear this dispatch's carton codes by code: editing the dispatch's
+  // lines deletes its cartons without passing their ids here, and a leftover
+  // "<dispatchNumber>-C1" row would block the new C1 from registering.
+  await BarcodeRepository.deleteCartonCodesForDispatch(actor.companyId, input.dispatchNumber);
   for (const carton of input.newCartons) {
     await registerBarcode(prisma, actor, {
       entityType: "CARTON",

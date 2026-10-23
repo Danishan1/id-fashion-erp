@@ -4,7 +4,7 @@ import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingServic
 import { PermissionService } from "@/core/rbac/PermissionService";
 import { prisma } from "@/core/db/client";
 import { logger } from "@/core/logging/logger";
-import { replaceCartonBarcodes } from "@/core/barcode/barcode.service";
+import { clearCartonBarcodes, replaceCartonBarcodes } from "@/core/barcode/barcode.service";
 import type { ListQuery } from "@/lib/list-query";
 import { branchScopeWhere } from "@/lib/branch-access";
 import { DispatchStatus, type Prisma } from "@prisma/client";
@@ -717,6 +717,14 @@ export async function updateDispatch(actor: ActorContext, id: string, input: Upd
     },
     items
   );
+
+  // replaceItems deleted the cartons, so their barcodes have nothing left to
+  // point at. Best-effort, same as replaceCartonBarcodes in setCartons.
+  try {
+    await clearCartonBarcodes({ companyId: actor.companyId, userId: actor.userId }, existing.dispatchNumber);
+  } catch (err) {
+    logger.error("Failed to clear Carton barcodes after updateDispatch", { error: err, dispatchId: id });
+  }
 
   await writeAuditLog({
     companyId: actor.companyId,

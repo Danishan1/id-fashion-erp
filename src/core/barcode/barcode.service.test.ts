@@ -27,6 +27,7 @@ vi.mock("./barcode.repository", () => ({
     count: vi.fn(),
     disable: vi.fn(),
     deleteManyByEntityIds: vi.fn(),
+    deleteCartonCodesForDispatch: vi.fn(),
   },
 }));
 
@@ -60,6 +61,7 @@ beforeEach(() => {
   vi.mocked(BarcodeRepository.count).mockReset();
   vi.mocked(BarcodeRepository.disable).mockReset();
   vi.mocked(BarcodeRepository.deleteManyByEntityIds).mockReset().mockResolvedValue({ count: 0 } as never);
+  vi.mocked(BarcodeRepository.deleteCartonCodesForDispatch).mockReset().mockResolvedValue({ count: 0 } as never);
   vi.mocked(previewNextMasterCode).mockReset();
   vi.mocked(advanceMasterCodeSequence).mockReset();
   vi.mocked(prisma.product.findFirst).mockReset();
@@ -175,6 +177,20 @@ describe("replaceCartonBarcodes", () => {
       expect.anything(),
       expect.objectContaining({ code: "DSP-2026-00007-C2", entityType: "CARTON", entityId: "new-2" })
     );
+  });
+
+  it("also clears the dispatch's old carton codes by code, so a carton deleted by a dispatch edit can't block the new C1", async () => {
+    vi.mocked(BarcodeRepository.createInTx).mockResolvedValue({ id: "b-new" } as never);
+
+    await replaceCartonBarcodes(actor, {
+      previousCartonIds: [],
+      dispatchNumber: "DSP-2026-00002",
+      newCartons: [{ id: "new-1", cartonNumber: 1 }],
+    });
+
+    expect(BarcodeRepository.deleteCartonCodesForDispatch).toHaveBeenCalledWith("co-1", "DSP-2026-00002");
+    const deleteOrder = vi.mocked(BarcodeRepository.deleteCartonCodesForDispatch).mock.invocationCallOrder[0];
+    expect(deleteOrder).toBeLessThan(vi.mocked(BarcodeRepository.createInTx).mock.invocationCallOrder[0]);
   });
 });
 
