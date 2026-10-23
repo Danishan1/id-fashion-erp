@@ -104,6 +104,8 @@ export interface ReadyForDispatchRow {
   shippedQuantity: number;
   inProgressDispatchQuantity: number;
   pendingDispatchQuantity: number;
+  /** Packed pieces still waiting on Finished Goods → Receive (not in stock yet, so not dispatchable). */
+  awaitingReceiptQuantity: number;
   jobWork: Array<{ id: string; jobWorkNumber: string; status: string; receivedQuantity: number; contractorName: string }>;
 }
 
@@ -244,6 +246,25 @@ export async function listReadyForDispatch(actor: { companyId: string; userId: s
       })
     : [];
 
+  // Packed pieces that haven't been received into Finished Goods stock yet.
+  const pendingReceiptLines = ready.length
+    ? await prisma.finishedGoodsReceiptItem.findMany({
+        where: {
+          finishedGoodsReceipt: {
+            companyId: actor.companyId,
+            productionOrderId: { in: ready.map((o) => o.id) },
+            status: { in: ["PENDING", "PARTIALLY_RECEIVED"] },
+          },
+        },
+        select: { quantity: true, receivedQuantity: true, finishedGoodsReceipt: { select: { productionOrderId: true } } },
+      })
+    : [];
+  const awaitingByOrder = new Map<string, number>();
+  for (const l of pendingReceiptLines) {
+    const id = l.finishedGoodsReceipt.productionOrderId;
+    if (id) awaitingByOrder.set(id, (awaitingByOrder.get(id) ?? 0) + Number(l.quantity) - Number(l.receivedQuantity));
+  }
+
   return ready.map((o) => {
     const p = progress.get(o.id)!;
     const q = (o.salesOrderItemId && dispatchQty.get(o.salesOrderItemId)) || { shipped: 0, inProgress: 0 };
@@ -262,6 +283,7 @@ export async function listReadyForDispatch(actor: { companyId: string; userId: s
       shippedQuantity: q.shipped,
       inProgressDispatchQuantity: q.inProgress,
       pendingDispatchQuantity: Math.max(0, Math.round((p.producedQuantity - q.shipped - q.inProgress) * 100) / 100),
+      awaitingReceiptQuantity: Math.round((awaitingByOrder.get(o.id) ?? 0) * 100) / 100,
       jobWork: jobWork
         .filter((jw) => jw.jobOrder.lot.productionOrderId === o.id)
         .map((jw) => ({

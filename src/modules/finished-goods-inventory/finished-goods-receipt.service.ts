@@ -151,3 +151,35 @@ export async function createFinishedGoodsReceiptInTx(
     items: params.variantBreakdown.map((row) => ({ productVariantId: row.productVariantId, quantity: row.quantity })),
   });
 }
+
+/**
+ * A finished batch of a style with NO colour/size variants (2026-10-22):
+ * one flat PENDING receipt line, received into stock on Finished Goods →
+ * Receive like any other (no location — style-level stock has none).
+ */
+export async function createPendingFlatFinishedGoodsReceiptInTx(
+  tx: Prisma.TransactionClient,
+  actor: ActorContext,
+  params: Omit<CreateFinishedGoodsReceiptParams, "variantBreakdown">
+) {
+  const receiptNumber = await generateDocumentNumber({
+    companyId: actor.companyId,
+    branchId: actor.branchId ?? null,
+    documentType: "FG_RECEIPT",
+  });
+  return FinishedGoodsReceiptRepository.createWithItemsInTx(tx, {
+    companyId: actor.companyId,
+    branchId: actor.branchId ?? null,
+    receiptNumber,
+    productId: params.productId,
+    lotId: params.lotId,
+    jobOrderId: params.jobOrderId,
+    productionOrderId: params.productionOrderId,
+    warehouseId: params.warehouseId,
+    totalQuantity: params.quantity,
+    source: "PRODUCTION",
+    status: "PENDING",
+    postedByUserId: actor.userId,
+    items: [{ productVariantId: null, quantity: params.quantity }],
+  });
+}

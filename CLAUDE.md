@@ -7921,3 +7921,34 @@ User guide: `docs/crm/workflows/11-default-automations.md`.
 - `templateKey` and `version` were added to the list and detail DTOs.
 
 **Engine note.** In tests, `tickWorkflows` dispatches an event and the next tick runs the queued execution. Tick twice (the second with `now + 1s`).
+
+## Finished Goods receive step, customer returns, dispatch packing aids (2026-10-22/23)
+
+**FG stock only after Receive (user decision).** Packing no longer posts stock.
+- Completing a final stage creates a PENDING `FinishedGoodsReceipt` (`source` PRODUCTION): one line per colour/size, or one flat line with `productVariantId` null for a style with no variants.
+- The store receives it on **Finished Goods → Receive** (`/finished-goods-inventory/receive`).
+  - Partial receives are allowed. A location is required when the warehouse has locations; flat lines take none.
+- `receiveFinishedGoods()` (`finished-goods-receive.service.ts`) does all of this in one transaction per line:
+  - posts the ledger (PRODUCTION_RECEIPT keeps `referenceModule PRODUCTION_ORDER` + lotId);
+  - bumps `receivedQuantity`;
+  - writes a `FinishedGoodsReceiptPosting` (the receive log, shown as History on the receipt);
+  - sets the receipt status PENDING → PARTIALLY_RECEIVED → RECEIVED.
+- **Sales Order reservations are created at receive time** (`applyPackingCompletionReservationsInTx`), not at packing. A reservation must never exceed stock on hand, or it shrinks other orders' availability.
+- Receipts from before this change were backfilled as RECEIVED (migration `20261022130000_fg_receive_step`).
+- "For Dispatching" shows "N not received into stock yet".
+
+**Customer return** (`dispatch-return.service.ts`, `POST /dispatches/:id/returns`).
+- Whole or partial, with a required remark; DISPATCHED/DELIVERED only. Blocked while a posted sales invoice exists, same as reversal.
+- It lowers `SalesOrderItem.dispatchedQuantity` immediately (extra pieces first, then regular) and recomputes the order status.
+- The goods do NOT go to stock. Each style gets a PENDING receipt (`source` CUSTOMER_RETURN), with the original pick location as `suggestedLocationId`.
+- When every piece is back, the dispatch becomes REVERSED.
+- History lives in `dispatch_returns` / `dispatch_return_items` (append-only). `reverseDispatch()` refuses once any return exists.
+- RET/FGR numbers use the **dispatch's branch** series. A no-branch actor would draw from a separate counter and repeat numbers already issued.
+
+**Unlocated Stock** (`/finished-goods-inventory/unlocated`). Bulk put-away of null-location FG balances via `bulkPutawayStock` (one `putawayStock` per row; failures reported per row).
+
+**Dispatch screen.**
+- Pick Lines are hidden behind a button; while hidden, Save Cartons also saves the auto-filled picks.
+- A new carton is pre-filled with picked-but-unpacked pieces (`computePackBalances`).
+- Carton lines show left-to-pack and stock. A Saved Cartons summary and a Picked vs Packed table sit below.
+- `GET /barcodes/:id/label.pdf` accepts a printed code (e.g. `DSP-…-C1`) as well as a UUID.

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/modules/inventory/inventory.service", () => ({ recordInventoryTransaction: vi.fn() }));
+vi.mock("./finished-goods-reservation.service", () => ({ applyPackingCompletionReservationsInTx: vi.fn() }));
 
 const tx = {
   $queryRaw: vi.fn(),
@@ -19,6 +20,7 @@ vi.mock("@/core/db/client", () => ({
 
 const { prisma } = await import("@/core/db/client");
 const { recordInventoryTransaction } = await import("@/modules/inventory/inventory.service");
+const { applyPackingCompletionReservationsInTx } = await import("./finished-goods-reservation.service");
 const { receiveFinishedGoods, listPendingReceiptLines } = await import("./finished-goods-receive.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
@@ -123,6 +125,40 @@ describe("receiveFinishedGoods", () => {
     const result = await receiveFinishedGoods(actor, { lines: [{ receiptItemId: "item-1", quantity: 10, warehouseLocationId: "loc-A" }] });
 
     expect(result.results[0]).toMatchObject({ ok: false, error: "Receipt line not found." });
+  });
+
+  it("reserves packed goods for their Sales Order only when they are received", async () => {
+    tx.finishedGoodsReceiptItem.findUnique.mockResolvedValue(
+      line({ finishedGoodsReceipt: receipt({ productionOrderId: "po-1", branchId: "br-1" }) })
+    );
+
+    await receiveFinishedGoods(actor, { lines: [{ receiptItemId: "item-1", quantity: 6, warehouseLocationId: "loc-A" }] });
+
+    expect(applyPackingCompletionReservationsInTx).toHaveBeenCalledWith(tx, expect.objectContaining({ branchId: "br-1" }), {
+      productionOrderId: "po-1",
+      warehouseId: "wh-1",
+      variantBreakdown: [{ productVariantId: "var-1", quantity: 6 }],
+    });
+  });
+
+  it("never reserves a customer return", async () => {
+    tx.finishedGoodsReceiptItem.findUnique.mockResolvedValue(line({ finishedGoodsReceipt: receipt({ source: "CUSTOMER_RETURN", lotId: null }) }));
+
+    await receiveFinishedGoods(actor, { lines: [{ receiptItemId: "item-1", quantity: 10, warehouseLocationId: "loc-A" }] });
+
+    expect(applyPackingCompletionReservationsInTx).not.toHaveBeenCalled();
+  });
+
+  it("a style with no colour/size variants is received without a location, as style-level stock", async () => {
+    tx.finishedGoodsReceiptItem.findUnique.mockResolvedValue(line({ productVariantId: null }));
+
+    const result = await receiveFinishedGoods(actor, { lines: [{ receiptItemId: "item-1", quantity: 10 }] });
+
+    expect(result.received).toBe(1);
+    const posted = vi.mocked(recordInventoryTransaction).mock.calls[0][2] as unknown as Record<string, unknown>;
+    expect(posted).not.toHaveProperty("productVariantId");
+    expect(posted).not.toHaveProperty("warehouseLocationId");
+    expect(tx.warehouseLocation.count).not.toHaveBeenCalled();
   });
 
   it("one bad line doesn't stop the others", async () => {

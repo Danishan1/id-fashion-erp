@@ -8,6 +8,7 @@ vi.mock("@/core/db/client", () => ({
     salesOrder: { findMany: vi.fn() },
     dispatchItem: { groupBy: vi.fn() },
     jobWorkOrder: { findMany: vi.fn() },
+    finishedGoodsReceiptItem: { findMany: vi.fn() },
   },
 }));
 vi.mock("@/core/rbac/PermissionService", () => ({
@@ -61,6 +62,7 @@ beforeEach(() => {
   vi.mocked(prisma.productionOrder.findMany).mockReset().mockResolvedValue([]);
   vi.mocked(prisma.salesOrderItem.findMany).mockReset().mockResolvedValue([]);
   vi.mocked(prisma.salesOrder.findMany).mockReset().mockResolvedValue([]);
+  vi.mocked(prisma.finishedGoodsReceiptItem.findMany).mockReset().mockResolvedValue([]);
   vi.mocked(prisma.dispatchItem.groupBy).mockReset().mockResolvedValue([]);
   vi.mocked(prisma.jobWorkOrder.findMany).mockReset().mockResolvedValue([]);
   vi.mocked(PermissionService.getAllowedBranchIds).mockReset().mockResolvedValue(null);
@@ -186,6 +188,21 @@ describe("listDispatchEligibleSalesOrders", () => {
 });
 
 describe("listReadyForDispatch", () => {
+  it("shows packed pieces still waiting on Finished Goods Receive", async () => {
+    vi.mocked(prisma.productionOrder.findMany).mockResolvedValue([productionOrder()] as never);
+    vi.mocked(getProgressForOrders).mockResolvedValue(new Map([["po-1", progress()]]));
+    vi.mocked(prisma.salesOrderItem.findMany).mockResolvedValue([{ id: "soi-1", dispatchedQuantity: 0 }] as never);
+    vi.mocked(prisma.jobWorkOrder.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.finishedGoodsReceiptItem.findMany).mockResolvedValue([
+      { quantity: 10, receivedQuantity: 4, finishedGoodsReceipt: { productionOrderId: "po-1" } },
+      { quantity: 5, receivedQuantity: 0, finishedGoodsReceipt: { productionOrderId: "po-1" } },
+    ] as never);
+
+    const [row] = await listReadyForDispatch(actor);
+
+    expect(row.awaitingReceiptQuantity).toBe(11);
+  });
+
   it("reuses the shared readiness computation exactly once — no second progress/dispatch-quantity query (2026-10-16 fix)", async () => {
     vi.mocked(prisma.productionOrder.findMany).mockResolvedValue([productionOrder()] as never);
     vi.mocked(getProgressForOrders).mockResolvedValue(new Map([["po-1", progress()]]));

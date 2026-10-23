@@ -12,7 +12,10 @@ vi.mock("@/modules/inventory/inventory.service", () => ({ recordInventoryTransac
 // finished-goods-receipt.service.test.ts of its own. Only whether
 // job-order.service.ts calls it correctly (replacing, not duplicating, the
 // flat recordInventoryTransaction call) is under test here.
-vi.mock("@/modules/finished-goods-inventory/finished-goods-receipt.service", () => ({ createFinishedGoodsReceiptInTx: vi.fn() }));
+vi.mock("@/modules/finished-goods-inventory/finished-goods-receipt.service", () => ({
+  createFinishedGoodsReceiptInTx: vi.fn(),
+  createPendingFlatFinishedGoodsReceiptInTx: vi.fn(),
+}));
 vi.mock("@/modules/employees/employee.repository", () => ({
   EmployeeRepository: { findById: vi.fn() },
 }));
@@ -113,7 +116,7 @@ const { resolvePieceRate } = await import("./piece-rate-resolution.service");
 const { generateEarningForJobOrderProgress, generateEarningsForQcAcceptance } = await import("./piece-rate-earning.service");
 const { computeAvailableToCommit, assertEntryWithinAssignmentInTx, syncAssignmentStatusInTx } = await import("./assignment-capacity");
 const { computeJobOrderStatus, assignWorker, recordProgressEntry, forwardJobOrder, revertJobOrder, recordQcInspection, recordAdjustmentEntry, getJobOrderById, prepareLotStartAssignments, submitSelfProgressEntry, cascadeReceivedThroughStagesInTx, approveProgressEntry, rejectProgressEntry, listPendingProgressEntries } = await import("./job-order.service");
-const { createFinishedGoodsReceiptInTx } = await import("@/modules/finished-goods-inventory/finished-goods-receipt.service");
+const { createFinishedGoodsReceiptInTx, createPendingFlatFinishedGoodsReceiptInTx } = await import("@/modules/finished-goods-inventory/finished-goods-receipt.service");
 const { recordInventoryTransaction } = await import("@/modules/inventory/inventory.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
@@ -611,10 +614,12 @@ describe("forwardJobOrder", () => {
       await forwardJobOrder(actor, "jo-1", { quantity: 10, finishedGoodsWarehouseId: "wh-1" } as never);
 
       expect(createFinishedGoodsReceiptInTx).not.toHaveBeenCalled();
-      expect(recordInventoryTransaction).toHaveBeenCalledWith(
+      // No stock yet: a pending flat receipt waits for Finished Goods → Receive.
+      expect(recordInventoryTransaction).not.toHaveBeenCalled();
+      expect(createPendingFlatFinishedGoodsReceiptInTx).toHaveBeenCalledWith(
         expect.anything(),
         actor,
-        expect.objectContaining({ productId: "prod-1", quantity: 10, referenceModule: "PRODUCTION_ORDER", referenceRecordId: "lot-1" })
+        expect.objectContaining({ productId: "prod-1", quantity: 10, lotId: "lot-1", warehouseId: "wh-1" })
       );
     });
 
@@ -917,10 +922,12 @@ describe("recordQcInspection", () => {
       } as never);
 
       expect(createFinishedGoodsReceiptInTx).not.toHaveBeenCalled();
-      expect(recordInventoryTransaction).toHaveBeenCalledWith(
+      // No stock yet: a pending flat receipt waits for Finished Goods → Receive.
+      expect(recordInventoryTransaction).not.toHaveBeenCalled();
+      expect(createPendingFlatFinishedGoodsReceiptInTx).toHaveBeenCalledWith(
         expect.anything(),
         actor,
-        expect.objectContaining({ productId: "prod-1", quantity: 10, referenceModule: "PRODUCTION_ORDER", referenceRecordId: "lot-1" })
+        expect.objectContaining({ productId: "prod-1", quantity: 10, lotId: "lot-1", warehouseId: "wh-1" })
       );
     });
 
@@ -1380,10 +1387,11 @@ describe("cascadeReceivedThroughStagesInTx — colour/size breakdown at a final 
     await cascadeReceivedThroughStagesInTx(mockPrismaClient as never, actor, cascadeParams);
 
     expect(createFinishedGoodsReceiptInTx).not.toHaveBeenCalled();
-    expect(recordInventoryTransaction).toHaveBeenCalledWith(
+    expect(recordInventoryTransaction).not.toHaveBeenCalled();
+    expect(createPendingFlatFinishedGoodsReceiptInTx).toHaveBeenCalledWith(
       mockPrismaClient,
       actor,
-      expect.objectContaining({ productId: "prod-1", quantity: 10, referenceModule: "PRODUCTION_ORDER", referenceRecordId: "lot-1" })
+      expect.objectContaining({ productId: "prod-1", quantity: 10, lotId: "lot-1" })
     );
   });
 

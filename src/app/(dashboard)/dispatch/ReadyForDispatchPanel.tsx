@@ -17,6 +17,7 @@ interface ReadyRow {
   shippedQuantity: number;
   inProgressDispatchQuantity: number;
   pendingDispatchQuantity: number;
+  awaitingReceiptQuantity: number;
   jobWork: Array<{ id: string; jobWorkNumber: string; status: string; receivedQuantity: number; contractorName: string }>;
 }
 
@@ -85,7 +86,17 @@ export function ReadyForDispatchPanel() {
                   <td className="py-2 pr-4">{row.salesOrderNumber ?? <span className="text-zinc-400">Make-to-stock</span>}</td>
                   <td className="py-2 pr-4">{row.customerName ?? "—"}</td>
                   <td className="py-2 pr-4">{row.style}</td>
-                  <td className="py-2 pr-4 text-right">{row.producedQuantity}</td>
+                  <td className="py-2 pr-4 text-right">
+                    {row.producedQuantity}
+                    {row.awaitingReceiptQuantity > 0 && (
+                      <Link
+                        href="/finished-goods-inventory/receive"
+                        className="block text-xs font-medium text-amber-700 hover:underline dark:text-amber-400"
+                      >
+                        {row.awaitingReceiptQuantity} not received into stock yet
+                      </Link>
+                    )}
+                  </td>
                   <td className="py-2 pr-4 text-right">
                     {row.shippedQuantity}
                     {row.inProgressDispatchQuantity > 0 && (

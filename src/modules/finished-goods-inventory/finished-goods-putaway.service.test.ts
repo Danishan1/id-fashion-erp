@@ -24,7 +24,7 @@ const { FinishedGoodsStockBalanceRepository } = await import("@/modules/inventor
 const { ProductVariantRepository } = await import("@/modules/products/product.repository");
 const { WarehouseLocationRepository } = await import("@/modules/warehouses/warehouse.repository");
 const { FinishedGoodsPutawayRepository } = await import("./finished-goods-putaway.repository");
-const { listStagingBalances, putawayStock } = await import("./finished-goods-putaway.service");
+const { listStagingBalances, putawayStock, bulkPutawayStock } = await import("./finished-goods-putaway.service");
 
 const actor = { companyId: "co-1", userId: "user-1", branchId: "br-1" };
 
@@ -241,5 +241,32 @@ describe("putawayStock", () => {
 
     await expect(putawayStock(actor, baseInput)).rejects.toMatchObject({ code: "INSUFFICIENT_STOCK_FOR_MOVEMENT" });
     expect(writeAuditLog).not.toHaveBeenCalled();
+  });
+});
+
+describe("bulkPutawayStock (Unlocated Stock page)", () => {
+  const row = { productId: "prod-1", productVariantId: "var-1", warehouseId: "wh-1", stockStatus: "SALEABLE" as const, warehouseLocationId: "loc-1", quantity: 5 };
+
+  it("puts each row away as its own put-away, moving staging stock into the chosen location", async () => {
+    vi.mocked(FinishedGoodsPutawayRepository.createWithItemsInTx).mockResolvedValue({ id: "p", putawayNumber: "FGP-2026-00001" } as never);
+
+    const result = await bulkPutawayStock(actor, { rows: [row, { ...row, quantity: 3 }] });
+
+    expect(result).toMatchObject({ updated: 2, failed: 0 });
+    // Per row: one negative entry at staging (no location) and one positive at the location.
+    expect(recordInventoryTransaction).toHaveBeenCalledTimes(4);
+    expect(recordInventoryTransaction).toHaveBeenCalledWith(expect.anything(), actor, expect.objectContaining({ warehouseLocationId: null, quantity: -5 }));
+    expect(recordInventoryTransaction).toHaveBeenCalledWith(expect.anything(), actor, expect.objectContaining({ warehouseLocationId: "loc-1", quantity: 5 }));
+  });
+
+  it("one bad row (more than is unlocated) fails alone; the others still go through", async () => {
+    vi.mocked(FinishedGoodsStockBalanceRepository.findOne)
+      .mockResolvedValueOnce({ quantityOnHand: "2" } as never)
+      .mockResolvedValueOnce({ quantityOnHand: "100" } as never);
+
+    const result = await bulkPutawayStock(actor, { rows: [row, row] });
+
+    expect(result).toMatchObject({ updated: 1, failed: 1 });
+    expect(result.results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/only 2/) });
   });
 });

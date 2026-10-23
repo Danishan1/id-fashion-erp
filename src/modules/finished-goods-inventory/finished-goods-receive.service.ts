@@ -2,6 +2,7 @@ import { prisma } from "@/core/db/client";
 import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { recordInventoryTransaction } from "@/modules/inventory/inventory.service";
+import { applyPackingCompletionReservationsInTx } from "./finished-goods-reservation.service";
 import type { ReceiveFinishedGoodsInput } from "./finished-goods-receive.schema";
 
 const EPSILON = 0.0001;
@@ -77,8 +78,9 @@ async function receiveOneLine(actor: ActorContext, line: ReceiveFinishedGoodsInp
     }
 
     // The location must be a real, active location of the receipt's own
-    // warehouse; it is required whenever that warehouse has locations.
-    const locationId = line.warehouseLocationId || null;
+    // warehouse; it is required whenever that warehouse has locations. A
+    // style with no colour/size variants is stocked per warehouse only.
+    const locationId = item.productVariantId ? line.warehouseLocationId || null : null;
     if (locationId) {
       const location = await tx.warehouseLocation.findFirst({
         where: { id: locationId, warehouseId: receipt.warehouseId, warehouse: { companyId: actor.companyId } },
@@ -88,7 +90,7 @@ async function receiveOneLine(actor: ActorContext, line: ReceiveFinishedGoodsInp
         throw new BusinessRuleError("VALIDATION_ERROR", "Choose a location of the warehouse these goods arrived at.", { locationId });
       }
       if (!location.isActive) throw new BusinessRuleError("VALIDATION_ERROR", "That location is inactive.", { locationId });
-    } else {
+    } else if (item.productVariantId) {
       const locationCount = await tx.warehouseLocation.count({ where: { warehouseId: receipt.warehouseId, isActive: true } });
       if (locationCount > 0) {
         throw new BusinessRuleError("VALIDATION_ERROR", `Choose the location to put ${receipt.receiptNumber} into.`, {});
@@ -109,6 +111,16 @@ async function receiveOneLine(actor: ActorContext, line: ReceiveFinishedGoodsInp
         : {}),
       notes: `Received ${receipt.receiptNumber}${line.remarks ? `: ${line.remarks}` : ""}`,
     });
+
+    // Packed goods for a Sales Order: reserve them for that order now that
+    // they are really on hand (capped at what each colour/size ordered).
+    if (fromProduction && receipt.productionOrderId && item.productVariantId) {
+      await applyPackingCompletionReservationsInTx(tx, { ...actor, branchId: receipt.branchId }, {
+        productionOrderId: receipt.productionOrderId,
+        warehouseId: receipt.warehouseId,
+        variantBreakdown: [{ productVariantId: item.productVariantId, quantity: line.quantity }],
+      });
+    }
 
     await tx.finishedGoodsReceiptItem.update({
       where: { id: item.id },

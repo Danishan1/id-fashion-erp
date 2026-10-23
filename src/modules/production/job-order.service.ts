@@ -3,8 +3,10 @@ import { prisma } from "@/core/db/client";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { PermissionService } from "@/core/rbac/PermissionService";
 import { recordInventoryTransaction } from "@/modules/inventory/inventory.service";
-import { createFinishedGoodsReceiptInTx } from "@/modules/finished-goods-inventory/finished-goods-receipt.service";
-import { applyPackingCompletionReservationsInTx } from "@/modules/finished-goods-inventory/finished-goods-reservation.service";
+import {
+  createFinishedGoodsReceiptInTx,
+  createPendingFlatFinishedGoodsReceiptInTx,
+} from "@/modules/finished-goods-inventory/finished-goods-receipt.service";
 import { mintProductUnitsInTx } from "@/modules/product-units/product-unit.service";
 import { ProductVariantRepository } from "@/modules/products/product.repository";
 import { EmployeeRepository } from "@/modules/employees/employee.repository";
@@ -232,20 +234,10 @@ async function completeAtFinalStageInTx(
       quantity: params.quantity,
       variantBreakdown: params.variantBreakdown,
     });
-    // Process-Flow Phase 1 (2026-10-16) — the real reservation-creation
-    // trigger, in the SAME transaction as the FG receipt just posted above,
-    // from the SAME variantBreakdown input. See
-    // applyPackingCompletionReservationsInTx's own doc comment for the full
-    // business rule, its fail-safes, and its documented (pre-existing,
-    // inherited, not worsened) retry-exposure analysis. A no-variant style
-    // never reaches this branch at all (variantBreakdown is null/empty for
-    // it), matching that style type's own deliberate "no reservation of any
-    // kind" design.
-    await applyPackingCompletionReservationsInTx(tx, actor, {
-      productionOrderId: params.productionOrderId,
-      warehouseId: params.warehouseId,
-      variantBreakdown: params.variantBreakdown,
-    });
+    // Reservations for the Sales Order are created when these goods are
+    // RECEIVED into stock (receiveFinishedGoods, 2026-10-22), not here — a
+    // reservation must only ever grow with stock that is actually on hand,
+    // or it would shrink what other orders can use while the goods wait.
 
     // Mint serialized individual garment ProductUnit barcodes (FG-XXXXXXXX).
     // ProductionOrder has no salesOrderId column of its own — only
@@ -272,13 +264,15 @@ async function completeAtFinalStageInTx(
       }
     }
   } else {
-    await recordInventoryTransaction(tx, actor, {
+    // No colour/size variants: still a PENDING receipt (one flat line) that
+    // reaches stock only when received on Finished Goods → Receive.
+    await createPendingFlatFinishedGoodsReceiptInTx(tx, actor, {
       productId: params.productId,
+      lotId: params.lotId,
+      jobOrderId: params.jobOrderId,
+      productionOrderId: params.productionOrderId,
       warehouseId: params.warehouseId,
-      transactionType: "PRODUCTION_RECEIPT",
       quantity: params.quantity,
-      referenceModule: "PRODUCTION_ORDER",
-      referenceRecordId: params.lotId,
     });
   }
   await JobOrderRepository.updateInTx(tx, params.jobOrderId, {

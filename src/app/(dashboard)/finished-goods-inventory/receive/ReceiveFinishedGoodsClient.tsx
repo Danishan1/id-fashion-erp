@@ -142,7 +142,9 @@ export function ReceiveFinishedGoodsClient({ canEdit }: { canEdit: boolean }) {
       return next;
     });
 
-  const needsLocation = (l: PendingLine) => (locationsByWarehouse[l.finishedGoodsReceipt.warehouseId] ?? []).length > 0;
+  // A style with no colour/size variants is stocked per warehouse only.
+  const needsLocation = (l: PendingLine) =>
+    l.productVariant !== null && (locationsByWarehouse[l.finishedGoodsReceipt.warehouseId] ?? []).length > 0;
   const lineReady = (l: PendingLine) => {
     const d = draftOf(l);
     return Number(d.quantity) > 0 && Number(d.quantity) <= l.pendingQuantity && (!needsLocation(l) || !!d.locationId);
@@ -361,7 +363,9 @@ export function ReceiveFinishedGoodsClient({ canEdit }: { canEdit: boolean }) {
                       )}
                       {canEdit && (
                         <td className="px-3 py-2">
-                          {locations.length > 0 ? (
+                          {!l.productVariant ? (
+                            <span className="text-xs text-zinc-500">Not needed (no colours/sizes)</span>
+                          ) : locations.length > 0 ? (
                             <select
                               aria-label={`Location for ${r.receiptNumber} ${variant}`}
                               value={d.locationId}
