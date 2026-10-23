@@ -36,6 +36,22 @@ function CollapseToggleIcon({ collapsed }: { collapsed: boolean }) {
   );
 }
 
+/** Consecutive leaves sharing a `group` become one sub-module block; ungrouped leaves stay as plain links. */
+function groupChildren(children: NonNullable<NavSection["children"]>) {
+  const blocks: { group: string | null; leaves: NonNullable<NavSection["children"]> }[] = [];
+  for (const child of children) {
+    const group = child.group ?? null;
+    const last = blocks[blocks.length - 1];
+    if (last && last.group === group && group !== null) last.leaves.push(child);
+    else blocks.push({ group, leaves: [child] });
+  }
+  return blocks;
+}
+
+const SUB_GROUP_DOTS = ["bg-amber-500", "bg-emerald-500", "bg-sky-500", "bg-violet-500"];
+const subGroupDotClass = (group: string) =>
+  SUB_GROUP_DOTS[[...group].reduce((sum, ch) => sum + ch.charCodeAt(0), 0) % SUB_GROUP_DOTS.length];
+
 const LEAF_CLASSES = (isActive: boolean) =>
   `block rounded-md px-3 py-1.5 text-sm ${
     isActive
@@ -95,6 +111,16 @@ export function Sidebar({
       next.set(section.label, !isGroupOpen(section));
       return next;
     });
+  }
+
+  // Sub-modules inside a section (NavLeaf.group) are open unless the user
+  // collapsed one; stored in the same overrides map under "section::group".
+  function isSubGroupOpen(section: NavSection, group: string): boolean {
+    return overrides.get(`${section.label}::${group}`) ?? true;
+  }
+
+  function toggleSubGroup(section: NavSection, group: string) {
+    setOverrides((prev) => new Map(prev).set(`${section.label}::${group}`, !isSubGroupOpen(section, group)));
   }
 
   // Clicking a group's letter-badge while the whole sidebar is minimized
@@ -215,27 +241,46 @@ export function Sidebar({
               </div>
               {isOpen && (
                 <div className="ml-2 space-y-0.5 border-l border-zinc-200 pl-2 dark:border-zinc-800">
-                  {section.children.map((child, index) => {
-                    // A new, non-interactive sub-heading before the first
-                    // leaf of each distinct `group` value — lets one section
-                    // (e.g. "Inventory") present two or more sub-modules
-                    // (Raw Materials / Finished Goods) without a second
-                    // nesting level in the data model. No-op for every
-                    // section whose leaves don't declare a group.
-                    const showGroupHeading = child.group && child.group !== section.children![index - 1]?.group;
-                    return (
-                      <div key={child.href}>
-                        {showGroupHeading && (
-                          <div className="px-3 pt-2 pb-0.5 text-xs font-semibold uppercase tracking-wide text-zinc-400 first:pt-0 dark:text-zinc-500">
-                            {child.group}
-                          </div>
-                        )}
-                        <Link href={child.href} className={LEAF_CLASSES(isLeafActive(section.children!, child, pathname))}>
+                  {groupChildren(section.children).map((block) =>
+                    block.group === null ? (
+                      block.leaves.map((child) => (
+                        <Link key={child.href} href={child.href} className={LEAF_CLASSES(isLeafActive(section.children!, child, pathname))}>
                           {child.label}
                         </Link>
+                      ))
+                    ) : (
+                      // A sub-module inside a section (e.g. Inventory's Raw Material /
+                      // Finished Goods): its own heading, arrow and indented links,
+                      // collapsible on its own and open by default.
+                      <div key={block.group} className="pt-1 first:pt-0">
+                        <button
+                          type="button"
+                          onClick={() => toggleSubGroup(section, block.group!)}
+                          aria-expanded={isSubGroupOpen(section, block.group)}
+                          className={`flex w-full items-center justify-between rounded-md px-3 py-1.5 text-left text-sm font-semibold hover:bg-zinc-100 dark:hover:bg-zinc-800 ${
+                            block.leaves.some((leaf) => isLeafActive(section.children!, leaf, pathname))
+                              ? "text-indigo-700 dark:text-indigo-300"
+                              : "text-zinc-800 dark:text-zinc-100"
+                          }`}
+                        >
+                          <span className="flex items-center gap-2">
+                            <span className={`h-2 w-2 rounded-full ${subGroupDotClass(block.group)}`} aria-hidden />
+                            {block.group}
+                          </span>
+                          <ChevronIcon open={isSubGroupOpen(section, block.group)} />
+                        </button>
+                        {isSubGroupOpen(section, block.group) && (
+                          <div className="ml-3 space-y-0.5 border-l border-zinc-200 pl-2 dark:border-zinc-800">
+                            {block.leaves.map((child) => (
+                              <Link key={child.href} href={child.href} className={LEAF_CLASSES(isLeafActive(section.children!, child, pathname))}>
+                                {child.label}
+                              </Link>
+                            ))}
+                          </div>
+                        )}
                       </div>
-                    );
-                  })}
+                    )
+                  )}
                 </div>
               )}
             </div>

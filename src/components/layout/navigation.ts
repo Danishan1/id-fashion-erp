@@ -183,16 +183,16 @@ export const NAV_SECTIONS: NavSection[] = [
     label: "Inventory",
     modules: ["inventory", "material_request", "fg_inventory"],
     children: [
-      { label: "Stock Balances", href: "/inventory/stock-balances", modules: ["inventory"], group: "Raw Materials" },
-      { label: "Stock Movements", href: "/inventory/stock-movements", modules: ["inventory"], group: "Raw Materials" },
-      { label: "Receive Stock", href: "/inventory/stock-movements/receive", modules: ["inventory"], group: "Raw Materials" },
+      { label: "Stock Balance", href: "/inventory/stock-balances", modules: ["inventory"], group: "Raw Material" },
+      { label: "Stock Movements", href: "/inventory/stock-movements", modules: ["inventory"], group: "Raw Material" },
+      { label: "Receive Transfers", href: "/inventory/stock-movements/receive", modules: ["inventory"], group: "Raw Material" },
       // Material Requests moved to its own `material_request` module (RBAC
       // audit, 2026-09-24) — previously gated on the same coarse `inventory`
       // key as Stock Balances/Movements.
-      { label: "Material Requests", href: "/material-requests", modules: ["material_request"], group: "Raw Materials" },
+      { label: "Material Requests", href: "/material-requests", modules: ["material_request"], group: "Raw Material" },
       { label: "Dashboard", href: "/finished-goods-inventory", modules: ["fg_inventory"], group: "Finished Goods" },
       { label: "Stock List", href: "/finished-goods-inventory/stock-list", modules: ["fg_inventory"], group: "Finished Goods" },
-      { label: "Receive", href: "/finished-goods-inventory/receive", modules: ["fg_inventory"], group: "Finished Goods" },
+      { label: "Receive Goods", href: "/finished-goods-inventory/receive", modules: ["fg_inventory"], group: "Finished Goods" },
       { label: "Receipts", href: "/finished-goods-inventory/receipts", modules: ["fg_inventory"], group: "Finished Goods" },
       { label: "Unlocated Stock", href: "/finished-goods-inventory/unlocated", modules: ["fg_inventory"], group: "Finished Goods" },
     ],
