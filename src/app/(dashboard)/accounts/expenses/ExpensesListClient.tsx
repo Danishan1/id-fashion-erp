@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { DataTable } from "@/components/ui/DataTable";
 import { Modal } from "@/components/ui/Modal";
@@ -13,6 +14,9 @@ interface ExpenseRow {
   expenseDate: string;
   description: string;
   totalAmount: string;
+  tdsAmount: string;
+  paidAmount: string;
+  source: string;
   status: string;
   account: { code: string; name: string } | null;
   supplier: { name: string } | null;
@@ -21,6 +25,7 @@ interface ExpenseRow {
 const STATUS_STYLES: Record<string, string> = {
   PENDING_APPROVAL: "bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400",
   APPROVED: "bg-blue-100 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400",
+  PARTIALLY_PAID: "bg-violet-100 text-violet-700 dark:bg-violet-500/10 dark:text-violet-400",
   REJECTED: "bg-red-100 text-red-700 dark:bg-red-500/10 dark:text-red-400",
   PAID: "bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-400",
   CANCELLED: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
@@ -29,6 +34,7 @@ const STATUS_STYLES: Record<string, string> = {
 const STATUS_LABELS: Record<string, string> = {
   PENDING_APPROVAL: "Pending Approval",
   APPROVED: "Approved",
+  PARTIALLY_PAID: "Part Paid",
   REJECTED: "Rejected",
   PAID: "Paid",
   CANCELLED: "Cancelled",
@@ -54,8 +60,17 @@ export function ExpensesListClient() {
         <h1 className="mt-2 text-lg font-semibold text-zinc-900 dark:text-zinc-50">Expenses</h1>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
           Direct day-to-day costs (rent, utilities, salaries, misc.) — not vendor bills with terms, which
-          go through Purchase Invoices instead. Created → Admin Approves/Rejects → Accountant Pays.
+          go through Purchase Invoices instead. Created → Admin Approves/Rejects → Accountant Pays (in full or in parts).
         </p>
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm dark:border-sky-900 dark:bg-sky-500/10">
+        <p className="text-sky-900 dark:text-sky-200">
+          Only have a bill? Upload a photo/PDF (or a voice note) with the amount — the accountant fills in the rest.
+        </p>
+        <Link href="/accounts/expenses/upload-bill" className="rounded-md bg-sky-600 px-3 py-1.5 font-medium text-white hover:bg-sky-500">
+          Upload Bill
+        </Link>
       </div>
 
       <DataTable<ExpenseRow>
@@ -74,13 +89,29 @@ export function ExpensesListClient() {
           { key: "supplier", header: "Supplier", render: (row) => row.supplier?.name ?? "—" },
           { key: "expenseDate", header: "Date", sortable: true, render: (row) => row.expenseDate?.slice(0, 10) },
           { key: "totalAmount", header: "Amount", sortable: true, render: (row) => Number(row.totalAmount).toFixed(2) },
+          { key: "paidAmount", header: "Paid", render: (row) => Number(row.paidAmount).toFixed(2) },
+          {
+            key: "balance",
+            header: "Balance",
+            render: (row) =>
+              row.status === "APPROVED" || row.status === "PARTIALLY_PAID"
+                ? (Number(row.totalAmount) - Number(row.tdsAmount) - Number(row.paidAmount)).toFixed(2)
+                : "—",
+          },
           {
             key: "status",
             header: "Status",
             sortable: true,
             render: (row) => (
-              <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[row.status] ?? ""}`}>
-                {STATUS_LABELS[row.status] ?? row.status}
+              <span className="inline-flex flex-wrap gap-1">
+                <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[row.status] ?? ""}`}>
+                  {STATUS_LABELS[row.status] ?? row.status}
+                </span>
+                {row.source === "BILL_UPLOAD" && (
+                  <span className="rounded-full bg-sky-100 px-2 py-0.5 text-xs font-medium text-sky-700 dark:bg-sky-500/10 dark:text-sky-400">
+                    Bill
+                  </span>
+                )}
               </span>
             ),
           },

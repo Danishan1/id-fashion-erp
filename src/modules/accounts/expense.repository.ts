@@ -12,7 +12,25 @@ const detailInclude = {
   postedBy: { select: { id: true, fullName: true } },
   approvedBy: { select: { id: true, fullName: true } },
   rejectedBy: { select: { id: true, fullName: true } },
+  payments: {
+    orderBy: { createdAt: "asc" },
+    include: {
+      paymentType: { select: { id: true, name: true, type: true } },
+      bankAccount: { select: { id: true, name: true, bankName: true } },
+      journal: { select: { id: true, journalNumber: true } },
+      createdBy: { select: { id: true, fullName: true } },
+    },
+  },
 } satisfies Prisma.ExpenseInclude;
+
+export const ExpensePaymentRepository = {
+  /** CF-5 idempotent-replay lookup. */
+  findByIdempotencyKey: (companyId: string, idempotencyKey: string) =>
+    prisma.expensePayment.findUnique({ where: { companyId_idempotencyKey: { companyId, idempotencyKey } } }),
+
+  findAnyById: (companyId: string, id: string) =>
+    prisma.expensePayment.findFirst({ where: { id, companyId }, include: { expense: { select: { id: true, branchId: true } } } }),
+};
 
 export const ExpenseRepository = {
   findMany: (where: Prisma.ExpenseWhereInput, args: Omit<Prisma.ExpenseFindManyArgs, "where">) =>

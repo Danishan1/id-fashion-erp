@@ -4,6 +4,7 @@ import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import {
   deleteStoredFile,
   FileTooLargeError,
+  normalizeMimeType,
   readStoredFile,
   saveFile,
   UnsupportedFileTypeError,
@@ -54,7 +55,7 @@ export async function uploadAttachment(
       fileName: file.fileName,
       storageKey: stored.storageKey,
       fileSizeBytes: stored.fileSizeBytes,
-      mimeType: file.mimeType,
+      mimeType: normalizeMimeType(file.mimeType),
       contextLabel: contextLabel || null,
     },
   });

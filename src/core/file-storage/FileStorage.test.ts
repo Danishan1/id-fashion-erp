@@ -58,3 +58,26 @@ describe("saveFile — magic-byte content verification (CF-6)", () => {
     await expect(saveFile(oversized, "huge.png", "image/png")).rejects.toThrow(FileTooLargeError);
   });
 });
+
+describe("saveFile — voice notes", () => {
+  // EBML header with DocType "webm" — what a browser MediaRecorder writes.
+  const WEBM_HEADER = Buffer.from(
+    "1A45DFA39F4286810142F7810142F2810442F381084282847765626D428781044285810200",
+    "hex"
+  );
+
+  it("accepts a recorded webm voice note declared with codec parameters", async () => {
+    const result = await saveFile(WEBM_HEADER, "voice-note.webm", "audio/webm;codecs=opus");
+    expect(result.storageKey).toMatch(/\.webm$/);
+  });
+
+  it("accepts an Ogg/Opus recording (detected type carries codec parameters)", async () => {
+    const ogg = Buffer.concat([Buffer.from("OggS"), Buffer.alloc(24), Buffer.from("OpusHead"), Buffer.alloc(20)]);
+    await expect(saveFile(ogg, "voice-note.ogg", "audio/ogg")).resolves.toBeTruthy();
+  });
+
+  it("still rejects a non-audio file declared as audio", async () => {
+    const png = Buffer.from(REAL_PNG_BASE64, "base64");
+    await expect(saveFile(png, "voice-note.webm", "audio/webm")).rejects.toThrow(UnsupportedFileTypeError);
+  });
+});

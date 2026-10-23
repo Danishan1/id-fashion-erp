@@ -180,6 +180,7 @@ model Company {
   purchaseInvoices                    PurchaseInvoice[]
   payments                            Payment[]
   expenses                            Expense[]
+  expensePayments                     ExpensePayment[]
   dispatches                          Dispatch[]
   jobWorkOrders                       JobWorkOrder[]
   jobWorkReceipts                     JobWorkReceipt[]
@@ -258,7 +259,8 @@ model Company {
   customerReturns  CustomerReturn[]
 
   productionOrderColorFabrics ProductionOrderColorFabric[]
-  stockColorBalances                  StockColorBalance[]
+  stockColorBalances          StockColorBalance[]
+
   @@map("companies")
 }
 
@@ -279,19 +281,19 @@ model Branch {
   createdAt   DateTime   @default(now()) @map("created_at")
   updatedAt   DateTime   @updatedAt @map("updated_at")
 
-  company               Company                @relation(fields: [companyId], references: [id])
-  usersDefault          User[]                 @relation("UserDefaultBranch")
-  userBranchRoles       UserBranchRole[]
-  employees             Employee[]
-  departments           Department[]
-  warehouses            Warehouse[]
-  productionLines       ProductionLine[]
-  sampleRequests        SampleRequest[]
-  buyerEnquiries        BuyerEnquiry[]
-  salesOrders           SalesOrder[]
-  purchaseOrders        PurchaseOrder[]
-  materialRequests      MaterialRequest[]
-  goodsReceipts         GoodsReceipt[]
+  company                    Company                     @relation(fields: [companyId], references: [id])
+  usersDefault               User[]                      @relation("UserDefaultBranch")
+  userBranchRoles            UserBranchRole[]
+  employees                  Employee[]
+  departments                Department[]
+  warehouses                 Warehouse[]
+  productionLines            ProductionLine[]
+  sampleRequests             SampleRequest[]
+  buyerEnquiries             BuyerEnquiry[]
+  salesOrders                SalesOrder[]
+  purchaseOrders             PurchaseOrder[]
+  materialRequests           MaterialRequest[]
+  goodsReceipts              GoodsReceipt[]
   inventoryTransactions      InventoryTransaction[]
   finishedGoodsStockBalances FinishedGoodsStockBalance[]
   finishedGoodsReservations  FinishedGoodsReservation[]
@@ -299,21 +301,22 @@ model Branch {
   finishedGoodsPutaways      FinishedGoodsPutaway[]
   stockMovements             StockMovement[]
   roleBranchAccess           RoleBranchAccess[]
-  productionOrders      ProductionOrder[]
-  lots                  Lot[]
-  documentSequences     DocumentSequence[]
-  journals              Journal[]
-  salesInvoices         SalesInvoice[]
-  purchaseInvoices      PurchaseInvoice[]
-  payments              Payment[]
-  expenses              Expense[]
-  dispatches            Dispatch[]
-  jobWorkOrders         JobWorkOrder[]
-  customInvoices        CustomInvoice[]
-  internalTransfers     InternalTransfer[]
-  employeeAdvances      EmployeeAdvance[]
-  aiGarmentProjects     AiGarmentProject[]
-  campaigns             Campaign[]
+  productionOrders           ProductionOrder[]
+  lots                       Lot[]
+  documentSequences          DocumentSequence[]
+  journals                   Journal[]
+  salesInvoices              SalesInvoice[]
+  purchaseInvoices           PurchaseInvoice[]
+  payments                   Payment[]
+  expenses                   Expense[]
+  expensePayments            ExpensePayment[]
+  dispatches                 Dispatch[]
+  jobWorkOrders              JobWorkOrder[]
+  customInvoices             CustomInvoice[]
+  internalTransfers          InternalTransfer[]
+  employeeAdvances           EmployeeAdvance[]
+  aiGarmentProjects          AiGarmentProject[]
+  campaigns                  Campaign[]
 
   crmLeads CrmLead[]
 
@@ -903,9 +906,9 @@ model User {
   productionOrderQuantityChanges             ProductionOrderQuantityChange[]
   lotsCreated                                Lot[]                                @relation("LotCreatedBy")
   finishedGoodsReceiptsPosted                FinishedGoodsReceipt[]               @relation("FinishedGoodsReceiptPostedBy")
-  finishedGoodsReceiptPostings              FinishedGoodsReceiptPosting[]        @relation("FinishedGoodsReceiptPostingReceivedBy")
-  finishedGoodsPutawaysPerformed              FinishedGoodsPutaway[]               @relation("FinishedGoodsPutawayPerformedBy")
-  finishedGoodsPickLinesPicked                FinishedGoodsPickLine[]              @relation("FinishedGoodsPickLinePickedBy")
+  finishedGoodsReceiptPostings               FinishedGoodsReceiptPosting[]        @relation("FinishedGoodsReceiptPostingReceivedBy")
+  finishedGoodsPutawaysPerformed             FinishedGoodsPutaway[]               @relation("FinishedGoodsPutawayPerformedBy")
+  finishedGoodsPickLinesPicked               FinishedGoodsPickLine[]              @relation("FinishedGoodsPickLinePickedBy")
   barcodesCreated                            Barcode[]                            @relation("BarcodeCreatedBy")
   lotRelationsPerformed                      LotRelation[]                        @relation("LotRelationPerformedBy")
   jobOrderAssignmentsMade                    JobOrderAssignment[]                 @relation("JobOrderAssignmentAssignedBy")
@@ -964,6 +967,7 @@ model User {
   paymentsCreated                            Payment[]                            @relation("PaymentCreatedBy")
   paymentsPosted                             Payment[]                            @relation("PaymentPostedBy")
   expensesCreated                            Expense[]                            @relation("ExpenseCreatedBy")
+  expensePaymentsCreated                     ExpensePayment[]                     @relation("ExpensePaymentCreatedBy")
   expensesPosted                             Expense[]                            @relation("ExpensePostedBy")
   expensesApproved                           Expense[]                            @relation("ExpenseApprovedBy")
   expensesRejected                           Expense[]                            @relation("ExpenseRejectedBy")
@@ -1058,10 +1062,11 @@ model User {
   customerReturnsReceived                    CustomerReturn[]                     @relation("CustomerReturnReceivedBy")
   customerReturnItemsInspected               CustomerReturnItem[]                 @relation("CustomerReturnItemInspectedBy")
 
-  productionHandbacks ProductionHandback[] @relation("ProductionHandbackBy")
-  permissionOverrides        UserPermissionOverride[] @relation("UserPermissionOverrideUser")
-  permissionOverridesCreated UserPermissionOverride[] @relation("UserPermissionOverrideCreatedBy")
+  productionHandbacks                ProductionHandback[]         @relation("ProductionHandbackBy")
+  permissionOverrides                UserPermissionOverride[]     @relation("UserPermissionOverrideUser")
+  permissionOverridesCreated         UserPermissionOverride[]     @relation("UserPermissionOverrideCreatedBy")
   productionOrderColorFabricsUpdated ProductionOrderColorFabric[] @relation("ProductionOrderColorFabricUpdatedBy")
+
   @@unique([companyId, supportForPlatformUserId])
   @@map("users")
 }
@@ -1148,7 +1153,8 @@ model Permission {
 
   rolePermissions RolePermission[]
 
-  userOverrides   UserPermissionOverride[]
+  userOverrides UserPermissionOverride[]
+
   @@index([module])
   @@map("permissions")
 }
@@ -1592,20 +1598,20 @@ model Employee {
   createdAt          DateTime         @default(now()) @map("created_at")
   updatedAt          DateTime         @updatedAt @map("updated_at")
 
-  company          Company           @relation(fields: [companyId], references: [id])
-  branch           Branch?           @relation(fields: [branchId], references: [id])
-  department       Department?       @relation(fields: [departmentId], references: [id])
-  shift            ShiftMaster?      @relation(fields: [shiftId], references: [id])
-  designation      Designation?      @relation(fields: [designationId], references: [id])
-  employeeCategory EmployeeCategory? @relation(fields: [employeeCategoryId], references: [id])
-  reportsTo        Employee?         @relation("EmployeeHierarchy", fields: [reportsToId], references: [id])
-  reports          Employee[]        @relation("EmployeeHierarchy")
+  company               Company                 @relation(fields: [companyId], references: [id])
+  branch                Branch?                 @relation(fields: [branchId], references: [id])
+  department            Department?             @relation(fields: [departmentId], references: [id])
+  shift                 ShiftMaster?            @relation(fields: [shiftId], references: [id])
+  designation           Designation?            @relation(fields: [designationId], references: [id])
+  employeeCategory      EmployeeCategory?       @relation(fields: [employeeCategoryId], references: [id])
+  reportsTo             Employee?               @relation("EmployeeHierarchy", fields: [reportsToId], references: [id])
+  reports               Employee[]              @relation("EmployeeHierarchy")
   // P3: per-module reporting lines (Production / CRM / HRMS). Where an
   // employee has no active line for a module, reportsToId is used instead.
   reportingLines        EmployeeReportingLine[] @relation("ReportingLineEmployee")
   managedReportingLines EmployeeReportingLine[] @relation("ReportingLineManager")
   productionHandbacks   ProductionHandback[]
-  user             User?
+  user                  User?
 
   // Production (Phase 5C) — a worker/operator is always tracked here, never
   // via User, so shop-floor staff never need a login just to be assigned
@@ -1785,12 +1791,13 @@ model Product {
   materialSubstitutionsAsOriginal   MaterialSubstitution[]        @relation("MaterialSubstitutionOriginalMaterial")
   materialSubstitutionsAsSubstitute MaterialSubstitution[]        @relation("MaterialSubstitutionSubstituteMaterial")
 
-  stageCosts StyleStageCost[]
+  stageCosts   StyleStageCost[]
   productUnits ProductUnit[]
 
-  productionOrderColorFabricBom      ProductionOrderColorFabric[] @relation("ProductionOrderColorFabricBomMaterial")
-  productionOrderColorFabricChosen   ProductionOrderColorFabric[] @relation("ProductionOrderColorFabricMaterial")
-  stockColorBalances                StockColorBalance[]
+  productionOrderColorFabricBom    ProductionOrderColorFabric[] @relation("ProductionOrderColorFabricBomMaterial")
+  productionOrderColorFabricChosen ProductionOrderColorFabric[] @relation("ProductionOrderColorFabricMaterial")
+  stockColorBalances               StockColorBalance[]
+
   @@unique([companyId, styleCode])
   @@map("products")
 }
@@ -1815,12 +1822,13 @@ model Color {
   sampleRequests         SampleRequest[]
   salesOrderBomOverrides SalesOrderBomOverride[]
 
-  productionOrderGarmentColorFabrics ProductionOrderColorFabric[] @relation("ProductionOrderColorFabricGarmentColor")
-  productionOrderFabricColorFabrics  ProductionOrderColorFabric[] @relation("ProductionOrderColorFabricFabricColor")
-  inventoryTransactions      InventoryTransaction[] @relation("InventoryTransactionColor")
-  stockColorBalances         StockColorBalance[]
-  stockMovementItems         StockMovementItem[]    @relation("StockMovementItemColor")
-  materialSubstitutionsAsSubstituteColor MaterialSubstitution[] @relation("MaterialSubstitutionSubstituteColor")
+  productionOrderGarmentColorFabrics     ProductionOrderColorFabric[] @relation("ProductionOrderColorFabricGarmentColor")
+  productionOrderFabricColorFabrics      ProductionOrderColorFabric[] @relation("ProductionOrderColorFabricFabricColor")
+  inventoryTransactions                  InventoryTransaction[]       @relation("InventoryTransactionColor")
+  stockColorBalances                     StockColorBalance[]
+  stockMovementItems                     StockMovementItem[]          @relation("StockMovementItemColor")
+  materialSubstitutionsAsSubstituteColor MaterialSubstitution[]       @relation("MaterialSubstitutionSubstituteColor")
+
   @@unique([companyId, code])
   @@map("colors")
 }
@@ -1872,7 +1880,8 @@ model UnitOfMeasure {
   salesOrderBomOverrides       SalesOrderBomOverride[]
   materialSubstitutions        MaterialSubstitution[]
 
-  productionOrderColorFabrics  ProductionOrderColorFabric[]
+  productionOrderColorFabrics ProductionOrderColorFabric[]
+
   @@map("units_of_measure")
 }
 
@@ -1896,17 +1905,17 @@ model ProductVariant {
   color   Color   @relation(fields: [colorId], references: [id])
   size    Size    @relation(fields: [sizeId], references: [id])
 
-  salesOrderBreakdown   SalesOrderItemBreakdown[]
-  cartonItems           CartonItem[]
-  lotVariantBreakdown   LotVariantBreakdown[]
-  inventoryTransactions       InventoryTransaction[]
-  finishedGoodsStockBalances  FinishedGoodsStockBalance[]
-  finishedGoodsReservations   FinishedGoodsReservation[]
-  finishedGoodsReceiptItems   FinishedGoodsReceiptItem[]
-  finishedGoodsPutaways       FinishedGoodsPutaway[]
-  stockMovementItems          StockMovementItem[]
-  finishedGoodsPickLines      FinishedGoodsPickLine[]
-  productUnits                ProductUnit[]
+  salesOrderBreakdown        SalesOrderItemBreakdown[]
+  cartonItems                CartonItem[]
+  lotVariantBreakdown        LotVariantBreakdown[]
+  inventoryTransactions      InventoryTransaction[]
+  finishedGoodsStockBalances FinishedGoodsStockBalance[]
+  finishedGoodsReservations  FinishedGoodsReservation[]
+  finishedGoodsReceiptItems  FinishedGoodsReceiptItem[]
+  finishedGoodsPutaways      FinishedGoodsPutaway[]
+  stockMovementItems         StockMovementItem[]
+  finishedGoodsPickLines     FinishedGoodsPickLine[]
+  productUnits               ProductUnit[]
 
   @@unique([productId, colorId, sizeId])
   @@map("product_variants")
@@ -1937,10 +1946,10 @@ model Warehouse {
   createdAt         DateTime        @default(now()) @map("created_at")
   updatedAt         DateTime        @updatedAt @map("updated_at")
 
-  company               Company                @relation(fields: [companyId], references: [id])
-  branch                Branch                 @relation(fields: [branchId], references: [id])
-  locations             WarehouseLocation[]
-  goodsReceiptItems     GoodsReceiptItem[]
+  company                    Company                     @relation(fields: [companyId], references: [id])
+  branch                     Branch                      @relation(fields: [branchId], references: [id])
+  locations                  WarehouseLocation[]
+  goodsReceiptItems          GoodsReceiptItem[]
   inventoryTransactions      InventoryTransaction[]
   stockBalances              StockBalance[]
   finishedGoodsStockBalances FinishedGoodsStockBalance[]
@@ -1948,16 +1957,17 @@ model Warehouse {
   finishedGoodsReceipts      FinishedGoodsReceipt[]
   finishedGoodsPutaways      FinishedGoodsPutaway[]
   materialRequests           MaterialRequest[]
-  stockMovementsFrom    StockMovement[]        @relation("StockMovementSourceWarehouse")
-  stockMovementsTo      StockMovement[]        @relation("StockMovementDestinationWarehouse")
-  dispatches            Dispatch[]
-  jobWorkOrderMaterials JobWorkOrderMaterial[]
+  stockMovementsFrom         StockMovement[]             @relation("StockMovementSourceWarehouse")
+  stockMovementsTo           StockMovement[]             @relation("StockMovementDestinationWarehouse")
+  dispatches                 Dispatch[]
+  jobWorkOrderMaterials      JobWorkOrderMaterial[]
 
-  jobWorkOrdersFgDestination JobWorkOrder[] @relation("JobWorkOrderFgWarehouse")
+  jobWorkOrdersFgDestination JobWorkOrder[]       @relation("JobWorkOrderFgWarehouse")
   productUnits               ProductUnit[]
   customerReturnRestockItems CustomerReturnItem[] @relation("CustomerReturnRestockWarehouse")
 
-  stockColorBalances         StockColorBalance[]
+  stockColorBalances StockColorBalance[]
+
   @@unique([branchId, code])
   @@map("warehouses")
 }
@@ -1995,17 +2005,17 @@ model WarehouseLocation {
   // NOTE: no companyId column of its own — any company-scoped lookup on a
   // warehouseLocationId FK must join through warehouse.companyId, never
   // assume a direct filter (the exact bug class fixed 27 times project-wide).
-  warehouse             Warehouse              @relation(fields: [warehouseId], references: [id])
-  goodsReceiptItems     GoodsReceiptItem[]
-  fabricRolls           FabricRoll[]
-  inventoryTransactions      InventoryTransaction[]
-  stockMovementItems            StockMovementItem[] @relation("StockMovementItemSourceLocation")
-  stockMovementItemsAsDestination StockMovementItem[] @relation("StockMovementItemDestinationLocation")
+  warehouse                       Warehouse                     @relation(fields: [warehouseId], references: [id])
+  goodsReceiptItems               GoodsReceiptItem[]
+  fabricRolls                     FabricRoll[]
+  inventoryTransactions           InventoryTransaction[]
+  stockMovementItems              StockMovementItem[]           @relation("StockMovementItemSourceLocation")
+  stockMovementItemsAsDestination StockMovementItem[]           @relation("StockMovementItemDestinationLocation")
   finishedGoodsPickLines          FinishedGoodsPickLine[]
-  materialRequestItems       MaterialRequestItem[]
-  finishedGoodsStockBalances FinishedGoodsStockBalance[]
-  finishedGoodsPutawayItems  FinishedGoodsPutawayItem[]
-  finishedGoodsReceiptPostings FinishedGoodsReceiptPosting[]
+  materialRequestItems            MaterialRequestItem[]
+  finishedGoodsStockBalances      FinishedGoodsStockBalance[]
+  finishedGoodsPutawayItems       FinishedGoodsPutawayItem[]
+  finishedGoodsReceiptPostings    FinishedGoodsReceiptPosting[]
 
   @@unique([warehouseId, code])
   @@map("warehouse_locations")
@@ -2765,6 +2775,7 @@ model PaymentType {
   company               Company                @relation(fields: [companyId], references: [id])
   payments              Payment[]
   expenses              Expense[]
+  expensePayments       ExpensePayment[]
   customInvoicePayments CustomInvoicePayment[]
   employeeAdvances      EmployeeAdvance[]
   internalTransfersFrom InternalTransfer[]     @relation("InternalTransferFrom")
@@ -2792,6 +2803,7 @@ model BankAccount {
   company               Company            @relation(fields: [companyId], references: [id])
   payments              Payment[]
   expenses              Expense[]
+  expensePayments       ExpensePayment[]
   employeeAdvances      EmployeeAdvance[]
   internalTransfersFrom InternalTransfer[] @relation("InternalTransferFromBank")
   internalTransfersTo   InternalTransfer[] @relation("InternalTransferToBank")
@@ -3817,11 +3829,11 @@ model SalesOrderLine {
   createdAt             DateTime                @default(now()) @map("created_at")
   updatedAt             DateTime                @updatedAt @map("updated_at")
 
-  company         Company                 @relation(fields: [companyId], references: [id])
-  salesOrder      SalesOrder              @relation(fields: [salesOrderId], references: [id])
-  bomVersion      BomVersion?             @relation(fields: [bomVersionId], references: [id])
-  sampleVersion   SampleVersion?          @relation(fields: [sampleVersionId], references: [id])
-  snapshotTakenBy User?                   @relation("SalesOrderLineSnapshotTakenBy", fields: [snapshotTakenByUserId], references: [id])
+  company                   Company                    @relation(fields: [companyId], references: [id])
+  salesOrder                SalesOrder                 @relation(fields: [salesOrderId], references: [id])
+  bomVersion                BomVersion?                @relation(fields: [bomVersionId], references: [id])
+  sampleVersion             SampleVersion?             @relation(fields: [sampleVersionId], references: [id])
+  snapshotTakenBy           User?                      @relation("SalesOrderLineSnapshotTakenBy", fields: [snapshotTakenByUserId], references: [id])
   items                     SalesOrderItem[]
   overrides                 SalesOrderBomOverride[]
   finishedGoodsReservations FinishedGoodsReservation[]
@@ -4366,7 +4378,8 @@ model MaterialSubstitution {
   approvedBy           User?                 @relation("MaterialSubstitutionApprovedBy", fields: [approvedByUserId], references: [id])
   inventoryTransaction InventoryTransaction? @relation(fields: [inventoryTransactionId], references: [id])
 
-  substituteColor      Color?                @relation("MaterialSubstitutionSubstituteColor", fields: [substituteColorId], references: [id])
+  substituteColor Color? @relation("MaterialSubstitutionSubstituteColor", fields: [substituteColorId], references: [id])
+
   @@index([materialRequestItemId])
   @@index([companyId, status])
   @@map("material_substitutions")
@@ -4567,23 +4580,24 @@ model ProductionOrder {
   createdAt                  DateTime               @default(now()) @map("created_at")
   updatedAt                  DateTime               @updatedAt @map("updated_at")
 
-  company              Company                         @relation(fields: [companyId], references: [id])
-  branch               Branch?                         @relation(fields: [branchId], references: [id])
-  salesOrderItem       SalesOrderItem?                 @relation(fields: [salesOrderItemId], references: [id])
-  product              Product                         @relation(fields: [productId], references: [id])
-  bom                  Bom?                            @relation(fields: [bomId], references: [id])
-  requestedBy          User                            @relation("ProductionOrderRequestedBy", fields: [requestedByUserId], references: [id])
-  releasedToDispatchBy User?                           @relation("ProductionOrderReleasedToDispatchBy", fields: [releasedToDispatchByUserId], references: [id])
-  lots                   Lot[]
-  jobOrders              JobOrder[]
-  stageTransactions      ProductionStageTransaction[]
-  qcInspections          QcInspection[]
-  materialRequests       MaterialRequest[]
-  quantityChanges        ProductionOrderQuantityChange[]
-  finishedGoodsReceipts  FinishedGoodsReceipt[]
-  productUnits           ProductUnit[]
+  company               Company                         @relation(fields: [companyId], references: [id])
+  branch                Branch?                         @relation(fields: [branchId], references: [id])
+  salesOrderItem        SalesOrderItem?                 @relation(fields: [salesOrderItemId], references: [id])
+  product               Product                         @relation(fields: [productId], references: [id])
+  bom                   Bom?                            @relation(fields: [bomId], references: [id])
+  requestedBy           User                            @relation("ProductionOrderRequestedBy", fields: [requestedByUserId], references: [id])
+  releasedToDispatchBy  User?                           @relation("ProductionOrderReleasedToDispatchBy", fields: [releasedToDispatchByUserId], references: [id])
+  lots                  Lot[]
+  jobOrders             JobOrder[]
+  stageTransactions     ProductionStageTransaction[]
+  qcInspections         QcInspection[]
+  materialRequests      MaterialRequest[]
+  quantityChanges       ProductionOrderQuantityChange[]
+  finishedGoodsReceipts FinishedGoodsReceipt[]
+  productUnits          ProductUnit[]
 
-  colorFabrics           ProductionOrderColorFabric[]
+  colorFabrics ProductionOrderColorFabric[]
+
   @@unique([companyId, orderNumber])
   @@index([companyId, status])
   @@index([salesOrderItemId])
@@ -4691,19 +4705,19 @@ model Lot {
   createdAt         DateTime  @default(now()) @map("created_at")
   updatedAt         DateTime  @updatedAt @map("updated_at")
 
-  company           Company                      @relation(fields: [companyId], references: [id])
-  branch            Branch?                      @relation(fields: [branchId], references: [id])
-  productionOrder   ProductionOrder              @relation(fields: [productionOrderId], references: [id])
-  uom               UnitOfMeasure                @relation(fields: [uomId], references: [id])
-  currentStage      ProductionStage?             @relation("LotCurrentStage", fields: [currentStageId], references: [id])
-  createdBy         User                         @relation("LotCreatedBy", fields: [createdByUserId], references: [id])
-  asParentRelations LotRelation[]                @relation("LotRelationParent")
-  asChildRelations  LotRelation[]                @relation("LotRelationChild")
-  jobOrders         JobOrder[]
-  stageTransactions ProductionStageTransaction[]
-  qcInspections     QcInspection[]
-  variantBreakdown  LotVariantBreakdown[]
-  materialRequests  MaterialRequest[]
+  company               Company                      @relation(fields: [companyId], references: [id])
+  branch                Branch?                      @relation(fields: [branchId], references: [id])
+  productionOrder       ProductionOrder              @relation(fields: [productionOrderId], references: [id])
+  uom                   UnitOfMeasure                @relation(fields: [uomId], references: [id])
+  currentStage          ProductionStage?             @relation("LotCurrentStage", fields: [currentStageId], references: [id])
+  createdBy             User                         @relation("LotCreatedBy", fields: [createdByUserId], references: [id])
+  asParentRelations     LotRelation[]                @relation("LotRelationParent")
+  asChildRelations      LotRelation[]                @relation("LotRelationChild")
+  jobOrders             JobOrder[]
+  stageTransactions     ProductionStageTransaction[]
+  qcInspections         QcInspection[]
+  variantBreakdown      LotVariantBreakdown[]
+  materialRequests      MaterialRequest[]
   // Informational only (Extra Dispatch Quantity, 2026-09-30) — see
   // DispatchItem.sourceLotId's own comment.
   dispatchItems         DispatchItem[]
@@ -4833,18 +4847,18 @@ model JobOrder {
   createdAt         DateTime           @default(now()) @map("created_at")
   updatedAt         DateTime           @updatedAt @map("updated_at")
 
-  company              Company                      @relation(fields: [companyId], references: [id])
-  productionOrder      ProductionOrder              @relation(fields: [productionOrderId], references: [id])
-  lot                  Lot                          @relation(fields: [lotId], references: [id])
-  productionStage      ProductionStage              @relation(fields: [productionStageId], references: [id])
-  sourceJobOrder       JobOrder?                    @relation("JobOrderChain", fields: [sourceJobOrderId], references: [id])
-  nextJobOrders        JobOrder[]                   @relation("JobOrderChain")
-  productionLine       ProductionLine?              @relation(fields: [productionLineId], references: [id])
-  assignments          JobOrderAssignment[]
-  progressEntries      JobOrderProgressEntry[]
-  handbacks            ProductionHandback[]
-  incomingTransactions ProductionStageTransaction[] @relation("StageTransactionTo")
-  outgoingTransactions ProductionStageTransaction[] @relation("StageTransactionFrom")
+  company               Company                      @relation(fields: [companyId], references: [id])
+  productionOrder       ProductionOrder              @relation(fields: [productionOrderId], references: [id])
+  lot                   Lot                          @relation(fields: [lotId], references: [id])
+  productionStage       ProductionStage              @relation(fields: [productionStageId], references: [id])
+  sourceJobOrder        JobOrder?                    @relation("JobOrderChain", fields: [sourceJobOrderId], references: [id])
+  nextJobOrders         JobOrder[]                   @relation("JobOrderChain")
+  productionLine        ProductionLine?              @relation(fields: [productionLineId], references: [id])
+  assignments           JobOrderAssignment[]
+  progressEntries       JobOrderProgressEntry[]
+  handbacks             ProductionHandback[]
+  incomingTransactions  ProductionStageTransaction[] @relation("StageTransactionTo")
+  outgoingTransactions  ProductionStageTransaction[] @relation("StageTransactionFrom")
   qcInspections         QcInspection[]
   jobWorkOrders         JobWorkOrder[]
   pieceRateEarnings     PieceRateEarning[]
@@ -5439,19 +5453,20 @@ model InventoryTransaction {
   performedAt         DateTime                 @default(now()) @map("performed_at")
   notes               String?
 
-  company               Company                @relation(fields: [companyId], references: [id])
-  branch                Branch?                @relation(fields: [branchId], references: [id])
-  product               Product                @relation(fields: [productId], references: [id])
-  warehouse             Warehouse              @relation(fields: [warehouseId], references: [id])
-  warehouseLocation     WarehouseLocation?     @relation(fields: [warehouseLocationId], references: [id])
-  fabricRoll            FabricRoll?            @relation(fields: [fabricRollId], references: [id])
-  performedBy           User                   @relation("InventoryTransactionPerformedBy", fields: [performedByUserId], references: [id])
-  materialSubstitutions MaterialSubstitution[]
-  productVariant        ProductVariant?        @relation(fields: [productVariantId], references: [id])
+  company                   Company                    @relation(fields: [companyId], references: [id])
+  branch                    Branch?                    @relation(fields: [branchId], references: [id])
+  product                   Product                    @relation(fields: [productId], references: [id])
+  warehouse                 Warehouse                  @relation(fields: [warehouseId], references: [id])
+  warehouseLocation         WarehouseLocation?         @relation(fields: [warehouseLocationId], references: [id])
+  fabricRoll                FabricRoll?                @relation(fields: [fabricRollId], references: [id])
+  performedBy               User                       @relation("InventoryTransactionPerformedBy", fields: [performedByUserId], references: [id])
+  materialSubstitutions     MaterialSubstitution[]
+  productVariant            ProductVariant?            @relation(fields: [productVariantId], references: [id])
   finishedGoodsReceiptItems FinishedGoodsReceiptItem[]
   finishedGoodsPutawayItems FinishedGoodsPutawayItem[]
 
-  color                 Color?                 @relation("InventoryTransactionColor", fields: [colorId], references: [id])
+  color Color? @relation("InventoryTransactionColor", fields: [colorId], references: [id])
+
   @@index([companyId, productId, warehouseId])
   @@index([referenceModule, referenceRecordId])
   @@index([fabricRollId])
@@ -5507,16 +5522,16 @@ model StockBalance {
 // index, so there is deliberately no @@unique/@@index attribute below for
 // this key; do not assume one is missing by oversight.
 model FinishedGoodsStockBalance {
-  id                  String       @id @default(uuid()) @db.Uuid
-  companyId           String       @map("company_id") @db.Uuid
-  branchId            String?      @map("branch_id") @db.Uuid
-  productId           String       @map("product_id") @db.Uuid
-  productVariantId    String?      @map("product_variant_id") @db.Uuid
-  warehouseId         String       @map("warehouse_id") @db.Uuid
-  warehouseLocationId String?      @map("warehouse_location_id") @db.Uuid
-  stockStatus         StockStatus  @map("stock_status")
-  quantityOnHand      Decimal      @default(0) @map("quantity_on_hand") @db.Decimal(18, 4)
-  updatedAt           DateTime     @updatedAt @map("updated_at")
+  id                  String      @id @default(uuid()) @db.Uuid
+  companyId           String      @map("company_id") @db.Uuid
+  branchId            String?     @map("branch_id") @db.Uuid
+  productId           String      @map("product_id") @db.Uuid
+  productVariantId    String?     @map("product_variant_id") @db.Uuid
+  warehouseId         String      @map("warehouse_id") @db.Uuid
+  warehouseLocationId String?     @map("warehouse_location_id") @db.Uuid
+  stockStatus         StockStatus @map("stock_status")
+  quantityOnHand      Decimal     @default(0) @map("quantity_on_hand") @db.Decimal(18, 4)
+  updatedAt           DateTime    @updatedAt @map("updated_at")
 
   company           Company            @relation(fields: [companyId], references: [id])
   branch            Branch?            @relation(fields: [branchId], references: [id])
@@ -5606,42 +5621,42 @@ model FinishedGoodsReservation {
 // discipline; a correction is a new, separate receipt or a manual
 // compensating ledger entry, never an edit to this row.
 model FinishedGoodsReceipt {
-  id                String   @id @default(uuid()) @db.Uuid
-  companyId         String   @map("company_id") @db.Uuid
-  branchId          String?  @map("branch_id") @db.Uuid
-  receiptNumber     String   @map("receipt_number")
-  productId         String   @map("product_id") @db.Uuid
+  id                String                     @id @default(uuid()) @db.Uuid
+  companyId         String                     @map("company_id") @db.Uuid
+  branchId          String?                    @map("branch_id") @db.Uuid
+  receiptNumber     String                     @map("receipt_number")
+  productId         String                     @map("product_id") @db.Uuid
   // Production source only (null for a customer return).
-  lotId             String?  @map("lot_id") @db.Uuid
-  jobOrderId        String?  @map("job_order_id") @db.Uuid
-  productionOrderId String?  @map("production_order_id") @db.Uuid
-  warehouseId       String   @map("warehouse_id") @db.Uuid
-  totalQuantity     Decimal  @map("total_quantity") @db.Decimal(18, 4)
+  lotId             String?                    @map("lot_id") @db.Uuid
+  jobOrderId        String?                    @map("job_order_id") @db.Uuid
+  productionOrderId String?                    @map("production_order_id") @db.Uuid
+  warehouseId       String                     @map("warehouse_id") @db.Uuid
+  totalQuantity     Decimal                    @map("total_quantity") @db.Decimal(18, 4)
   // Receive step (2026-10-22): goods arriving from Packing or from a
   // customer return wait here as PENDING and only reach Finished Goods stock
   // when the store receives them into a location. Rows from before this
   // change were posted straight to stock, so they default to RECEIVED.
   source            FinishedGoodsReceiptSource @default(PRODUCTION)
   status            FinishedGoodsReceiptStatus @default(RECEIVED)
-  dispatchId        String?  @map("dispatch_id") @db.Uuid
-  dispatchReturnId  String?  @map("dispatch_return_id") @db.Uuid
-  remarks           String?  @map("remarks")
+  dispatchId        String?                    @map("dispatch_id") @db.Uuid
+  dispatchReturnId  String?                    @map("dispatch_return_id") @db.Uuid
+  remarks           String?                    @map("remarks")
   // Who/when the receipt was created (goods arrived at the FG door).
-  postedByUserId    String   @map("posted_by_user_id") @db.Uuid
-  postedAt          DateTime @default(now()) @map("posted_at")
-  receivedAt        DateTime? @map("received_at")
-  createdAt         DateTime @default(now()) @map("created_at")
+  postedByUserId    String                     @map("posted_by_user_id") @db.Uuid
+  postedAt          DateTime                   @default(now()) @map("posted_at")
+  receivedAt        DateTime?                  @map("received_at")
+  createdAt         DateTime                   @default(now()) @map("created_at")
 
-  company         Company                    @relation(fields: [companyId], references: [id])
-  branch          Branch?                    @relation(fields: [branchId], references: [id])
-  product         Product                    @relation(fields: [productId], references: [id])
-  lot             Lot?                       @relation(fields: [lotId], references: [id], onDelete: Restrict)
-  jobOrder        JobOrder?                  @relation(fields: [jobOrderId], references: [id], onDelete: Restrict)
-  productionOrder ProductionOrder?           @relation(fields: [productionOrderId], references: [id], onDelete: Restrict)
-  warehouse       Warehouse                  @relation(fields: [warehouseId], references: [id])
-  postedBy        User                       @relation("FinishedGoodsReceiptPostedBy", fields: [postedByUserId], references: [id])
-  dispatch        Dispatch?                  @relation(fields: [dispatchId], references: [id], onDelete: Restrict)
-  dispatchReturn  DispatchReturn?            @relation(fields: [dispatchReturnId], references: [id], onDelete: Restrict)
+  company         Company                       @relation(fields: [companyId], references: [id])
+  branch          Branch?                       @relation(fields: [branchId], references: [id])
+  product         Product                       @relation(fields: [productId], references: [id])
+  lot             Lot?                          @relation(fields: [lotId], references: [id], onDelete: Restrict)
+  jobOrder        JobOrder?                     @relation(fields: [jobOrderId], references: [id], onDelete: Restrict)
+  productionOrder ProductionOrder?              @relation(fields: [productionOrderId], references: [id], onDelete: Restrict)
+  warehouse       Warehouse                     @relation(fields: [warehouseId], references: [id])
+  postedBy        User                          @relation("FinishedGoodsReceiptPostedBy", fields: [postedByUserId], references: [id])
+  dispatch        Dispatch?                     @relation(fields: [dispatchId], references: [id], onDelete: Restrict)
+  dispatchReturn  DispatchReturn?               @relation(fields: [dispatchReturnId], references: [id], onDelete: Restrict)
   items           FinishedGoodsReceiptItem[]
   postings        FinishedGoodsReceiptPosting[]
 
@@ -5669,9 +5684,9 @@ model FinishedGoodsReceiptItem {
   // have one yet; every real write in this module always sets it.
   inventoryTransactionId String? @map("inventory_transaction_id") @db.Uuid
 
-  finishedGoodsReceipt FinishedGoodsReceipt @relation(fields: [finishedGoodsReceiptId], references: [id])
-  productVariant       ProductVariant?      @relation(fields: [productVariantId], references: [id], onDelete: Restrict)
-  inventoryTransaction InventoryTransaction? @relation(fields: [inventoryTransactionId], references: [id])
+  finishedGoodsReceipt FinishedGoodsReceipt          @relation(fields: [finishedGoodsReceiptId], references: [id])
+  productVariant       ProductVariant?               @relation(fields: [productVariantId], references: [id], onDelete: Restrict)
+  inventoryTransaction InventoryTransaction?         @relation(fields: [inventoryTransactionId], references: [id])
   postings             FinishedGoodsReceiptPosting[]
 
   @@index([finishedGoodsReceiptId])
@@ -5827,34 +5842,34 @@ model StockColorBalance {
 }
 
 model StockMovement {
-  id                String            @id @default(uuid()) @db.Uuid
-  companyId         String            @map("company_id") @db.Uuid
-  branchId          String?           @map("branch_id") @db.Uuid
-  movementNumber    String            @map("movement_number")
-  movementType      StockMovementType @map("movement_type")
+  id                String              @id @default(uuid()) @db.Uuid
+  companyId         String              @map("company_id") @db.Uuid
+  branchId          String?             @map("branch_id") @db.Uuid
+  movementNumber    String              @map("movement_number")
+  movementType      StockMovementType   @map("movement_type")
   // TRANSFER: the source warehouse. ADJUSTMENT / RETURN_TO_SUPPLIER: the
   // only warehouse involved.
-  warehouseId       String            @map("warehouse_id") @db.Uuid
+  warehouseId       String              @map("warehouse_id") @db.Uuid
   // TRANSFER only — the destination warehouse.
-  toWarehouseId     String?           @map("to_warehouse_id") @db.Uuid
+  toWarehouseId     String?             @map("to_warehouse_id") @db.Uuid
   // RETURN_TO_SUPPLIER only.
-  supplierId        String?           @map("supplier_id") @db.Uuid
+  supplierId        String?             @map("supplier_id") @db.Uuid
   // Required for ADJUSTMENT (a stock discrepancy correction should always
   // explain why); optional context for TRANSFER/RETURN_TO_SUPPLIER.
   reason            String?
   remarks           String?
-  performedByUserId String            @map("performed_by_user_id") @db.Uuid
-  performedAt       DateTime          @default(now()) @map("performed_at")
+  performedByUserId String              @map("performed_by_user_id") @db.Uuid
+  performedAt       DateTime            @default(now()) @map("performed_at")
   status            StockMovementStatus @default(POSTED)
-  receivedAt        DateTime?         @map("received_at")
-  receivedByUserId  String?           @map("received_by_user_id") @db.Uuid
+  receivedAt        DateTime?           @map("received_at")
+  receivedByUserId  String?             @map("received_by_user_id") @db.Uuid
   // CF-5: see GoodsReceipt.idempotencyKey for the full rationale. Company-only
   // (not branch-inclusive) deliberately — a nullable branchId in a composite
   // unique would let Postgres treat every null-branch row as non-conflicting
   // with every other, silently defeating the protection for exactly the
   // common case (no branch set) this is meant to cover.
-  idempotencyKey    String?           @map("idempotency_key")
-  createdAt         DateTime          @default(now()) @map("created_at")
+  idempotencyKey    String?             @map("idempotency_key")
+  createdAt         DateTime            @default(now()) @map("created_at")
 
   company     Company             @relation(fields: [companyId], references: [id])
   branch      Branch?             @relation(fields: [branchId], references: [id])
@@ -5873,15 +5888,15 @@ model StockMovement {
 }
 
 model StockMovementItem {
-  id                  String  @id @default(uuid()) @db.Uuid
-  stockMovementId     String  @map("stock_movement_id") @db.Uuid
-  productId           String  @map("product_id") @db.Uuid
-  uomId               String  @map("uom_id") @db.Uuid
+  id                    String  @id @default(uuid()) @db.Uuid
+  stockMovementId       String  @map("stock_movement_id") @db.Uuid
+  productId             String  @map("product_id") @db.Uuid
+  uomId                 String  @map("uom_id") @db.Uuid
   // TRANSFER / RETURN_TO_SUPPLIER: always positive (the quantity moved or
   // returned). ADJUSTMENT: signed — positive means stock found on a
   // physical count, negative means shrinkage/write-off.
-  quantity            Decimal @db.Decimal(18, 4)
-  remarks             String?
+  quantity              Decimal @db.Decimal(18, 4)
+  remarks               String?
   // Which room/section within the SOURCE warehouse this line's stock is
   // coming from — traceability only (passed straight through to the ledger's
   // own existing warehouseLocationId, exactly like GoodsReceiptItem already
@@ -5890,21 +5905,21 @@ model StockMovementItem {
   // flagged line's warehouseLocationId DOES matter for availability, via the
   // new FinishedGoodsStockBalance cache (see
   // docs/FINISHED_GOODS_INVENTORY_IMPLEMENTATION_PLAN.md §4.4).
-  warehouseLocationId String? @map("warehouse_location_id") @db.Uuid
+  warehouseLocationId   String? @map("warehouse_location_id") @db.Uuid
   // Finished Goods Inventory module (2026-10-13, FGI-006) — nullable,
   // populated only on a Finished-Goods-flagged movement line (never by a
   // raw-material line, which has no variant concept at all). Item-type-family
   // validation itself (a document is either entirely raw-material or
   // entirely finished-goods, never mixed) is Phase 1 service-layer work
   // (FGI-014) — this task is the additive schema only.
-  productVariantId    String? @map("product_variant_id") @db.Uuid
+  productVariantId      String? @map("product_variant_id") @db.Uuid
   // The destination side of a TRANSFER — only meaningful for a Finished-
   // Goods-flagged movement (§4.4); a raw-material TRANSFER still has no
   // destination-side location concept, matching warehouseLocationId's own
   // long-standing "source side only" scope for that item family.
   toWarehouseLocationId String? @map("to_warehouse_location_id") @db.Uuid
   // Colour of the raw-material stock moved (2026-10-21); null = "No colour".
-  colorId             String? @map("color_id") @db.Uuid
+  colorId               String? @map("color_id") @db.Uuid
 
   stockMovement       StockMovement      @relation(fields: [stockMovementId], references: [id])
   product             Product            @relation(fields: [productId], references: [id])
@@ -5913,7 +5928,8 @@ model StockMovementItem {
   productVariant      ProductVariant?    @relation(fields: [productVariantId], references: [id])
   toWarehouseLocation WarehouseLocation? @relation("StockMovementItemDestinationLocation", fields: [toWarehouseLocationId], references: [id])
 
-  color               Color?             @relation("StockMovementItemColor", fields: [colorId], references: [id])
+  color Color? @relation("StockMovementItemColor", fields: [colorId], references: [id])
+
   @@index([stockMovementId])
   @@map("stock_movement_items")
 }
@@ -6053,17 +6069,17 @@ model Dispatch {
   createdAt            DateTime        @default(now()) @map("created_at")
   updatedAt            DateTime        @updatedAt @map("updated_at")
 
-  company     Company        @relation(fields: [companyId], references: [id])
-  branch      Branch?        @relation(fields: [branchId], references: [id])
-  salesOrder  SalesOrder     @relation(fields: [salesOrderId], references: [id])
-  customer    Customer       @relation(fields: [customerId], references: [id])
-  warehouse   Warehouse      @relation(fields: [warehouseId], references: [id])
-  requestedBy User           @relation("DispatchRequestedBy", fields: [requestedByUserId], references: [id])
-  forwarder   Forwarder?     @relation(fields: [forwarderId], references: [id], onDelete: SetNull)
-  items       DispatchItem[]
-  cartons     Carton[]
-  productUnits ProductUnit[]
-  returns     DispatchReturn[]
+  company               Company                @relation(fields: [companyId], references: [id])
+  branch                Branch?                @relation(fields: [branchId], references: [id])
+  salesOrder            SalesOrder             @relation(fields: [salesOrderId], references: [id])
+  customer              Customer               @relation(fields: [customerId], references: [id])
+  warehouse             Warehouse              @relation(fields: [warehouseId], references: [id])
+  requestedBy           User                   @relation("DispatchRequestedBy", fields: [requestedByUserId], references: [id])
+  forwarder             Forwarder?             @relation(fields: [forwarderId], references: [id], onDelete: SetNull)
+  items                 DispatchItem[]
+  cartons               Carton[]
+  productUnits          ProductUnit[]
+  returns               DispatchReturn[]
   finishedGoodsReceipts FinishedGoodsReceipt[]
 
   @@unique([companyId, branchId, dispatchNumber])
@@ -6110,10 +6126,10 @@ model DispatchItem {
   sourceLotId             String?              @map("source_lot_id") @db.Uuid
   createdAt               DateTime             @default(now()) @map("created_at")
 
-  dispatch       Dispatch       @relation(fields: [dispatchId], references: [id])
-  salesOrderItem SalesOrderItem @relation(fields: [salesOrderItemId], references: [id])
-  product        Product        @relation(fields: [productId], references: [id])
-  sourceLot      Lot?           @relation(fields: [sourceLotId], references: [id])
+  dispatch       Dispatch                @relation(fields: [dispatchId], references: [id])
+  salesOrderItem SalesOrderItem          @relation(fields: [salesOrderItemId], references: [id])
+  product        Product                 @relation(fields: [productId], references: [id])
+  sourceLot      Lot?                    @relation(fields: [sourceLotId], references: [id])
   cartonItems    CartonItem[]
   pickLines      FinishedGoodsPickLine[]
   productUnits   ProductUnit[]
@@ -6145,11 +6161,11 @@ model FinishedGoodsPickLine {
   pickedByUserId      String   @map("picked_by_user_id") @db.Uuid
   pickedAt            DateTime @default(now()) @map("picked_at")
 
-  company           Company           @relation(fields: [companyId], references: [id])
-  dispatchItem      DispatchItem      @relation(fields: [dispatchItemId], references: [id])
-  productVariant    ProductVariant    @relation(fields: [productVariantId], references: [id])
-  warehouseLocation WarehouseLocation? @relation(fields: [warehouseLocationId], references: [id], onDelete: Restrict)
-  pickedBy          User              @relation("FinishedGoodsPickLinePickedBy", fields: [pickedByUserId], references: [id])
+  company           Company              @relation(fields: [companyId], references: [id])
+  dispatchItem      DispatchItem         @relation(fields: [dispatchItemId], references: [id])
+  productVariant    ProductVariant       @relation(fields: [productVariantId], references: [id])
+  warehouseLocation WarehouseLocation?   @relation(fields: [warehouseLocationId], references: [id], onDelete: Restrict)
+  pickedBy          User                 @relation("FinishedGoodsPickLinePickedBy", fields: [pickedByUserId], references: [id])
   returnItems       DispatchReturnItem[]
 
   @@index([dispatchItemId])
@@ -6172,8 +6188,8 @@ model DispatchReturn {
   returnedByUserId String   @map("returned_by_user_id") @db.Uuid
   createdAt        DateTime @default(now()) @map("created_at")
 
-  dispatch Dispatch             @relation(fields: [dispatchId], references: [id])
-  items    DispatchReturnItem[]
+  dispatch              Dispatch               @relation(fields: [dispatchId], references: [id])
+  items                 DispatchReturnItem[]
   finishedGoodsReceipts FinishedGoodsReceipt[]
 
   @@index([dispatchId])
@@ -6214,8 +6230,8 @@ model Carton {
   totalQuantity Int      @default(0) @map("total_quantity")
   createdAt     DateTime @default(now()) @map("created_at")
 
-  dispatch Dispatch     @relation(fields: [dispatchId], references: [id])
-  items    CartonItem[]
+  dispatch     Dispatch      @relation(fields: [dispatchId], references: [id])
+  items        CartonItem[]
   productUnits ProductUnit[]
 
   @@unique([dispatchId, cartonNumber])
@@ -6305,43 +6321,43 @@ enum ProductUnitStatus {
 }
 
 model ProductUnit {
-  id                 String            @id @default(uuid()) @db.Uuid
-  companyId          String            @map("company_id") @db.Uuid
-  unitCode           String            @map("unit_code")
-  productId          String            @map("product_id") @db.Uuid
-  productVariantId   String            @map("product_variant_id") @db.Uuid
-  productionOrderId  String            @map("production_order_id") @db.Uuid
-  lotId              String            @map("lot_id") @db.Uuid
+  id                String @id @default(uuid()) @db.Uuid
+  companyId         String @map("company_id") @db.Uuid
+  unitCode          String @map("unit_code")
+  productId         String @map("product_id") @db.Uuid
+  productVariantId  String @map("product_variant_id") @db.Uuid
+  productionOrderId String @map("production_order_id") @db.Uuid
+  lotId             String @map("lot_id") @db.Uuid
 
-  salesOrderId       String?           @map("sales_order_id") @db.Uuid
-  salesOrderItemId   String?           @map("sales_order_item_id") @db.Uuid
-  salesOrderLineId   String?           @map("sales_order_line_id") @db.Uuid
+  salesOrderId     String? @map("sales_order_id") @db.Uuid
+  salesOrderItemId String? @map("sales_order_item_id") @db.Uuid
+  salesOrderLineId String? @map("sales_order_line_id") @db.Uuid
 
-  cartonId           String?           @map("carton_id") @db.Uuid
-  dispatchId         String?           @map("dispatch_id") @db.Uuid
-  dispatchItemId     String?           @map("dispatch_item_id") @db.Uuid
+  cartonId       String? @map("carton_id") @db.Uuid
+  dispatchId     String? @map("dispatch_id") @db.Uuid
+  dispatchItemId String? @map("dispatch_item_id") @db.Uuid
 
   status             ProductUnitStatus @default(PACKED)
   currentWarehouseId String?           @map("current_warehouse_id") @db.Uuid
 
-  createdAt          DateTime          @default(now()) @map("created_at")
-  updatedAt          DateTime          @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  company            Company           @relation(fields: [companyId], references: [id])
-  product            Product           @relation(fields: [productId], references: [id])
-  productVariant     ProductVariant    @relation(fields: [productVariantId], references: [id])
-  productionOrder    ProductionOrder   @relation(fields: [productionOrderId], references: [id])
-  lot                Lot               @relation(fields: [lotId], references: [id])
-  salesOrder         SalesOrder?       @relation(fields: [salesOrderId], references: [id])
-  salesOrderItem     SalesOrderItem?   @relation(fields: [salesOrderItemId], references: [id])
-  salesOrderLine     SalesOrderLine?   @relation(fields: [salesOrderLineId], references: [id])
-  carton             Carton?           @relation(fields: [cartonId], references: [id])
-  dispatch           Dispatch?         @relation(fields: [dispatchId], references: [id])
-  dispatchItem       DispatchItem?     @relation(fields: [dispatchItemId], references: [id])
-  warehouse          Warehouse?        @relation(fields: [currentWarehouseId], references: [id])
+  company         Company         @relation(fields: [companyId], references: [id])
+  product         Product         @relation(fields: [productId], references: [id])
+  productVariant  ProductVariant  @relation(fields: [productVariantId], references: [id])
+  productionOrder ProductionOrder @relation(fields: [productionOrderId], references: [id])
+  lot             Lot             @relation(fields: [lotId], references: [id])
+  salesOrder      SalesOrder?     @relation(fields: [salesOrderId], references: [id])
+  salesOrderItem  SalesOrderItem? @relation(fields: [salesOrderItemId], references: [id])
+  salesOrderLine  SalesOrderLine? @relation(fields: [salesOrderLineId], references: [id])
+  carton          Carton?         @relation(fields: [cartonId], references: [id])
+  dispatch        Dispatch?       @relation(fields: [dispatchId], references: [id])
+  dispatchItem    DispatchItem?   @relation(fields: [dispatchItemId], references: [id])
+  warehouse       Warehouse?      @relation(fields: [currentWarehouseId], references: [id])
 
-  events             ProductUnitEvent[]
-  returns            CustomerReturnItem[]
+  events  ProductUnitEvent[]
+  returns CustomerReturnItem[]
 
   @@unique([companyId, unitCode])
   @@index([lotId])
@@ -6365,7 +6381,7 @@ model ProductUnitEvent {
   actorUserId   String?            @map("actor_user_id") @db.Uuid
   createdAt     DateTime           @default(now()) @map("created_at")
 
-  productUnit   ProductUnit        @relation(fields: [productUnitId], references: [id], onDelete: Cascade)
+  productUnit ProductUnit @relation(fields: [productUnitId], references: [id], onDelete: Cascade)
 
   @@index([productUnitId])
   @@map("product_unit_events")
@@ -6405,11 +6421,11 @@ model CustomerReturn {
   createdAt    DateTime             @default(now()) @map("created_at")
   updatedAt    DateTime             @updatedAt @map("updated_at")
 
-  company      Company              @relation(fields: [companyId], references: [id])
-  salesOrder   SalesOrder?          @relation(fields: [salesOrderId], references: [id])
-  customer     Customer             @relation(fields: [customerId], references: [id])
-  receivedBy   User                 @relation("CustomerReturnReceivedBy", fields: [receivedById], references: [id])
-  items        CustomerReturnItem[]
+  company    Company              @relation(fields: [companyId], references: [id])
+  salesOrder SalesOrder?          @relation(fields: [salesOrderId], references: [id])
+  customer   Customer             @relation(fields: [customerId], references: [id])
+  receivedBy User                 @relation("CustomerReturnReceivedBy", fields: [receivedById], references: [id])
+  items      CustomerReturnItem[]
 
   @@unique([companyId, returnNumber])
   @@index([customerId])
@@ -6418,28 +6434,27 @@ model CustomerReturn {
 }
 
 model CustomerReturnItem {
-  id                 String             @id @default(uuid()) @db.Uuid
-  customerReturnId   String             @map("customer_return_id") @db.Uuid
-  productUnitId      String             @map("product_unit_id") @db.Uuid
-  returnReason       String             @map("return_reason")
-  condition          ReturnCondition    @default(GOOD)
-  disposition        ReturnDisposition  @default(RESTOCK)
-  restockWarehouseId String?            @map("restock_warehouse_id") @db.Uuid
-  inspectedAt        DateTime?          @map("inspected_at")
-  inspectedById      String?            @map("inspected_by_id") @db.Uuid
+  id                 String            @id @default(uuid()) @db.Uuid
+  customerReturnId   String            @map("customer_return_id") @db.Uuid
+  productUnitId      String            @map("product_unit_id") @db.Uuid
+  returnReason       String            @map("return_reason")
+  condition          ReturnCondition   @default(GOOD)
+  disposition        ReturnDisposition @default(RESTOCK)
+  restockWarehouseId String?           @map("restock_warehouse_id") @db.Uuid
+  inspectedAt        DateTime?         @map("inspected_at")
+  inspectedById      String?           @map("inspected_by_id") @db.Uuid
   remarks            String?
-  createdAt          DateTime           @default(now()) @map("created_at")
+  createdAt          DateTime          @default(now()) @map("created_at")
 
-  customerReturn     CustomerReturn     @relation(fields: [customerReturnId], references: [id], onDelete: Cascade)
-  productUnit        ProductUnit        @relation(fields: [productUnitId], references: [id])
-  restockWarehouse   Warehouse?         @relation("CustomerReturnRestockWarehouse", fields: [restockWarehouseId], references: [id])
-  inspectedBy        User?              @relation("CustomerReturnItemInspectedBy", fields: [inspectedById], references: [id])
+  customerReturn   CustomerReturn @relation(fields: [customerReturnId], references: [id], onDelete: Cascade)
+  productUnit      ProductUnit    @relation(fields: [productUnitId], references: [id])
+  restockWarehouse Warehouse?     @relation("CustomerReturnRestockWarehouse", fields: [restockWarehouseId], references: [id])
+  inspectedBy      User?          @relation("CustomerReturnItemInspectedBy", fields: [inspectedById], references: [id])
 
   @@index([customerReturnId])
   @@index([productUnitId])
   @@map("customer_return_items")
 }
-
 
 // ─────────────────────────────────────────────────────────────
 // Accounts (Phase 7A — Chart of Accounts, Tax Config, Journal Engine)
@@ -6589,6 +6604,7 @@ model Journal {
   purchaseInvoice           PurchaseInvoice?
   payment                   Payment?
   expense                   Expense?
+  expensePayment            ExpensePayment?
   internalTransfer          InternalTransfer?
   employeeAdvance           EmployeeAdvance?
   employeeAdvanceSettlement EmployeeAdvanceSettlement?
@@ -6919,22 +6935,22 @@ model InvoiceSeries {
 }
 
 model CustomInvoice {
-  id                   String              @id @default(uuid()) @db.Uuid
-  companyId            String              @map("company_id") @db.Uuid
-  branchId             String?             @map("branch_id") @db.Uuid
-  invoiceDate          DateTime            @map("invoice_date") @db.Date
-  invoiceType          CustomInvoiceType   @default(TAX_INVOICE) @map("invoice_type")
-  hasDueDate           Boolean             @default(false) @map("has_due_date")
-  dueDate              DateTime?           @map("due_date") @db.Date
-  invoiceSeriesId      String              @map("invoice_series_id") @db.Uuid
+  id                     String              @id @default(uuid()) @db.Uuid
+  companyId              String              @map("company_id") @db.Uuid
+  branchId               String?             @map("branch_id") @db.Uuid
+  invoiceDate            DateTime            @map("invoice_date") @db.Date
+  invoiceType            CustomInvoiceType   @default(TAX_INVOICE) @map("invoice_type")
+  hasDueDate             Boolean             @default(false) @map("has_due_date")
+  dueDate                DateTime?           @map("due_date") @db.Date
+  invoiceSeriesId        String              @map("invoice_series_id") @db.Uuid
   // Pre-filled from the series' own nextNumber at create time but always
   // user-editable (the reference tool's "Edit" button) — uniqueness is
   // enforced by the DB constraint below, not by the series counter itself,
   // matching this project's own established "external numbering" precedent
   // (Phase 3's Customer/Supplier/... sequential codes: the system suggests,
   // the field stays editable, the unique constraint is the real guard).
-  invoiceNumber        String              @map("invoice_number")
-  customerId           String              @map("customer_id") @db.Uuid
+  invoiceNumber          String              @map("invoice_number")
+  customerId             String              @map("customer_id") @db.Uuid
   // Optional classification of this invoice's revenue against the existing
   // Chart of Accounts (an INCOME-type account) — deliberately reuses this
   // project's own, more rigorous accounting master instead of adding a
@@ -6943,29 +6959,29 @@ model CustomInvoice {
   // bookkeeping ledger; this app already has a real one). Informational
   // only — does not itself post a Journal entry (see the module-level
   // comment above on why Custom Invoice stays outside the ledger).
-  incomeAccountId      String?             @map("income_account_id") @db.Uuid
+  incomeAccountId        String?             @map("income_account_id") @db.Uuid
   // Applied per line at calculation time (discountedPrice = unitPrice * (1 -
   // discount%)), not as a flat subtotal deduction — matches the reference
   // tool's own calculation exactly, confirmed by reading its live calc code
   // rather than guessing from the screenshot alone.
-  discountPercentage   Decimal             @default(0) @map("discount_percentage") @db.Decimal(5, 2)
+  discountPercentage     Decimal             @default(0) @map("discount_percentage") @db.Decimal(5, 2)
   // When true, no line's GST is charged at all (the buyer self-assesses) —
   // matches the reference tool's isRCM behavior exactly (GST forced to 0 on
   // every line, not just hidden from the printed total).
-  isReverseCharge      Boolean             @default(false) @map("is_reverse_charge")
-  placeOfSupplyStateCode String?           @map("place_of_supply_state_code") @db.VarChar(2)
-  isInterState         Boolean?            @map("is_inter_state")
-  cgstAmount           Decimal             @default(0) @map("cgst_amount") @db.Decimal(18, 2)
-  sgstAmount           Decimal             @default(0) @map("sgst_amount") @db.Decimal(18, 2)
-  igstAmount           Decimal             @default(0) @map("igst_amount") @db.Decimal(18, 2)
-  subtotalAmount       Decimal             @default(0) @map("subtotal_amount") @db.Decimal(18, 2)
-  discountAmount       Decimal             @default(0) @map("discount_amount") @db.Decimal(18, 2)
-  taxAmount            Decimal             @default(0) @map("tax_amount") @db.Decimal(18, 2)
-  grandTotal           Decimal             @default(0) @map("grand_total") @db.Decimal(18, 2)
-  advancePaymentTitle  String?             @map("advance_payment_title")
-  advancePaymentAmount Decimal?            @map("advance_payment_amount") @db.Decimal(18, 2)
-  payableAmountTitle   String?             @map("payable_amount_title")
-  payableAmountValue   Decimal?            @map("payable_amount_value") @db.Decimal(18, 2)
+  isReverseCharge        Boolean             @default(false) @map("is_reverse_charge")
+  placeOfSupplyStateCode String?             @map("place_of_supply_state_code") @db.VarChar(2)
+  isInterState           Boolean?            @map("is_inter_state")
+  cgstAmount             Decimal             @default(0) @map("cgst_amount") @db.Decimal(18, 2)
+  sgstAmount             Decimal             @default(0) @map("sgst_amount") @db.Decimal(18, 2)
+  igstAmount             Decimal             @default(0) @map("igst_amount") @db.Decimal(18, 2)
+  subtotalAmount         Decimal             @default(0) @map("subtotal_amount") @db.Decimal(18, 2)
+  discountAmount         Decimal             @default(0) @map("discount_amount") @db.Decimal(18, 2)
+  taxAmount              Decimal             @default(0) @map("tax_amount") @db.Decimal(18, 2)
+  grandTotal             Decimal             @default(0) @map("grand_total") @db.Decimal(18, 2)
+  advancePaymentTitle    String?             @map("advance_payment_title")
+  advancePaymentAmount   Decimal?            @map("advance_payment_amount") @db.Decimal(18, 2)
+  payableAmountTitle     String?             @map("payable_amount_title")
+  payableAmountValue     Decimal?            @map("payable_amount_value") @db.Decimal(18, 2)
   // grandTotal - advancePaymentAmount - payableAmountValue — stored (not
   // computed on read) purely so the list page can sort/filter on it without
   // a per-row calc, matching PurchaseRequest.estimatedTotalAmount's own
@@ -6980,21 +6996,21 @@ model CustomInvoice {
   // page can sort/filter on it without a per-row calc, matching
   // PurchaseRequest.estimatedTotalAmount's own stored-rollup precedent;
   // always recomputed server-side, never trusted from the client.
-  balanceDue           Decimal             @default(0) @map("balance_due") @db.Decimal(18, 2)
+  balanceDue             Decimal             @default(0) @map("balance_due") @db.Decimal(18, 2)
   // Guarded accumulators (same idiom as SalesInvoice.paidAmount /
   // PurchaseOrderItem.receivedQuantity) — paidAmount capped at
   // (grandTotal - creditedAmount), creditedAmount capped at grandTotal.
-  paidAmount           Decimal             @default(0) @map("paid_amount") @db.Decimal(18, 2)
-  creditedAmount       Decimal             @default(0) @map("credited_amount") @db.Decimal(18, 2)
+  paidAmount             Decimal             @default(0) @map("paid_amount") @db.Decimal(18, 2)
+  creditedAmount         Decimal             @default(0) @map("credited_amount") @db.Decimal(18, 2)
   // Free-form list, not a single field — matches the reference tool's own
   // "+ Add Note" repeatable list (see CustomInvoiceNote below), same
   // reasoning as SampleComment being its own table rather than one big text
   // blob.
-  termsAndConditions   String?             @map("terms_and_conditions")
-  status               CustomInvoiceStatus @default(DRAFT)
-  createdByUserId      String              @map("created_by_user_id") @db.Uuid
-  createdAt            DateTime            @default(now()) @map("created_at")
-  updatedAt            DateTime            @updatedAt @map("updated_at")
+  termsAndConditions     String?             @map("terms_and_conditions")
+  status                 CustomInvoiceStatus @default(DRAFT)
+  createdByUserId        String              @map("created_by_user_id") @db.Uuid
+  createdAt              DateTime            @default(now()) @map("created_at")
+  updatedAt              DateTime            @updatedAt @map("updated_at")
 
   company       Company                   @relation(fields: [companyId], references: [id])
   branch        Branch?                   @relation(fields: [branchId], references: [id])
@@ -7301,6 +7317,8 @@ enum ExpenseStatus {
 enum ExpenseApprovalStatus {
   PENDING_APPROVAL
   APPROVED
+  // Some, not all, of the payable amount has been paid (2026-10-23).
+  PARTIALLY_PAID
   REJECTED
   PAID
   CANCELLED
@@ -7315,7 +7333,9 @@ model Expense {
   // Service-validated as accountType === EXPENSE, code !== "COGS" (COGS is a
   // Purchase-Invoice-only control account, never user-selectable — see
   // postPurchaseInvoice's own hardcoded findByCode lookup), and isActive.
-  accountId        String                @map("account_id") @db.Uuid
+  // Null only for a BILL_UPLOAD expense the accountant hasn't classified
+  // yet — approval requires it (2026-10-23).
+  accountId        String?               @map("account_id") @db.Uuid
   // Pure reference field — no business logic gated on it, unlike Payment's
   // customerId/supplierId (which are direction-required).
   supplierId       String?               @map("supplier_id") @db.Uuid
@@ -7333,9 +7353,16 @@ model Expense {
   // the amount actually paid out once TDS is withheld.
   tdsPercentage    Decimal?              @map("tds_percentage") @db.Decimal(5, 2)
   tdsAmount        Decimal               @default(0) @map("tds_amount") @db.Decimal(18, 2)
-  paymentTypeId    String                @map("payment_type_id") @db.Uuid
+  // Legacy one-shot payment fields (expenses paid before 2026-10-23). New
+  // expenses are paid through ExpensePayment rows and leave these null.
+  paymentTypeId    String?               @map("payment_type_id") @db.Uuid
   bankAccountId    String?               @map("bank_account_id") @db.Uuid
   referenceNumber  String?               @map("reference_number")
+  // Sum of ExpensePayment amounts. Payable = totalAmount - tdsAmount.
+  paidAmount       Decimal               @default(0) @map("paid_amount") @db.Decimal(18, 2)
+  // STANDARD = full details entered; BILL_UPLOAD = only bill + amount uploaded,
+  // classified by the accountant before approval.
+  source           ExpenseSource         @default(STANDARD)
   // Always company.baseCurrencyCode, no exchangeRate/baseAmount split —
   // matches Payment's own simplification (multi-currency UI deferred
   // project-wide).
@@ -7347,7 +7374,8 @@ model Expense {
   rejectedAt       DateTime?             @map("rejected_at")
   rejectedByUserId String?               @map("rejected_by_user_id") @db.Uuid
   rejectionReason  String?               @map("rejection_reason")
-  // Set only at pay time (from APPROVED) — the settlement Journal this expense generated.
+  // Legacy: the one-shot settlement journal. Since 2026-10-23: the accrual
+  // journal (Dr expense / Cr TDS-PAY / Cr EXP-PAY), posted at the first payment.
   journalId        String?               @unique @map("journal_id") @db.Uuid
   postedAt         DateTime?             @map("posted_at")
   postedByUserId   String?               @map("posted_by_user_id") @db.Uuid
@@ -7357,22 +7385,63 @@ model Expense {
   createdAt        DateTime              @default(now()) @map("created_at")
   updatedAt        DateTime              @updatedAt @map("updated_at")
 
-  company     Company        @relation(fields: [companyId], references: [id])
-  branch      Branch?        @relation(fields: [branchId], references: [id])
-  account     ChartOfAccount @relation(fields: [accountId], references: [id])
-  supplier    Supplier?      @relation(fields: [supplierId], references: [id])
-  taxRate     TaxRate?       @relation(fields: [taxRateId], references: [id])
-  paymentType PaymentType    @relation(fields: [paymentTypeId], references: [id])
-  bankAccount BankAccount?   @relation(fields: [bankAccountId], references: [id])
-  journal     Journal?       @relation(fields: [journalId], references: [id])
-  postedBy    User?          @relation("ExpensePostedBy", fields: [postedByUserId], references: [id])
-  createdBy   User           @relation("ExpenseCreatedBy", fields: [createdByUserId], references: [id])
-  approvedBy  User?          @relation("ExpenseApprovedBy", fields: [approvedByUserId], references: [id])
-  rejectedBy  User?          @relation("ExpenseRejectedBy", fields: [rejectedByUserId], references: [id])
+  company     Company          @relation(fields: [companyId], references: [id])
+  branch      Branch?          @relation(fields: [branchId], references: [id])
+  account     ChartOfAccount?  @relation(fields: [accountId], references: [id])
+  supplier    Supplier?        @relation(fields: [supplierId], references: [id])
+  taxRate     TaxRate?         @relation(fields: [taxRateId], references: [id])
+  paymentType PaymentType?     @relation(fields: [paymentTypeId], references: [id])
+  bankAccount BankAccount?     @relation(fields: [bankAccountId], references: [id])
+  journal     Journal?         @relation(fields: [journalId], references: [id])
+  postedBy    User?            @relation("ExpensePostedBy", fields: [postedByUserId], references: [id])
+  createdBy   User             @relation("ExpenseCreatedBy", fields: [createdByUserId], references: [id])
+  approvedBy  User?            @relation("ExpenseApprovedBy", fields: [approvedByUserId], references: [id])
+  rejectedBy  User?            @relation("ExpenseRejectedBy", fields: [rejectedByUserId], references: [id])
+  payments    ExpensePayment[]
 
   @@unique([companyId, branchId, expenseNumber])
   @@unique([companyId, idempotencyKey])
   @@map("expenses")
+}
+
+enum ExpenseSource {
+  STANDARD
+  BILL_UPLOAD
+}
+
+// One payment against an Expense (2026-10-23). An expense can be paid in
+// several parts; each part has its own journal (Dr EXP-PAY / Cr CASH-or-BANK)
+// and its own attachments/voice notes (RelatedModule.EXPENSE_PAYMENT).
+// Never edited or deleted.
+model ExpensePayment {
+  id              String   @id @default(uuid()) @db.Uuid
+  companyId       String   @map("company_id") @db.Uuid
+  branchId        String?  @map("branch_id") @db.Uuid
+  expenseId       String   @map("expense_id") @db.Uuid
+  paymentNumber   String   @map("payment_number")
+  paymentDate     DateTime @map("payment_date") @db.Date
+  amount          Decimal  @map("amount") @db.Decimal(18, 2)
+  paymentTypeId   String   @map("payment_type_id") @db.Uuid
+  bankAccountId   String?  @map("bank_account_id") @db.Uuid
+  referenceNumber String?  @map("reference_number")
+  notes           String?
+  journalId       String   @unique @map("journal_id") @db.Uuid
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  idempotencyKey  String?  @map("idempotency_key")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  company     Company      @relation(fields: [companyId], references: [id])
+  branch      Branch?      @relation(fields: [branchId], references: [id])
+  expense     Expense      @relation(fields: [expenseId], references: [id])
+  paymentType PaymentType  @relation(fields: [paymentTypeId], references: [id])
+  bankAccount BankAccount? @relation(fields: [bankAccountId], references: [id])
+  journal     Journal      @relation(fields: [journalId], references: [id])
+  createdBy   User         @relation("ExpensePaymentCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@unique([companyId, branchId, paymentNumber])
+  @@unique([companyId, idempotencyKey])
+  @@index([expenseId])
+  @@map("expense_payments")
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -9454,6 +9523,11 @@ enum RelatedModule {
   LEAVE_REQUEST
   ATTENDANCE_CORRECTION
   EMPLOYEE_ADVANCE_SETTLEMENT
+  // Expense module Phase 1 (2026-10-23): attachments (files + voice notes) on
+  // an expense payment, an employee advance (imprest) and an internal transfer.
+  EXPENSE_PAYMENT
+  EMPLOYEE_ADVANCE
+  INTERNAL_TRANSFER
   // The Bulk Master Data Import portal (Super Admin only) -- used as the
   // referenceModule for an Opening Stock row's ledger entry (referencing
   // the ImportBatch that created it, not a real document of any other
@@ -11375,6 +11449,7 @@ enum DocumentType {
   INTERNAL_TRANSFER
   EMPLOYEE_ADVANCE
   EMPLOYEE_ADVANCE_SETTLEMENT
+  EXPENSE_PAYMENT
   AI_GARMENT_PROJECT
   AI_DESIGNER_PROJECT
   REPLICATE_DESIGN_PROJECT
@@ -12163,8 +12238,8 @@ model AiDesignerProductDesignAttribute {
  * file, then to the clipart icon, in that order.
  */
 model AiDesignerOptionReferenceImage {
-  id           String @id @default(uuid()) @db.Uuid
-  companyId    String @map("company_id") @db.Uuid
+  id           String                       @id @default(uuid()) @db.Uuid
+  companyId    String                       @map("company_id") @db.Uuid
   variant      AiDesignerOptionImageVariant @default(PHOTO)
   optionValue  String                       @map("option_value")
   attachmentId String                       @map("attachment_id")
@@ -13413,21 +13488,21 @@ model BulkJob {
 }
 
 model BulkJobItem {
-  id           String            @id @default(uuid()) @db.Uuid
-  companyId    String            @map("company_id") @db.Uuid
-  jobId        String            @map("job_id") @db.Uuid
-  sequence     Int
-  entityId     String            @map("entity_id") @db.Uuid
-  status       BulkJobItemStatus @default(PENDING)
-  attempts     Int               @default(0)
+  id          String            @id @default(uuid()) @db.Uuid
+  companyId   String            @map("company_id") @db.Uuid
+  jobId       String            @map("job_id") @db.Uuid
+  sequence    Int
+  entityId    String            @map("entity_id") @db.Uuid
+  status      BulkJobItemStatus @default(PENDING)
+  attempts    Int               @default(0)
   // Safe, user-facing outcome ("Already in this status", "Owner is inactive").
-  message      String?
-  errorCode    String?           @map("error_code")
+  message     String?
+  errorCode   String?           @map("error_code")
   // Per-item output (e.g. the exported row until the file is written; the message id sent).
-  result       Json?
-  processedAt  DateTime?         @map("processed_at")
-  createdAt    DateTime          @default(now()) @map("created_at")
-  updatedAt    DateTime          @updatedAt @map("updated_at")
+  result      Json?
+  processedAt DateTime?         @map("processed_at")
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
 
   company Company @relation(fields: [companyId], references: [id])
   job     BulkJob @relation(fields: [jobId], references: [id], onDelete: Cascade)

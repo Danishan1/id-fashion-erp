@@ -6,6 +6,7 @@ import { FormField, textInputClass } from "@/components/ui/FormField";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { formatCurrency } from "@/lib/currency";
 import { todayIsoDate } from "@/lib/date";
+import { StagedFilesPicker, uploadFilesToRecord } from "@/components/ui/AttachmentsPanel";
 
 interface ChartOfAccountOption {
   id: string;
@@ -26,29 +27,15 @@ interface TaxRateOption {
   ratePercentage: string;
 }
 
-interface PaymentTypeOption {
-  id: string;
-  name: string;
-  type: string;
-}
-
-interface BankAccountOption {
-  id: string;
-  name: string;
-  bankName: string;
-}
-
 interface InitialExpense {
   id: string;
   expenseDate: string;
-  accountId: string;
+  accountId: string | null;
   supplierId: string | null;
   description: string;
   amount: string;
   taxRateId: string | null;
   tdsPercentage: string | null;
-  paymentTypeId: string;
-  bankAccountId: string | null;
   referenceNumber: string | null;
 }
 
@@ -66,8 +53,6 @@ export function ExpenseForm({ initialExpense, onSuccess, onCancel }: ExpenseForm
   const [accounts, setAccounts] = useState<ChartOfAccountOption[]>([]);
   const [suppliers, setSuppliers] = useState<SupplierOption[]>([]);
   const [taxRates, setTaxRates] = useState<TaxRateOption[]>([]);
-  const [paymentTypes, setPaymentTypes] = useState<PaymentTypeOption[]>([]);
-  const [bankAccounts, setBankAccounts] = useState<BankAccountOption[]>([]);
 
   const [expenseDate, setExpenseDate] = useState(initialExpense?.expenseDate.slice(0, 10) ?? todayIsoDate());
   const [accountId, setAccountId] = useState(initialExpense?.accountId ?? "");
@@ -76,9 +61,10 @@ export function ExpenseForm({ initialExpense, onSuccess, onCancel }: ExpenseForm
   const [amount, setAmount] = useState(initialExpense?.amount ?? "");
   const [taxRateId, setTaxRateId] = useState(initialExpense?.taxRateId ?? "");
   const [tdsPercentage, setTdsPercentage] = useState(initialExpense?.tdsPercentage ?? "");
-  const [paymentTypeId, setPaymentTypeId] = useState(initialExpense?.paymentTypeId ?? "");
-  const [bankAccountId, setBankAccountId] = useState(initialExpense?.bankAccountId ?? "");
   const [referenceNumber, setReferenceNumber] = useState(initialExpense?.referenceNumber ?? "");
+  // Bills/photos/voice notes picked before saving — uploaded right after the
+  // expense is created (create mode only; the detail page manages them after).
+  const [stagedFiles, setStagedFiles] = useState<File[]>([]);
 
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -106,17 +92,8 @@ export function ExpenseForm({ initialExpense, onSuccess, onCancel }: ExpenseForm
       .then((res) => res.json())
       .then((body) => setTaxRates(body.data ?? []))
       .catch(() => {});
-    fetch("/api/v1/payment-types")
-      .then((res) => res.json())
-      .then((body) => setPaymentTypes(body.data ?? []))
-      .catch(() => {});
-    fetch("/api/v1/bank-accounts")
-      .then((res) => res.json())
-      .then((body) => setBankAccounts(body.data ?? []))
-      .catch(() => {});
   }, []);
 
-  const selectedPaymentType = paymentTypes.find((t) => t.id === paymentTypeId);
   const selectedTaxRate = taxRates.find((t) => t.id === taxRateId);
 
   const amountNum = Number(amount) || 0;
@@ -139,8 +116,6 @@ export function ExpenseForm({ initialExpense, onSuccess, onCancel }: ExpenseForm
       amount: amountNum,
       taxRateId: taxRateId || undefined,
       tdsPercentage: tdsPercentage ? Number(tdsPercentage) : undefined,
-      paymentTypeId,
-      bankAccountId: bankAccountId || undefined,
       referenceNumber: referenceNumber || undefined,
       ...(isEditMode ? {} : { idempotencyKey }),
     };
@@ -159,6 +134,16 @@ export function ExpenseForm({ initialExpense, onSuccess, onCancel }: ExpenseForm
       }
 
       const body = await res.json();
+      if (!isEditMode && stagedFiles.length > 0) {
+        try {
+          await uploadFilesToRecord("expense", body.data.id, stagedFiles);
+        } catch (uploadErr) {
+          // The expense exists — open it so the files can be added there.
+          setError(uploadErr instanceof Error ? uploadErr.message : "Files could not be uploaded.");
+          router.push(`/accounts/expenses/${body.data.id}`);
+          return;
+        }
+      }
       if (onSuccess) {
         onSuccess();
       } else {
@@ -254,44 +239,24 @@ export function ExpenseForm({ initialExpense, onSuccess, onCancel }: ExpenseForm
         </FormField>
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
-        <FormField label="Payment Type" htmlFor="paymentTypeId" required>
-          <select
-            id="paymentTypeId"
-            required
-            value={paymentTypeId}
-            onChange={(e) => setPaymentTypeId(e.target.value)}
-            className={textInputClass()}
-          >
-            <option value="">— Select —</option>
-            {paymentTypes.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
-          </select>
+      <FormField label="Bill / Reference No. (optional)" htmlFor="referenceNumber">
+        <input
+          id="referenceNumber"
+          value={referenceNumber}
+          onChange={(e) => setReferenceNumber(e.target.value)}
+          className={textInputClass()}
+        />
+      </FormField>
+
+      {!isEditMode && (
+        <FormField label="Bills, photos & voice notes (optional)" htmlFor="stagedFiles">
+          <StagedFilesPicker files={stagedFiles} onChange={setStagedFiles} />
         </FormField>
-        {selectedPaymentType && selectedPaymentType.type !== "CASH" && (
-          <FormField label="Bank Account" htmlFor="bankAccountId">
-            <select id="bankAccountId" value={bankAccountId} onChange={(e) => setBankAccountId(e.target.value)} className={textInputClass()}>
-              <option value="">— None —</option>
-              {bankAccounts.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name} — {b.bankName}
-                </option>
-              ))}
-            </select>
-          </FormField>
-        )}
-        <FormField label="Reference No. (cheque/UTR)" htmlFor="referenceNumber">
-          <input
-            id="referenceNumber"
-            value={referenceNumber}
-            onChange={(e) => setReferenceNumber(e.target.value)}
-            className={textInputClass()}
-          />
-        </FormField>
-      </div>
+      )}
+
+      <p className="text-xs text-zinc-500 dark:text-zinc-400">
+        How it is paid (cash/bank, part or full) is recorded later on the expense, after it is approved.
+      </p>
 
       <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-sm dark:border-zinc-800 dark:bg-zinc-900">
         <p>Amount: ₹{formatCurrency(amountNum)}</p>

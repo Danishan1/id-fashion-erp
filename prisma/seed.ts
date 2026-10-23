@@ -626,6 +626,7 @@ async function main() {
       { companyId, code: "GST-ITC", name: "GST Input Tax Credit", accountType: "ASSET", isSystemAccount: true },
       { companyId, code: "AP", name: "Accounts Payable", accountType: "LIABILITY", isSystemAccount: true },
       { companyId, code: "GST-PAY", name: "GST Payable", accountType: "LIABILITY", isSystemAccount: true },
+      { companyId, code: "EXP-PAY", name: "Expenses Payable", accountType: "LIABILITY", isSystemAccount: true },
       { companyId, code: "RETAINED-EARN", name: "Retained Earnings", accountType: "EQUITY" },
       { companyId, code: "SALES-REV", name: "Sales Revenue", accountType: "INCOME" },
       { companyId, code: "COGS", name: "Purchases / Cost of Goods Sold", accountType: "EXPENSE" },

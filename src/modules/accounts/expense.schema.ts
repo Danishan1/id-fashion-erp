@@ -13,8 +13,6 @@ export const expenseSchema = z.object({
   // `amount` (not the GST-inclusive total), matching standard Indian TDS
   // practice. Optional — most expenses have none.
   tdsPercentage: z.coerce.number().min(0, "TDS% cannot be negative").max(100, "TDS% cannot exceed 100%").optional(),
-  paymentTypeId: z.string().uuid("Payment type is required"),
-  bankAccountId: z.string().uuid().optional().or(z.literal("")),
   referenceNumber: z.string().max(100).optional().or(z.literal("")),
   // Optional, client-generated — see CF-5 in HARDENING_BRANCH_INDEPENDENT_AUDIT.md.
   idempotencyKey: z.string().min(1).max(200).optional(),
@@ -35,3 +33,31 @@ export const rejectExpenseSchema = z.object({
 });
 
 export type RejectExpenseInput = z.infer<typeof rejectExpenseSchema>;
+
+// One payment (full or part) against an approved expense (2026-10-23). The
+// paid-from account moves here from the expense itself: each part payment can
+// come from a different payment type / bank account.
+export const expensePaymentSchema = z.object({
+  paymentDate: z.string().min(1, "Payment date is required"),
+  amount: z.coerce.number().positive("Amount must be greater than 0"),
+  paymentTypeId: z.string().uuid("Payment type is required"),
+  bankAccountId: z.string().uuid().optional().or(z.literal("")),
+  referenceNumber: z.string().max(100).optional().or(z.literal("")),
+  notes: z.string().max(1000).optional().or(z.literal("")),
+  idempotencyKey: z.string().min(1).max(200).optional(),
+});
+
+export type ExpensePaymentInput = z.infer<typeof expensePaymentSchema>;
+
+// "Upload Bill" — the user only uploads the bill and states the amount; the
+// accountant fills in the expense account (via Edit) before approving.
+export const billUploadExpenseSchema = z.object({
+  expenseDate: z.string().min(1, "Bill date is required"),
+  amount: z.coerce.number().positive("Amount must be greater than 0"),
+  description: z.string().min(1, "Description is required").max(500),
+  supplierId: z.string().uuid().optional().or(z.literal("")),
+  referenceNumber: z.string().max(100).optional().or(z.literal("")),
+  idempotencyKey: z.string().min(1).max(200).optional(),
+});
+
+export type BillUploadExpenseInput = z.infer<typeof billUploadExpenseSchema>;

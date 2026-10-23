@@ -19,7 +19,45 @@ const ALLOWED_MIME_TYPES = new Set([
   "application/msword",
   "application/vnd.ms-excel",
   "text/csv",
+  // Voice notes (2026-10-23) — what browsers' MediaRecorder produces
+  // (Chrome/Firefox: webm/ogg, Safari: mp4) plus common phone recordings.
+  "audio/webm",
+  "audio/ogg",
+  "audio/mpeg",
+  "audio/mp4",
+  "audio/x-m4a",
+  "audio/wav",
+  "audio/x-wav",
+  "audio/aac",
 ]);
+
+// Audio containers are fingerprinted by their container, not by what is
+// inside: a voice-only WebM is reported as video/webm, an .m4a as video/mp4 or
+// audio/x-m4a, a .wav as audio/vnd.wave, and so on. These groups say which
+// declared and detected types are the same real format.
+const CONTAINER_FAMILIES: string[][] = [
+  ["audio/webm", "video/webm"],
+  ["audio/ogg", "video/ogg", "audio/opus"],
+  ["audio/mp4", "audio/x-m4a", "audio/m4a", "video/mp4"],
+  ["audio/wav", "audio/x-wav", "audio/wave", "audio/vnd.wave"],
+  ["audio/mpeg", "audio/mp3"],
+  ["audio/aac", "audio/x-aac"],
+];
+
+function sameContainer(declared: string, detected: string): boolean {
+  return CONTAINER_FAMILIES.some((family) => family.includes(declared) && family.includes(detected));
+}
+
+/** "audio/webm;codecs=opus" -> "audio/webm". The browser adds codec
+ * parameters to recorded audio; only the base type is checked and stored. */
+export function normalizeMimeType(mimeType: string): string {
+  return mimeType.split(";")[0].trim().toLowerCase();
+}
+
+/** True for a stored attachment that should play inline as audio. */
+export function isAudioMimeType(mimeType: string): boolean {
+  return normalizeMimeType(mimeType).startsWith("audio/");
+}
 
 const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024; // 20 MB
 
@@ -69,8 +107,9 @@ interface StoredFile {
 export async function saveFile(
   buffer: Buffer,
   originalFileName: string,
-  mimeType: string
+  declaredMimeType: string
 ): Promise<StoredFile> {
+  const mimeType = normalizeMimeType(declaredMimeType);
   if (!ALLOWED_MIME_TYPES.has(mimeType)) {
     throw new UnsupportedFileTypeError(`File type "${mimeType}" is not allowed.`);
   }
@@ -98,7 +137,8 @@ export async function saveFile(
     }
   } else {
     const isLegacyOfficeMatch = LEGACY_OFFICE_CFB_TYPES.has(mimeType) && detected.mime === CFB_MIME;
-    if (detected.mime !== mimeType && !isLegacyOfficeMatch) {
+    const detectedMime = normalizeMimeType(detected.mime);
+    if (detectedMime !== mimeType && !isLegacyOfficeMatch && !sameContainer(mimeType, detectedMime)) {
       throw new UnsupportedFileTypeError(
         `The file's actual content ("${detected.mime}") does not match its declared type ("${mimeType}").`
       );

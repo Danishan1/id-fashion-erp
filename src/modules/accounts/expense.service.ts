@@ -8,9 +8,10 @@ import { branchScopeWhere } from "@/lib/branch-access";
 import type { Prisma } from "@prisma/client";
 import { SupplierRepository } from "@/modules/suppliers/supplier.repository";
 import { FinanceConfigRepository } from "@/modules/finance-config/finance-config.repository";
-import type { ExpenseInput } from "./expense.schema";
+import { randomUUID } from "node:crypto";
+import type { BillUploadExpenseInput, ExpenseInput, ExpensePaymentInput } from "./expense.schema";
 import { ExpenseApprovalStatus } from "@prisma/client";
-import { ExpenseRepository, CompanyRepository } from "./expense.repository";
+import { ExpenseRepository, ExpensePaymentRepository, CompanyRepository } from "./expense.repository";
 import { ChartOfAccountRepository } from "./chart-of-account.repository";
 import { assertValidExpenseAccount } from "./chart-of-account.service";
 import { TaxRateRepository } from "./tax-config.repository";
@@ -36,8 +37,6 @@ interface BuiltExpenseFields {
   totalAmount: number;
   tdsPercentage: number | null;
   tdsAmount: number;
-  paymentTypeId: string;
-  bankAccountId: string | null;
 }
 
 async function buildExpenseFields(companyId: string, input: ExpenseInput): Promise<BuiltExpenseFields> {
@@ -46,18 +45,6 @@ async function buildExpenseFields(companyId: string, input: ExpenseInput): Promi
   if (input.supplierId) {
     const supplier = await SupplierRepository.findById(companyId, input.supplierId);
     if (!supplier) throw new BusinessRuleError("NOT_FOUND", "Supplier not found.", { id: input.supplierId });
-  }
-
-  const paymentType = await FinanceConfigRepository.paymentType.findFirst({
-    where: { id: input.paymentTypeId, companyId },
-  });
-  if (!paymentType) throw new BusinessRuleError("NOT_FOUND", "Payment type not found.", { id: input.paymentTypeId });
-
-  if (input.bankAccountId) {
-    const bankAccount = await FinanceConfigRepository.bankAccount.findFirst({
-      where: { id: input.bankAccountId, companyId },
-    });
-    if (!bankAccount) throw new BusinessRuleError("NOT_FOUND", "Bank account not found.", { id: input.bankAccountId });
   }
 
   let taxPercentage: number | null = null;
@@ -84,8 +71,6 @@ async function buildExpenseFields(companyId: string, input: ExpenseInput): Promi
     totalAmount: round2(amount + taxAmount),
     tdsPercentage,
     tdsAmount,
-    paymentTypeId: input.paymentTypeId,
-    bankAccountId: input.bankAccountId || null,
   };
 }
 
@@ -223,13 +208,21 @@ export async function updateExpense(actor: ActorContext, id: string, input: Expe
  * no Journal, just a status flip + approvedAt/approvedByUserId. Self-
  * approval-guarded via "approve" (a creator can't approve their own
  * expense) — the same checkpoint every other Approve action in this app
- * uses. Paying is a separate, later action (postExpense, gated on "post").
+ * uses. Paying is a separate, later action (recordExpensePayment, gated on "post").
  */
 export async function approveExpense(actor: ActorContext, id: string) {
   const expense = await ExpenseRepository.findAnyById(actor.companyId, id);
   if (!expense) throw new BusinessRuleError("NOT_FOUND", "Expense not found.", { id });
 
   await PermissionService.assert(actor.userId, "expenses", "approve", { createdBy: expense.createdByUserId });
+
+  if (!expense.accountId) {
+    throw new BusinessRuleError(
+      "VALIDATION_ERROR",
+      "Set the expense account (Edit the expense) before approving it.",
+      { field: "accountId" }
+    );
+  }
 
   const { count } = await ExpenseRepository.updateStatusConditional(id, "PENDING_APPROVAL", {
     status: "APPROVED",
@@ -301,48 +294,101 @@ export async function rejectExpense(actor: ActorContext, id: string, rejectionRe
   return updated;
 }
 
+const AMOUNT_EPSILON = 0.005;
+const PAYABLE_STATUSES: ExpenseApprovalStatus[] = ["APPROVED", "PARTIALLY_PAID"];
+
+/** What is still owed on an expense: totalAmount - TDS withheld - already paid. */
+export function expenseRemainingAmount(expense: { totalAmount: unknown; tdsAmount: unknown; paidAmount: unknown }) {
+  const payable = round2(Number(expense.totalAmount) - Number(expense.tdsAmount));
+  return round2(payable - Number(expense.paidAmount));
+}
+
+/** Expenses Payable — the liability an expense sits in between approval and
+ * full payment. Created on first use for companies seeded before it existed. */
+async function ensureExpensesPayableAccount(companyId: string) {
+  return prisma.chartOfAccount.upsert({
+    where: { companyId_code: { companyId, code: "EXP-PAY" } },
+    update: {},
+    create: { companyId, code: "EXP-PAY", name: "Expenses Payable", accountType: "LIABILITY", isSystemAccount: true },
+  });
+}
+
 /**
- * APPROVED -> PAID. The Accountant-pays step — self-approval-guarded via
- * "post" (a distinct verb from the Admin's "approve" above, so the two
- * checkpoints are independently guarded: the creator can't approve their
- * own expense, and separately can't pay it either unless they're
- * SUPER_ADMIN). One transaction: resolves Cash/Bank by paymentType.type
- * (never PaymentType.code — same anti-trap as Payment), resolves GST Input
- * Tax Credit by code if taxAmount > 0, builds journal lines with a DYNAMIC
- * incrementing line number (Purchase Invoice's pattern — NOT Payment's
- * hardcoded literals, which would collide once a tax line is inserted
- * between the expense account line and the cash/bank line), creates+auto-
- * posts a Journal via postJournalCore, then a guarded conditional flip of
- * this Expense.
+ * Pays an APPROVED / PARTIALLY_PAID expense, fully or in part (2026-10-23).
+ * Repeat payments sit on the same expense number, each with its own
+ * ExpensePayment row, number (EXPP-...) and journal.
  *
- * No reversal/correction path exists this slice (journal.service.ts's
- * reverseJournal() blocks EXPENSE-sourced journals) — a posting mistake
- * requires a manual adjusting journal entry, not a "reverse the linked
- * journal" workaround.
+ * Accounting: the first payment also posts the expense's accrual journal
+ * (Dr expense account [+ Dr GST-ITC] / Cr TDS-PAY / Cr EXP-PAY for the net
+ * payable). Every payment posts Dr EXP-PAY / Cr CASH-or-BANK. Cash vs Bank
+ * follows paymentType.type, never its code — same rule as Payment.
+ *
+ * Gated on "post" with the creator self-guard — the same checkpoint the old
+ * one-shot "Pay" used. Neither journal can be reversed (journal.service's
+ * reverseJournal() blocks EXPENSE and EXPENSE_PAYMENT sources).
  */
-export async function postExpense(actor: ActorContext, id: string) {
-  const expense = await ExpenseRepository.findByIdWithDetails(actor.companyId, id);
-  if (!expense) throw new BusinessRuleError("NOT_FOUND", "Expense not found.", { id });
+export async function recordExpensePayment(actor: ActorContext, id: string, input: ExpensePaymentInput) {
+  if (input.idempotencyKey) {
+    const existing = await ExpensePaymentRepository.findByIdempotencyKey(actor.companyId, input.idempotencyKey);
+    if (existing) {
+      if (existing.expenseId !== id) {
+        throw new BusinessRuleError("VALIDATION_ERROR", "This payment key was already used for a different expense.", {});
+      }
+      return getExpenseById(actor, id);
+    }
+  }
+
+  const expense = await getExpenseById(actor, id);
 
   await PermissionService.assert(actor.userId, "expenses", "post", { createdBy: expense.createdByUserId });
 
-  if (expense.status !== "APPROVED") {
-    throw new BusinessRuleError("INVALID_STATE_TRANSITION", `Cannot pay an expense in "${expense.status}" status — it must be Approved first.`, {
-      currentStatus: expense.status,
+  if (!PAYABLE_STATUSES.includes(expense.status)) {
+    throw new BusinessRuleError(
+      "INVALID_STATE_TRANSITION",
+      `Cannot pay an expense in "${expense.status}" status — it must be Approved first.`,
+      { currentStatus: expense.status }
+    );
+  }
+  const expenseAccount = expense.account;
+  if (!expenseAccount) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "Set the expense account (Edit the expense) before paying it.", {
+      field: "accountId",
     });
   }
-
-  if (!expense.account.isActive) {
-    throw new BusinessRuleError("VALIDATION_ERROR", `"${expense.account.name}" is no longer active.`, {});
+  if (!expense.journalId && !expenseAccount.isActive) {
+    throw new BusinessRuleError("VALIDATION_ERROR", `"${expenseAccount.name}" is no longer active.`, {});
   }
 
-  const cashOrBankAccountCode = expense.paymentType.type === "CASH" ? "CASH" : "BANK";
+  const amount = round2(input.amount);
+  const remaining = expenseRemainingAmount(expense);
+  if (amount > remaining + AMOUNT_EPSILON) {
+    throw new BusinessRuleError(
+      "OVER_PAYMENT_NOT_ALLOWED",
+      `Payment of ${amount.toFixed(2)} is more than the ${remaining.toFixed(2)} still to pay on ${expense.expenseNumber}.`,
+      { remaining, requested: amount }
+    );
+  }
+
+  const paymentType = await FinanceConfigRepository.paymentType.findFirst({
+    where: { id: input.paymentTypeId, companyId: actor.companyId },
+  });
+  if (!paymentType) throw new BusinessRuleError("NOT_FOUND", "Payment type not found.", { id: input.paymentTypeId });
+  if (input.bankAccountId) {
+    const bankAccount = await FinanceConfigRepository.bankAccount.findFirst({
+      where: { id: input.bankAccountId, companyId: actor.companyId },
+    });
+    if (!bankAccount) throw new BusinessRuleError("NOT_FOUND", "Bank account not found.", { id: input.bankAccountId });
+  }
+
+  const needsAccrual = !expense.journalId;
   const taxAmountNum = Number(expense.taxAmount);
   const tdsAmountNum = Number(expense.tdsAmount);
-  const [cashOrBankAccount, gstInputAccount, tdsPayableAccount] = await Promise.all([
+  const cashOrBankAccountCode = paymentType.type === "CASH" ? "CASH" : "BANK";
+  const [cashOrBankAccount, payableAccount, gstInputAccount, tdsPayableAccount] = await Promise.all([
     ChartOfAccountRepository.findByCode(actor.companyId, cashOrBankAccountCode),
-    taxAmountNum > 0 ? ChartOfAccountRepository.findByCode(actor.companyId, "GST-ITC") : null,
-    tdsAmountNum > 0 ? ChartOfAccountRepository.findByCode(actor.companyId, "TDS-PAY") : null,
+    ensureExpensesPayableAccount(actor.companyId),
+    needsAccrual && taxAmountNum > 0 ? ChartOfAccountRepository.findByCode(actor.companyId, "GST-ITC") : null,
+    needsAccrual && tdsAmountNum > 0 ? ChartOfAccountRepository.findByCode(actor.companyId, "TDS-PAY") : null,
   ]);
   if (!cashOrBankAccount) {
     throw new BusinessRuleError(
@@ -351,106 +397,169 @@ export async function postExpense(actor: ActorContext, id: string) {
       {}
     );
   }
-  if (taxAmountNum > 0 && !gstInputAccount) {
+  if (needsAccrual && taxAmountNum > 0 && !gstInputAccount) {
     throw new BusinessRuleError("NOT_FOUND", "The GST Input Tax Credit control account is missing from the Chart of Accounts.", {});
   }
-  if (tdsAmountNum > 0 && !tdsPayableAccount) {
+  if (needsAccrual && tdsAmountNum > 0 && !tdsPayableAccount) {
     throw new BusinessRuleError("NOT_FOUND", "The TDS Payable control account is missing from the Chart of Accounts.", {});
   }
 
-  const journalNumber = await generateDocumentNumber({
-    companyId: actor.companyId,
-    branchId: actor.branchId ?? null,
-    documentType: "JOURNAL",
-  });
+  // Numbers come from the expense's own branch series (an actor without a
+  // branch would otherwise draw from a separate counter).
+  const branchId = expense.branchId ?? null;
+  const [paymentNumber, accrualJournalNumber, paymentJournalNumber] = await Promise.all([
+    generateDocumentNumber({ companyId: actor.companyId, branchId, documentType: "EXPENSE_PAYMENT" }),
+    needsAccrual ? generateDocumentNumber({ companyId: actor.companyId, branchId, documentType: "JOURNAL" }) : null,
+    generateDocumentNumber({ companyId: actor.companyId, branchId, documentType: "JOURNAL" }),
+  ]);
+  const payable = round2(Number(expense.totalAmount) - tdsAmountNum);
+  const paymentId = randomUUID();
+  const paymentDate = new Date(input.paymentDate);
 
-  await prisma.$transaction(async (tx) => {
-    const lines = [
-      {
-        accountId: expense.accountId,
-        lineNumber: 1,
-        debitAmount: Number(expense.amount),
-        creditAmount: 0,
-        description: `Expense ${expense.expenseNumber}`,
-      },
-    ];
-    let nextLineNumber = 2;
-    if (taxAmountNum > 0 && gstInputAccount) {
-      lines.push({
-        accountId: gstInputAccount.id,
-        lineNumber: nextLineNumber++,
-        debitAmount: taxAmountNum,
-        creditAmount: 0,
-        description: `Expense ${expense.expenseNumber} — GST Input`,
+  try {
+    await prisma.$transaction(async (tx) => {
+      if (needsAccrual && accrualJournalNumber) {
+        const lines = [
+          {
+            accountId: expenseAccount.id,
+            lineNumber: 1,
+            debitAmount: Number(expense.amount),
+            creditAmount: 0,
+            description: `Expense ${expense.expenseNumber}`,
+          },
+        ];
+        let nextLineNumber = 2;
+        if (taxAmountNum > 0 && gstInputAccount) {
+          lines.push({
+            accountId: gstInputAccount.id,
+            lineNumber: nextLineNumber++,
+            debitAmount: taxAmountNum,
+            creditAmount: 0,
+            description: `Expense ${expense.expenseNumber} — GST Input`,
+          });
+        }
+        if (tdsAmountNum > 0 && tdsPayableAccount) {
+          lines.push({
+            accountId: tdsPayableAccount.id,
+            lineNumber: nextLineNumber++,
+            debitAmount: 0,
+            creditAmount: tdsAmountNum,
+            description: `Expense ${expense.expenseNumber} — TDS Withheld`,
+          });
+        }
+        lines.push({
+          accountId: payableAccount.id,
+          lineNumber: nextLineNumber++,
+          debitAmount: 0,
+          creditAmount: payable,
+          description: `Expense ${expense.expenseNumber} — payable`,
+        });
+
+        const accrual = await tx.journal.create({
+          data: {
+            companyId: actor.companyId,
+            branchId,
+            journalNumber: accrualJournalNumber,
+            journalDate: expense.expenseDate,
+            status: "DRAFT",
+            narration: `Auto-posted for Expense ${expense.expenseNumber}`,
+            sourceModule: "EXPENSE",
+            sourceRecordId: expense.id,
+            createdByUserId: actor.userId,
+            lines: { create: lines },
+          },
+        });
+        await postJournalCore(tx, accrual.id, "DRAFT", actor.userId);
+
+        const linked = await tx.expense.updateMany({ where: { id, journalId: null }, data: { journalId: accrual.id } });
+        if (linked.count === 0) {
+          throw new BusinessRuleError("INVALID_STATE_TRANSITION", "Another payment was recorded at the same time — please retry.", {});
+        }
+      }
+
+      const paymentJournal = await tx.journal.create({
+        data: {
+          companyId: actor.companyId,
+          branchId,
+          journalNumber: paymentJournalNumber,
+          journalDate: paymentDate,
+          status: "DRAFT",
+          narration: `Payment ${paymentNumber} for Expense ${expense.expenseNumber}`,
+          sourceModule: "EXPENSE_PAYMENT",
+          sourceRecordId: paymentId,
+          createdByUserId: actor.userId,
+          lines: {
+            create: [
+              { accountId: payableAccount.id, lineNumber: 1, debitAmount: amount, creditAmount: 0, description: `Expense ${expense.expenseNumber}` },
+              { accountId: cashOrBankAccount.id, lineNumber: 2, debitAmount: 0, creditAmount: amount, description: `Payment ${paymentNumber}` },
+            ],
+          },
+        },
       });
-    }
-    if (tdsAmountNum > 0 && tdsPayableAccount) {
-      lines.push({
-        accountId: tdsPayableAccount.id,
-        lineNumber: nextLineNumber++,
-        debitAmount: 0,
-        creditAmount: tdsAmountNum,
-        description: `Expense ${expense.expenseNumber} — TDS Withheld`,
+      await postJournalCore(tx, paymentJournal.id, "DRAFT", actor.userId);
+
+      // Guarded accumulator: never pays more than the net payable, even under a race.
+      const { count } = await tx.expense.updateMany({
+        where: { id, status: { in: PAYABLE_STATUSES }, paidAmount: { lte: round2(payable - amount + AMOUNT_EPSILON) } },
+        data: { paidAmount: { increment: amount } },
       });
+      if (count === 0) {
+        throw new BusinessRuleError("OVER_PAYMENT_NOT_ALLOWED", "This payment would pay more than is still owed on the expense.", {});
+      }
+
+      const after = await tx.expense.findUniqueOrThrow({ where: { id }, select: { paidAmount: true } });
+      const fullyPaid = Number(after.paidAmount) >= payable - AMOUNT_EPSILON;
+      await tx.expense.update({
+        where: { id },
+        data: fullyPaid
+          ? { status: "PAID", postedAt: new Date(), postedByUserId: actor.userId }
+          : { status: "PARTIALLY_PAID" },
+      });
+
+      await tx.expensePayment.create({
+        data: {
+          id: paymentId,
+          companyId: actor.companyId,
+          branchId,
+          expenseId: id,
+          paymentNumber,
+          paymentDate,
+          amount,
+          paymentTypeId: paymentType.id,
+          bankAccountId: input.bankAccountId || null,
+          referenceNumber: input.referenceNumber || null,
+          notes: input.notes || null,
+          journalId: paymentJournal.id,
+          createdByUserId: actor.userId,
+          idempotencyKey: input.idempotencyKey ?? null,
+        },
+      });
+    });
+  } catch (err) {
+    if (input.idempotencyKey && err && typeof err === "object" && "code" in err && err.code === "P2002") {
+      const existing = await ExpensePaymentRepository.findByIdempotencyKey(actor.companyId, input.idempotencyKey);
+      if (existing) return getExpenseById(actor, id);
     }
-    // Net cash/bank outflow is totalAmount minus whatever TDS was withheld
-    // at source — the vendor/payee only actually receives the net amount.
-    lines.push({
-      accountId: cashOrBankAccount.id,
-      lineNumber: nextLineNumber++,
-      debitAmount: 0,
-      creditAmount: round2(Number(expense.totalAmount) - tdsAmountNum),
-      description: `Expense ${expense.expenseNumber}`,
-    });
+    throw err;
+  }
 
-    const journal = await tx.journal.create({
-      data: {
-        companyId: actor.companyId,
-        branchId: actor.branchId || null,
-        journalNumber,
-        journalDate: expense.expenseDate,
-        status: "DRAFT",
-        narration: `Auto-posted for Expense ${expense.expenseNumber}`,
-        sourceModule: "EXPENSE",
-        sourceRecordId: expense.id,
-        createdByUserId: actor.userId,
-        lines: { create: lines },
-      },
-    });
-
-    // Internal auto-post — no second PermissionService call (see
-    // postJournalCore's doc comment): the outer "post" assertion above
-    // already authorized this whole operation.
-    await postJournalCore(tx, journal.id, "DRAFT", actor.userId);
-
-    const { count } = await tx.expense.updateMany({
-      where: { id, status: "APPROVED" },
-      data: { status: "PAID", journalId: journal.id, postedAt: new Date(), postedByUserId: actor.userId },
-    });
-    if (count === 0) {
-      throw new BusinessRuleError("INVALID_STATE_TRANSITION", "This expense is no longer in Approved status.", {});
-    }
-  });
-
-  const updated = await ExpenseRepository.findByIdWithDetails(actor.companyId, id);
-  if (!updated) throw new BusinessRuleError("NOT_FOUND", "Expense not found.", { id });
+  const updated = await getExpenseById(actor, id);
 
   await writeAuditLog({
     companyId: actor.companyId,
     userId: actor.userId,
-    tableName: "expenses",
-    recordId: id,
+    tableName: "expense_payments",
+    recordId: paymentId,
     action: "POST",
-    oldValues: { status: "APPROVED" },
-    newValues: { status: "PAID", journalId: updated.journalId },
+    newValues: { expenseNumber: expense.expenseNumber, paymentNumber, amount, status: updated.status },
   });
 
-  return updated;
+  return { ...updated, recordedPaymentId: paymentId };
 }
 
 /** Only from PENDING_APPROVAL or APPROVED — both pre-payment states, no
- * compensating entry needed since neither has touched the ledger yet (only
- * PAID/postExpense does). Blocked once PAID (immutable, matching every
+ * compensating entry needed since neither has touched the ledger yet (the
+ * first payment does, and flips the status to PARTIALLY_PAID or PAID). Blocked once PAID (immutable, matching every
  * other posted-document precedent in this project) or already
  * REJECTED/CANCELLED. */
 export async function cancelExpense(actor: ActorContext, id: string) {
@@ -479,4 +588,81 @@ export async function cancelExpense(actor: ActorContext, id: string) {
   });
 
   return updated;
+}
+
+/**
+ * "Upload Bill" (2026-10-23): the user uploads the bill and states its amount;
+ * nothing else is required. The expense lands in PENDING_APPROVAL with no
+ * expense account and no tax — the accountant fills those in via Edit before
+ * approving (approveExpense refuses an expense with no account). The bill
+ * files themselves are attached by the caller.
+ */
+export async function createBillUploadExpense(actor: ActorContext, input: BillUploadExpenseInput) {
+  if (input.idempotencyKey) {
+    const existing = await ExpenseRepository.findByIdempotencyKey(actor.companyId, input.idempotencyKey);
+    if (existing) return existing;
+  }
+
+  if (input.supplierId) {
+    const supplier = await SupplierRepository.findById(actor.companyId, input.supplierId);
+    if (!supplier) throw new BusinessRuleError("NOT_FOUND", "Supplier not found.", { id: input.supplierId });
+  }
+
+  const company = await CompanyRepository.findBaseCurrencyCode(actor.companyId);
+  if (!company) throw new BusinessRuleError("NOT_FOUND", "Company not found.", { id: actor.companyId });
+
+  const expenseNumber = await generateDocumentNumber({
+    companyId: actor.companyId,
+    branchId: actor.branchId ?? null,
+    documentType: "EXPENSE",
+  });
+  const amount = round2(input.amount);
+
+  let expense;
+  try {
+    expense = await ExpenseRepository.create({
+      companyId: actor.companyId,
+      branchId: actor.branchId || null,
+      expenseNumber,
+      expenseDate: new Date(input.expenseDate),
+      description: input.description,
+      supplierId: input.supplierId || null,
+      referenceNumber: input.referenceNumber || null,
+      amount,
+      taxAmount: 0,
+      totalAmount: amount,
+      tdsAmount: 0,
+      currencyCode: company.baseCurrencyCode,
+      status: "PENDING_APPROVAL",
+      source: "BILL_UPLOAD",
+      createdByUserId: actor.userId,
+      idempotencyKey: input.idempotencyKey ?? null,
+    });
+  } catch (err) {
+    if (input.idempotencyKey && err && typeof err === "object" && "code" in err && err.code === "P2002") {
+      const existing = await ExpenseRepository.findByIdempotencyKey(actor.companyId, input.idempotencyKey);
+      if (existing) return existing;
+    }
+    throw err;
+  }
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "expenses",
+    recordId: expense.id,
+    action: "CREATE",
+    newValues: { expenseNumber: expense.expenseNumber, totalAmount: expense.totalAmount, source: "BILL_UPLOAD" },
+  });
+
+  return expense;
+}
+
+/** Removes a bill-upload expense created moments ago when its files could not
+ * be stored, so a half-made record is never left behind. Only ever called by
+ * the upload-bill route right after createBillUploadExpense. */
+export async function discardFailedBillUpload(companyId: string, id: string) {
+  await prisma.expense.deleteMany({
+    where: { id, companyId, source: "BILL_UPLOAD", status: "PENDING_APPROVAL", paidAmount: 0 },
+  });
 }

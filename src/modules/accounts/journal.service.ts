@@ -300,11 +300,12 @@ export async function reverseJournal(actor: ActorContext, id: string, input: Rev
     original.sourceModule === "PAYMENT" ||
     original.sourceModule === "SALES_INVOICE" ||
     original.sourceModule === "PURCHASE_INVOICE" ||
-    original.sourceModule === "EXPENSE"
+    original.sourceModule === "EXPENSE" ||
+    original.sourceModule === "EXPENSE_PAYMENT"
   ) {
     throw new BusinessRuleError(
       "INVALID_STATE_TRANSITION",
-      `Cannot reverse a journal auto-posted by ${original.sourceModule.replace("_", " ").toLowerCase()} — no correction path exists yet for this document type.`,
+      `Cannot reverse a journal auto-posted by ${original.sourceModule.replaceAll("_", " ").toLowerCase()} — no correction path exists yet for this document type.`,
       { sourceModule: original.sourceModule }
     );
   }
