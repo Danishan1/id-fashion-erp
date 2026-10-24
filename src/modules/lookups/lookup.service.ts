@@ -14,15 +14,35 @@ export async function listColors(companyId: string) {
   return LookupRepository.color.findMany({ where: { companyId }, orderBy: { name: "asc" } });
 }
 
+/**
+ * Two colours with the same name split stock (stock booked under one, requests
+ * asking for the other), so names are unique per company, ignoring case and
+ * spaces — inactive colours included.
+ */
+async function assertColorNameFree(companyId: string, name: string, exceptId?: string) {
+  const clash = await LookupRepository.color.findFirst({
+    where: { companyId, name: { equals: name.trim(), mode: "insensitive" }, ...(exceptId ? { NOT: { id: exceptId } } : {}) },
+    select: { code: true, isActive: true },
+  });
+  if (clash) {
+    throw new BusinessRuleError(
+      "DUPLICATE_DOC_NUMBER",
+      `A colour named "${name.trim()}" already exists (code ${clash.code}${clash.isActive ? "" : ", inactive"}). Use that colour instead of creating a second one.`,
+      { name: name.trim(), existingCode: clash.code }
+    );
+  }
+}
+
 export async function createColor(actor: ActorContext, input: ColorInput) {
   const existing = await LookupRepository.color.findFirst({ where: { companyId: actor.companyId, code: input.code } });
   if (existing) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Color code "${input.code}" is already in use.`);
+  await assertColorNameFree(actor.companyId, input.name);
 
   const color = await LookupRepository.color.create({
     data: {
       companyId: actor.companyId,
       code: input.code,
-      name: input.name,
+      name: input.name.trim(),
       hexValue: input.hexValue || null,
       isActive: input.isActive ?? true,
     },
@@ -43,12 +63,13 @@ export async function createColor(actor: ActorContext, input: ColorInput) {
 export async function updateColor(actor: ActorContext, id: string, input: ColorInput) {
   const existing = await LookupRepository.color.findFirst({ where: { id, companyId: actor.companyId } });
   if (!existing) throw new BusinessRuleError("NOT_FOUND", "Color not found.", { id });
+  await assertColorNameFree(actor.companyId, input.name, id);
 
   const updated = await LookupRepository.color.update({
     where: { id },
     data: {
       code: input.code,
-      name: input.name,
+      name: input.name.trim(),
       hexValue: input.hexValue || null,
       isActive: input.isActive !== undefined ? input.isActive : existing.isActive,
     },

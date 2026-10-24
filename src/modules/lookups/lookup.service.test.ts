@@ -40,13 +40,13 @@ describe("isActive preserved across an ordinary edit, for every lookup entity", 
   });
 
   it("color: update preserves existing isActive when omitted from the payload", async () => {
-    vi.mocked(prisma.color.findFirst).mockResolvedValue({ id: "color-1", isActive: false } as never);
+    vi.mocked(prisma.color.findFirst).mockResolvedValueOnce({ id: "color-1", isActive: false } as never).mockResolvedValueOnce(null);
     await updateColor(actor, "color-1", { code: "RED", name: "Red" } as never);
     expect(prisma.color.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ isActive: false }) }));
   });
 
   it("color: update still applies an explicit isActive (the toggle's own flow)", async () => {
-    vi.mocked(prisma.color.findFirst).mockResolvedValue({ id: "color-1", isActive: false } as never);
+    vi.mocked(prisma.color.findFirst).mockResolvedValueOnce({ id: "color-1", isActive: false } as never).mockResolvedValueOnce(null);
     await updateColor(actor, "color-1", { code: "RED", name: "Red", isActive: true } as never);
     expect(prisma.color.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ isActive: true }) }));
   });
@@ -81,5 +81,28 @@ describe("isActive preserved across an ordinary edit, for every lookup entity", 
       BusinessRuleError
     );
     expect(prisma.unitOfMeasure.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("colour names are unique per company", () => {
+  it("refuses a new colour whose name already exists, ignoring case and spaces", async () => {
+    vi.mocked(prisma.color.findFirst).mockResolvedValueOnce(null).mockResolvedValueOnce({ code: "NVY", isActive: true } as never);
+
+    await expect(createColor(actor, { code: "NAVY-2", name: "  navy blue " } as never)).rejects.toMatchObject({
+      message: expect.stringContaining("NVY"),
+    });
+    expect(prisma.color.findFirst).toHaveBeenLastCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ name: { equals: "navy blue", mode: "insensitive" } }) })
+    );
+    expect(prisma.color.create).not.toHaveBeenCalled();
+  });
+
+  it("lets a colour keep its own name when edited, but not take another colour's", async () => {
+    vi.mocked(prisma.color.findFirst).mockResolvedValueOnce({ id: "color-1", isActive: true } as never).mockResolvedValueOnce(null);
+    await updateColor(actor, "color-1", { code: "RED", name: "Red" } as never);
+    expect(prisma.color.findFirst).toHaveBeenLastCalledWith(expect.objectContaining({ where: expect.objectContaining({ NOT: { id: "color-1" } }) }));
+
+    vi.mocked(prisma.color.findFirst).mockResolvedValueOnce({ id: "color-1", isActive: true } as never).mockResolvedValueOnce({ code: "BLACK", isActive: true } as never);
+    await expect(updateColor(actor, "color-1", { code: "RED", name: "Black" } as never)).rejects.toBeInstanceOf(BusinessRuleError);
   });
 });
