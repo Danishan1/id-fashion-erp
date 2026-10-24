@@ -12,7 +12,10 @@ export async function GET(req: NextRequest) {
 
     const query = parseListQuery(req.nextUrl.searchParams, "createdAt");
     const status = req.nextUrl.searchParams.get("status") ?? undefined;
-    const { data, totalCount } = await listAttendanceCorrections({ companyId: session.user.companyId, userId: session.user.id }, query, status);
+    const { data, totalCount } = await listAttendanceCorrections({ companyId: session.user.companyId, userId: session.user.id }, query, status, {
+      mine: req.nextUrl.searchParams.get("mine") === "true",
+      type: req.nextUrl.searchParams.get("type") || undefined,
+    });
 
     return NextResponse.json({ data, meta: buildListMeta(totalCount, query.page, query.pageSize) });
   } catch (error) {

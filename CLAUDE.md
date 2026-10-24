@@ -7952,3 +7952,56 @@ User guide: `docs/crm/workflows/11-default-automations.md`.
 - A new carton is pre-filled with picked-but-unpacked pieces (`computePackBalances`).
 - Carton lines show left-to-pack and stock. A Saved Cartons summary and a Picked vs Packed table sit below.
 - `GET /barcodes/:id/label.pdf` accepts a printed code (e.g. `DSP-…-C1`) as well as a UUID.
+
+## Attendance module port (2026-10-24)
+
+Ported complete HRMS Attendance & Leave module from the legacy system into Next.js 16 + Prisma 7 + PostgreSQL, implementing all 16 architectural and behavioral improvements (F1–F16).
+
+**Database Tables & Models (Prisma)**
+- `AttendanceRecord` (`hrms_attendance_records`): Day-level summary per employee + attendance date. Keeps `punchIn`/`punchOut` synchronized with underlying sessions for backwards compatibility.
+- `AttendanceSession` (`hrms_attendance_sessions`): Multiple punches per day with GPS coordinates, distance, address, selfie keys, and face photo reference. Status: `PRESENT`, `PRESENT_FROM_OUTSIDE`, `REMOTE`, `ABSENT`, `HALF_DAY`.
+- `AttendanceLocation` (`hrms_attendance_locations`): Geofenced company punch locations (lat/lng, radiusMeters, active flag).
+- `AttendanceSettings` (`hrms_attendance_settings`): Singleton per company (default weekends, maxSessionHours=18, gpsAccuracyMeters=50, statusToleranceMinutes=15, faceMatchThreshold=0.45, requireFace=true).
+- `EmployeeAttendanceProfile` (`hrms_employee_attendance_profiles`): Overtime rate per hour, custom weekends, trackAttendance flag.
+- `EmployeeFacePhoto` (`hrms_employee_face_photos`): Baseline face photos for in-browser client verification (max 3 per employee).
+- `OutdoorRejection` (`hrms_outdoor_rejections`): Rejection of outside punches with allowed time trimming, employee clarification (reason + proof file), admin decision (`APPROVED` restores original times, `REJECTED` keeps trim), and cancellation.
+- `AttendanceCorrection` (`hrms_attendance_corrections`): Regularizations across 6 types: `MISSED_PUNCH`, `EARLY_CHECKOUT`, `FULL_DAY_ABSENT`, `HALF_DAY_ABSENT`, `OUTDOOR_WORK`, `PUNCH_TIMING_ADJUSTMENT`.
+- `LeaveType` (`hrms_leave_types`): Name, annualDays, allocationType (`MONTHLY`, `QUARTERLY`, `YEARLY`), quotaPerPeriod.
+- `LeaveRequest` (`hrms_leave_requests`) & `LeaveDay` (`hrms_leave_days`): Day-wise leave applications supporting full day, first/second half, and auto-detected sandwich rule weekend inclusion.
+- `LeaveBalance` (`hrms_leave_balances`) & `LeaveBalanceCarryForward` (`hrms_leave_balance_carry_forwards`): Period quota credits, carry-forwards with monthly deduction, and transactional Paid/Unpaid balance cascading.
+
+**Core Services (`src/modules/hrms/`)**
+- `attendance-punch.service.ts`: Face matching, GPS geofence evaluation, selfie storage, session creation, and OT recalculation.
+- `attendance-calculator.ts`: IST date-key conversions (`YYYY-MM-DD`), shift evaluation, late arrival grace tolerance, worked hours, and status classification bands.
+- `attendance-session.service.ts`: Session lifecycle management and overlap validation guards (`assertSessionTimesAllowed`).
+- `attendance-month.service.ts`: Monthly aggregation, status bands (FULL, SEMI, HALF, LOW with tolerance), off-day extra payable calculation, and sandwich weekend rules.
+- `attendance-team.service.ts`: Team attendance summary cards, month matrix grids, Excel exports, and salary sheet generation.
+- `attendance-correction.service.ts`: Approval/rejection workflows across the 6 regularization types with audit logging and transactional execution.
+- `leave.service.ts` & `leave-balance.service.ts`: Leave application, sandwich Sunday inclusion, transactional balance deduction, and approval cascading.
+- `overtime.service.ts`: Daily OT calculation based on shift duration and employee OT hourly rate; immutable decided status guards.
+- `outdoor-attendance.service.ts`: Outside punch reviews, trimming, employee clarification, and original timestamp restoration.
+- `face-enrolment.service.ts`: Face photo enrolment, validation, secure file-storage reading, and profile synchronization.
+- `attendance-jobs.worker.ts`: Nightly background jobs for auto-punch-out of dangling sessions, monthly carry-forward, and absent day recording.
+
+**Key Deviations & Fixes from Legacy System (F1–F16)**
+- F1/F2: Day-wise leave structure (`LeaveDay`) allowing half-day combinations across date ranges.
+- F3: Carry-forward leave balance does not double count against monthly credited quota.
+- F4: Deducting leave draws from carried-forward balance before monthly accrued quota.
+- F5: Overtime decision records become immutable once approved/rejected.
+- F6: Sandwich weekend rule properly attributes unpaid days between leaves without double counting.
+- F7: Strict self-approval prevention on attendance regularizations, OT, and outdoor punch clarifications.
+- F8: Shift cross-midnight boundaries supported with explicit IST time calculations.
+- F9: Out-of-geofence punch marked as `PRESENT_FROM_OUTSIDE` immediately upon creation.
+- F10: Face verification executes in-browser using standard WebGL/Wasm backend without requiring `unsafe-eval` in CSP.
+- F11: Face models served directly from authenticated `/models/face-api/` path with static caching headers.
+- F12: Excel exports (`team-month` and `salary-sheet`) generated using `@fast-csv` or `exceljs` streaming buffers (`PK` zip validation).
+- F13: GPS evaluation selects the nearest office location distance when multiple branches exist.
+- F14: Pure IST timezone consistency across date calculation utilities (`dateKeyToDbDate`, `istDateKey`).
+- F15: Idempotent transaction execution across regularization approvals.
+- F16: RBAC permissions backfilled across standard company roles with scoped supervisor access.
+
+**Gotchas & Maintainer Notes**
+- Node memory limit: Always set `NODE_OPTIONS="--max-old-space-size=6144"` before running `npx tsc` or `next build` due to large route graph size.
+- Pre-existing drift rule: Never include `ALTER TABLE "sample_requests" DROP COLUMN "color"` in any database migration.
+- Face model files: Face recognition models live in `public/models/face-api/` using `.bin` weight shards (`tiny_face_detector_model.bin`, `face_landmark_68_model.bin`, `face_recognition_model.bin`).
+

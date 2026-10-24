@@ -150,6 +150,23 @@ export function permissionKey(module: Module, action: Action): string {
  * Role → module → allowed actions, condensed from the CLAUDE.md permission
  * matrix. Used by prisma/seed.ts to populate permissions/role_permissions.
  */
+/**
+ * Attendance module port (2026-10-23, docs/hrms/ATTENDANCE_MODULE_PLAN.md):
+ * every internal employee role can punch, see their own attendance, apply
+ * leave and raise regularizations ("view" + "create"; without view_all the
+ * HRMS scope limits this to self + their HRMS reporting team). Manager roles
+ * also approve/reject for their own team. VIEWER stays view-only and
+ * EXTERNAL_UNIT_USER gets nothing.
+ */
+const HRMS_SELF_SERVICE: Partial<Record<Module, Action[]>> = {
+  hrms_attendance: ["view", "create"],
+  hrms_leave: ["view", "create"],
+};
+const HRMS_TEAM_APPROVER: Partial<Record<Module, Action[]>> = {
+  hrms_attendance: ["view", "create", "approve", "reject"],
+  hrms_leave: ["view", "create", "approve", "reject"],
+};
+
 export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>>> = {
   SUPER_ADMIN: Object.fromEntries(MODULES.map((m) => [m, [...ACTIONS]])) as Record<Module, Action[]>,
   MANAGEMENT: {
@@ -169,7 +186,8 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     // used for crm/marketing above), including leave approval.
     // Approve/reject added for the Attendance Correction Request workflow —
     // same "MANAGEMENT is the checkpoint" shape as hrms_leave just below.
-    hrms_attendance: ["view", "view_all", "create", "edit", "approve", "reject", "export"],
+    // "override" = admin time corrections (attendance module port, 2026-10-23).
+    hrms_attendance: ["view", "view_all", "create", "edit", "approve", "reject", "export", "override"],
     hrms_leave: ["view", "view_all", "create", "edit", "approve", "reject", "export"],
     sampling: ["view", "approve", "reject"],
     buyer_enquiries: ["view", "reject"],
@@ -226,6 +244,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     barcodes: ["view"],
   },
   MERCHANDISER: {
+    ...HRMS_SELF_SERVICE,
     dashboard: ["view"],
     masters_core: ["view", "create", "edit"],
     crm: ["view", "create", "edit", "export", "print"],
@@ -251,6 +270,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     ai_designer: ["view", "create", "edit", "delete", "cancel", "export", "print"],
   },
   SAMPLING_MANAGER: {
+    ...HRMS_TEAM_APPROVER,
     dashboard: ["view"],
     masters_core: ["view"],
     sampling: ["view", "create", "edit", "delete", "approve", "reject", "export", "print"],
@@ -262,6 +282,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     reports: ["view", "export", "print"],
   },
   PRODUCTION_MANAGER: {
+    ...HRMS_TEAM_APPROVER,
     dashboard: ["view"],
     masters_core: ["view"],
     sampling: ["view"],
@@ -305,6 +326,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     barcodes: ["view", "scan", "create", "edit", "print"],
   },
   PRODUCTION_SUPERVISOR: {
+    ...HRMS_SELF_SERVICE,
     dashboard: ["view"],
     masters_core: ["view"],
     sales_orders: ["view"],
@@ -337,6 +359,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
   // true) rather than by a broader permission grant. Stage scope is further
   // narrowed per-company via RoleProductionStageAccess, same as any role.
   PRODUCTION_WORKER: {
+    ...HRMS_SELF_SERVICE,
     dashboard: ["view"],
     production: ["view"],
     // Granted at the RBAC layer; whether a worker actually SEES their own
@@ -359,6 +382,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     production: ["view", "create"],
   },
   QC_MANAGER: {
+    ...HRMS_TEAM_APPROVER,
     dashboard: ["view"],
     masters_core: ["view"],
     sampling: ["view"],
@@ -372,6 +396,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     reports: ["view", "export", "print"],
   },
   STORE_MANAGER: {
+    ...HRMS_TEAM_APPROVER,
     dashboard: ["view"],
     masters_core: ["view", "create", "edit"],
     bom_mrp: ["view"],
@@ -391,6 +416,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     barcodes: ["view", "scan", "create", "edit", "print"],
   },
   ACCOUNTS_MANAGER: {
+    ...HRMS_TEAM_APPROVER,
     dashboard: ["view"],
     masters_core: ["view", "create", "edit"],
     masters_finance: ["view", "create", "edit"],
@@ -417,6 +443,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     piece_rate: ["view", "export"],
   },
   ACCOUNTS_EXECUTIVE: {
+    ...HRMS_SELF_SERVICE,
     dashboard: ["view"],
     masters_core: ["view"],
     masters_finance: ["view"],
@@ -430,6 +457,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     reports: ["view", "export", "print"],
   },
   DISPATCH_MANAGER: {
+    ...HRMS_TEAM_APPROVER,
     dashboard: ["view"],
     masters_core: ["view"],
     sales_orders: ["view"],
@@ -447,6 +475,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     barcodes: ["view", "scan", "create", "edit", "print"],
   },
   WAREHOUSE_USER: {
+    ...HRMS_SELF_SERVICE,
     dashboard: ["view"],
     masters_core: ["view"],
     bom_mrp: ["view"],
