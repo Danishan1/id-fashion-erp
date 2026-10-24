@@ -8,9 +8,27 @@
  *  5. Attendance Regularization lifecycle across 6 types
  *  6. Leave Application with auto-sandwich detection, balance deduction & approval
  *  7. Team Day Dashboard cards & Salary Sheet payroll aggregation
+ *
+ * Runs against the dev database in .env (DATABASE_URL). It creates its own
+ * supervisor, worker, employee, location and leave type, and removes them
+ * (and restores the company's attendance settings) afterwards.
+ *
+ * Permissions are the only thing mocked — granted to every test user, the
+ * same way the CRM integration tests do — so the flows are tested without
+ * depending on how the dev database's roles happen to be set up.
  */
 import "dotenv/config";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+
+vi.mock("@/core/rbac/PermissionService", () => ({
+  PermissionService: {
+    can: vi.fn(async () => true),
+    assert: vi.fn(async () => undefined),
+    invalidate: vi.fn(),
+    getAllowedBranchIds: vi.fn(async () => null),
+  },
+}));
+
 import { prisma } from "@/core/db/client";
 import { punch } from "./attendance-punch.service";
 import {
@@ -57,6 +75,8 @@ describe.skipIf(!DB_URL)("HRMS Attendance & Leave (Integration Test Suite)", () 
   let locationId: string;
   let leaveTypeId: string;
   let enrolledFacePhotoId: string;
+  // The company's attendance settings before the run (null = it had none).
+  let originalSettings: Awaited<ReturnType<typeof prisma.attendanceSettings.findUnique>> = null;
 
   // Minimal 1x1 valid PNG image for real file-storage magic byte checks
   const samplePngBuffer = Buffer.from(
@@ -66,7 +86,7 @@ describe.skipIf(!DB_URL)("HRMS Attendance & Leave (Integration Test Suite)", () 
 
   beforeAll(async () => {
     // 1. Get or create testing company
-    let company = await prisma.company.findFirst();
+    let company = await prisma.company.findFirst({ orderBy: { createdAt: "asc" } });
     if (!company) {
       company = await prisma.company.create({
         data: {
@@ -76,19 +96,18 @@ describe.skipIf(!DB_URL)("HRMS Attendance & Leave (Integration Test Suite)", () 
       });
     }
     companyId = company.id;
+    originalSettings = await prisma.attendanceSettings.findUnique({ where: { companyId } });
 
-    // 2. Get or create supervisor user
-    let admin = await prisma.user.findFirst({ where: { companyId } });
-    if (!admin) {
-      admin = await prisma.user.create({
-        data: {
-          companyId,
-          email: `admin_${runId}@example.com`,
-          fullName: "Integration Admin",
-          passwordHash: "hash",
-        },
-      });
-    }
+    // 2. A supervisor user of our own (not some existing user, whose roles and
+    // team we can't predict).
+    const admin = await prisma.user.create({
+      data: {
+        companyId,
+        email: `admin_${runId}@example.com`,
+        fullName: `Integration Supervisor ${runId}`,
+        passwordHash: "hash",
+      },
+    });
     adminUserId = admin.id;
     supervisorActor = { companyId, userId: adminUserId };
 
@@ -156,6 +175,31 @@ describe.skipIf(!DB_URL)("HRMS Attendance & Leave (Integration Test Suite)", () 
         await prisma.user.deleteMany({ where: { id: workerUserId } });
       }
       await prisma.employee.deleteMany({ where: { id: employeeId } });
+    }
+    if (adminUserId) {
+      await prisma.notification.deleteMany({ where: { userId: adminUserId } });
+      await prisma.user.deleteMany({ where: { id: adminUserId } });
+    }
+    // Put the company's attendance settings back as they were.
+    if (companyId) {
+      if (originalSettings) {
+        const o = originalSettings;
+        await prisma.attendanceSettings.update({
+          where: { companyId },
+          data: {
+            defaultWeekends: o.defaultWeekends,
+            gpsAccuracyMeters: o.gpsAccuracyMeters,
+            maxSessionHours: o.maxSessionHours,
+            statusToleranceMinutes: o.statusToleranceMinutes,
+            faceMatchThreshold: o.faceMatchThreshold,
+            faceMatchFrames: o.faceMatchFrames,
+            requireFace: o.requireFace,
+            updatedByUserId: o.updatedByUserId,
+          },
+        });
+      } else {
+        await prisma.attendanceSettings.deleteMany({ where: { companyId } });
+      }
     }
   });
 
