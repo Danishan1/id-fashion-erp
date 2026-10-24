@@ -251,7 +251,7 @@ describe("attendance-settings.service (Unit Tests)", () => {
     });
 
     it("computes effectiveWeekends based on company vs employee override", () => {
-      const companySettings = { defaultWeekends: ["SUNDAY"] as const };
+      const companySettings = { defaultWeekends: ["SUNDAY" as const] };
       expect(effectiveWeekends(companySettings, null)).toEqual(["SUNDAY"]);
       expect(effectiveWeekends(companySettings, { useCompanyWeekends: true, weekends: ["FRIDAY"] })).toEqual(["SUNDAY"]);
       expect(effectiveWeekends(companySettings, { useCompanyWeekends: false, weekends: ["SATURDAY", "SUNDAY"] })).toEqual(["SATURDAY", "SUNDAY"]);

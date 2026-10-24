@@ -71,7 +71,7 @@ describe.skipIf(!DB_URL)("HRMS Attendance & Leave (Integration Test Suite)", () 
       company = await prisma.company.create({
         data: {
           name: `IT Test Garments ${runId}`,
-          code: `ITG_${runId}`.slice(0, 10),
+          baseCurrencyCode: "INR",
         },
       });
     }
