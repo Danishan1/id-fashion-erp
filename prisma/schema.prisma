@@ -172,6 +172,17 @@ model Company {
   leaveTypes                          LeaveType[]
   leaveRequests                       LeaveRequest[]
   leaveBalanceCarryForwards           LeaveBalanceCarryForward[]
+  attendanceSettings                  AttendanceSettings?
+  attendanceLocations                 AttendanceLocation[]
+  employeeAttendanceProfiles          EmployeeAttendanceProfile[]
+  employeeFacePhotos                  EmployeeFacePhoto[]
+  attendanceSessions                  AttendanceSession[]
+  overtimeRecords                     OvertimeRecord[]
+  outdoorRejections                   OutdoorRejection[]
+  leaveBalances                       LeaveBalance[]
+  leaveDays                           LeaveDay[]
+  autoLeaveHistories                  AutoLeaveHistory[]
+  attendanceMonthCloses               AttendanceMonthClose[]
   chartOfAccounts                     ChartOfAccount[]
   taxTypes                            TaxType[]
   taxRates                            TaxRate[]
@@ -958,6 +969,8 @@ model User {
   leaveRequestsApproved                      LeaveRequest[]                       @relation("LeaveRequestApprovedBy")
   leaveRequestsCreated                       LeaveRequest[]                       @relation("LeaveRequestCreatedBy")
   leaveBalanceCarryForwardsCreated           LeaveBalanceCarryForward[]
+  overtimeRecordsDecided                     OvertimeRecord[]                     @relation("OvertimeDecidedBy")
+  outdoorRejectionsRejected                  OutdoorRejection[]                   @relation("OutdoorRejectionRejectedBy")
   journalsCreated                            Journal[]                            @relation("JournalCreatedBy")
   journalsPosted                             Journal[]                            @relation("JournalPostedBy")
   salesInvoicesCreated                       SalesInvoice[]                       @relation("SalesInvoiceCreatedBy")
@@ -1630,6 +1643,14 @@ model Employee {
   attendanceCorrectionRequests AttendanceCorrectionRequest[]
   leaveRequests                LeaveRequest[]
   leaveBalanceCarryForwards    LeaveBalanceCarryForward[]
+  attendanceProfile            EmployeeAttendanceProfile?
+  facePhotos                   EmployeeFacePhoto[]
+  attendanceSessions           AttendanceSession[]
+  overtimeRecords              OvertimeRecord[]
+  outdoorRejections            OutdoorRejection[]
+  leaveBalances                LeaveBalance[]
+  leaveDays                    LeaveDay[]
+  autoLeaveHistories           AutoLeaveHistory[]
   employeeAdvances             EmployeeAdvance[]
 
   @@unique([companyId, employeeCode])
@@ -3518,6 +3539,7 @@ model AttendanceRecord {
   // that day, e.g. a forgotten punch-in) and one-to-many (a record can be
   // corrected more than once over its life).
   correctionRequests AttendanceCorrectionRequest[]
+  sessions           AttendanceSession[]
 
   @@unique([employeeId, attendanceDate])
   @@index([companyId, attendanceDate])
@@ -3540,20 +3562,28 @@ enum AttendanceCorrectionStatus {
  * exists yet for that date) — see attendance-correction.service.ts.
  */
 model AttendanceCorrectionRequest {
-  id                 String                     @id @default(uuid()) @db.Uuid
-  companyId          String                     @map("company_id") @db.Uuid
-  employeeId         String                     @map("employee_id") @db.Uuid
-  attendanceRecordId String?                    @map("attendance_record_id") @db.Uuid
-  attendanceDate     DateTime                   @map("attendance_date") @db.Date
-  requestedPunchIn   DateTime?                  @map("requested_punch_in")
-  requestedPunchOut  DateTime?                  @map("requested_punch_out")
+  id                 String                       @id @default(uuid()) @db.Uuid
+  companyId          String                       @map("company_id") @db.Uuid
+  employeeId         String                       @map("employee_id") @db.Uuid
+  attendanceRecordId String?                      @map("attendance_record_id") @db.Uuid
+  attendanceDate     DateTime                     @map("attendance_date") @db.Date
+  requestedPunchIn   DateTime?                    @map("requested_punch_in")
+  requestedPunchOut  DateTime?                    @map("requested_punch_out")
   reason             String
-  status             AttendanceCorrectionStatus @default(PENDING)
-  rejectionReason    String?                    @map("rejection_reason")
-  approvedByUserId   String?                    @map("approved_by_user_id") @db.Uuid
-  decidedAt          DateTime?                  @map("decided_at")
-  createdByUserId    String                     @map("created_by_user_id") @db.Uuid
-  createdAt          DateTime                   @default(now()) @map("created_at")
+  status             AttendanceCorrectionStatus   @default(PENDING)
+  rejectionReason    String?                      @map("rejection_reason")
+  approvedByUserId   String?                      @map("approved_by_user_id") @db.Uuid
+  decidedAt          DateTime?                    @map("decided_at")
+  createdByUserId    String                       @map("created_by_user_id") @db.Uuid
+  createdAt          DateTime                     @default(now()) @map("created_at")
+  // Attendance module port (2026-10-23): the 6 regularization types.
+  // Pre-existing rows are MISSED_PUNCH (set in/out times for a date).
+  type               AttendanceRegularizationType @default(MISSED_PUNCH)
+  sessionId          String?                      @map("session_id") @db.Uuid
+  dateFrom           DateTime?                    @map("date_from") @db.Date
+  dateTo             DateTime?                    @map("date_to") @db.Date
+  leaveTypeId        String?                      @map("leave_type_id") @db.Uuid
+  remark             String?
 
   company          Company           @relation(fields: [companyId], references: [id])
   employee         Employee          @relation(fields: [employeeId], references: [id])
@@ -3567,17 +3597,21 @@ model AttendanceCorrectionRequest {
 }
 
 model LeaveType {
-  id         String   @id @default(uuid()) @db.Uuid
-  companyId  String   @map("company_id") @db.Uuid
-  name       String
-  annualDays Decimal  @default(0) @map("annual_days") @db.Decimal(6, 2)
-  isActive   Boolean  @default(true) @map("is_active")
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
+  id             String              @id @default(uuid()) @db.Uuid
+  companyId      String              @map("company_id") @db.Uuid
+  name           String
+  annualDays     Decimal             @default(0) @map("annual_days") @db.Decimal(6, 2)
+  // Attendance module port: quota credited every allocation period.
+  allocationType LeaveAllocationType @default(MONTHLY) @map("allocation_type")
+  quotaPerPeriod Decimal             @default(0) @map("quota_per_period") @db.Decimal(6, 2)
+  isActive       Boolean             @default(true) @map("is_active")
+  createdAt      DateTime            @default(now()) @map("created_at")
+  updatedAt      DateTime            @updatedAt @map("updated_at")
 
   company       Company                    @relation(fields: [companyId], references: [id])
   requests      LeaveRequest[]
   carryForwards LeaveBalanceCarryForward[]
+  balances      LeaveBalance[]
 
   @@unique([companyId, name])
   @@map("hrms_leave_types")
@@ -3604,11 +3638,12 @@ model LeaveRequest {
   createdByUserId  String             @map("created_by_user_id") @db.Uuid
   createdAt        DateTime           @default(now()) @map("created_at")
 
-  company    Company   @relation(fields: [companyId], references: [id])
-  employee   Employee  @relation(fields: [employeeId], references: [id])
-  leaveType  LeaveType @relation(fields: [leaveTypeId], references: [id])
-  approvedBy User?     @relation("LeaveRequestApprovedBy", fields: [approvedByUserId], references: [id])
-  createdBy  User      @relation("LeaveRequestCreatedBy", fields: [createdByUserId], references: [id])
+  company    Company    @relation(fields: [companyId], references: [id])
+  employee   Employee   @relation(fields: [employeeId], references: [id])
+  leaveType  LeaveType  @relation(fields: [leaveTypeId], references: [id])
+  approvedBy User?      @relation("LeaveRequestApprovedBy", fields: [approvedByUserId], references: [id])
+  createdBy  User       @relation("LeaveRequestCreatedBy", fields: [createdByUserId], references: [id])
+  days       LeaveDay[]
 
   @@index([companyId, employeeId])
   @@index([companyId, status])
@@ -3645,6 +3680,366 @@ model LeaveBalanceCarryForward {
   // target year is a safe no-op per employee+leaveType, not a double-credit.
   @@unique([companyId, employeeId, leaveTypeId, toYear])
   @@map("hrms_leave_balance_carry_forwards")
+}
+
+// ─────────────────────────────────────────────────────────────
+// HRMS — Attendance module port (2026-10-23). Ported from the user's
+// own older attendance system (internal_project), see
+// docs/hrms/ATTENDANCE_MODULE_PLAN.md. AttendanceRecord stays the one
+// row per employee per day; every real punch is an AttendanceSession
+// under it (a day can hold several), and the day row's punchIn/punchOut
+// are kept in sync as first-in / last-out so older readers still work.
+// ─────────────────────────────────────────────────────────────
+
+enum AttendanceWeekday {
+  SUNDAY
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+}
+
+enum AttendanceSessionStatus {
+  PRESENT
+  PRESENT_FROM_OUTSIDE
+  REMOTE
+}
+
+enum AttendanceSessionSource {
+  SELF_PUNCH
+  MANUAL
+  REGULARIZATION
+}
+
+enum AttendanceRegularizationType {
+  MISSED_PUNCH
+  MISSED_LOGOUT
+  CHANGE_LOGIN
+  CHANGE_LOGOUT
+  LEAVE_NOT_TAKEN
+  EMERGENCY_LEAVE
+}
+
+enum OutdoorRejectionStatus {
+  PENDING
+  IN_PROCESS
+  APPROVED
+  REJECTED
+}
+
+enum AttendanceOvertimeStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum LeaveDurationType {
+  FULL
+  F_HALF
+  S_HALF
+  QR1
+  QR2
+  QR3
+  QR4
+}
+
+enum LeavePaymentType {
+  PAID
+  NOT_PAID
+}
+
+enum LeaveAllocationType {
+  MONTHLY
+  QUARTERLY
+  HALF_YEARLY
+  YEARLY
+}
+
+/// One row per company. Defaults are the old system's fixed values.
+model AttendanceSettings {
+  id                     String              @id @default(uuid()) @db.Uuid
+  companyId              String              @unique @map("company_id") @db.Uuid
+  defaultWeekends        AttendanceWeekday[] @default([SUNDAY]) @map("default_weekends")
+  gpsAccuracyMeters      Int                 @default(50) @map("gps_accuracy_meters")
+  maxSessionHours        Int                 @default(18) @map("max_session_hours")
+  statusToleranceMinutes Int                 @default(15) @map("status_tolerance_minutes")
+  faceMatchThreshold     Decimal             @default(0.45) @map("face_match_threshold") @db.Decimal(4, 2)
+  faceMatchFrames        Int                 @default(3) @map("face_match_frames")
+  requireFace            Boolean             @default(true) @map("require_face")
+  updatedByUserId        String?             @map("updated_by_user_id") @db.Uuid
+  createdAt              DateTime            @default(now()) @map("created_at")
+  updatedAt              DateTime            @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@map("hrms_attendance_settings")
+}
+
+/// Office / factory geofence. A punch inside radiusMeters of any active
+/// location counts as from office (nearest location wins).
+model AttendanceLocation {
+  id           String   @id @default(uuid()) @db.Uuid
+  companyId    String   @map("company_id") @db.Uuid
+  name         String
+  code         String?
+  latitude     Float
+  longitude    Float
+  radiusMeters Int      @default(100) @map("radius_meters")
+  address      String?
+  /// Optional link to an ERP Branch (plain id, no FK; Branch stays untouched).
+  branchId     String?  @map("branch_id") @db.Uuid
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  company          Company             @relation(fields: [companyId], references: [id])
+  checkInSessions  AttendanceSession[] @relation("SessionInLocation")
+  checkOutSessions AttendanceSession[] @relation("SessionOutLocation")
+
+  @@unique([companyId, name])
+  @@map("hrms_attendance_locations")
+}
+
+/// Attendance-only settings per employee (kept out of the Employee master).
+model EmployeeAttendanceProfile {
+  id                  String              @id @default(uuid()) @db.Uuid
+  companyId           String              @map("company_id") @db.Uuid
+  employeeId          String              @unique @map("employee_id") @db.Uuid
+  useCompanyWeekends  Boolean             @default(true) @map("use_company_weekends")
+  weekends            AttendanceWeekday[] @default([])
+  overtimeRatePerHour Decimal?            @map("overtime_rate_per_hour") @db.Decimal(18, 2)
+  createdAt           DateTime            @default(now()) @map("created_at")
+  updatedAt           DateTime            @updatedAt @map("updated_at")
+
+  company  Company  @relation(fields: [companyId], references: [id])
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@map("hrms_employee_attendance_profiles")
+}
+
+/// Enrolled face photos (max 3 per employee) used for browser face matching.
+model EmployeeFacePhoto {
+  id               String   @id @default(uuid()) @db.Uuid
+  companyId        String   @map("company_id") @db.Uuid
+  employeeId       String   @map("employee_id") @db.Uuid
+  storageKey       String   @map("storage_key")
+  mimeType         String   @map("mime_type")
+  fileName         String   @map("file_name")
+  sizeBytes        Int      @map("size_bytes")
+  uploadedByUserId String   @map("uploaded_by_user_id") @db.Uuid
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  company  Company  @relation(fields: [companyId], references: [id])
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@index([employeeId])
+  @@map("hrms_employee_face_photos")
+}
+
+/// One punch IN -> OUT. A unique partial index (migration) allows only one
+/// open session (checkOutAt IS NULL) per employee.
+model AttendanceSession {
+  id                 String                  @id @default(uuid()) @db.Uuid
+  companyId          String                  @map("company_id") @db.Uuid
+  attendanceRecordId String                  @map("attendance_record_id") @db.Uuid
+  employeeId         String                  @map("employee_id") @db.Uuid
+  checkInAt          DateTime                @map("check_in_at")
+  checkOutAt         DateTime?               @map("check_out_at")
+  status             AttendanceSessionStatus @default(PRESENT)
+  source             AttendanceSessionSource @default(SELF_PUNCH)
+  isLoginFromOffice  Boolean                 @default(true) @map("is_login_from_office")
+  isLogoutFromOffice Boolean                 @default(true) @map("is_logout_from_office")
+  inLatitude         Float?                  @map("in_latitude")
+  inLongitude        Float?                  @map("in_longitude")
+  inAccuracyMeters   Float?                  @map("in_accuracy_meters")
+  inAddress          String?                 @map("in_address")
+  inLocationId       String?                 @map("in_location_id") @db.Uuid
+  inDistanceMeters   Float?                  @map("in_distance_meters")
+  inSelfieKey        String?                 @map("in_selfie_key")
+  inSelfieMime       String?                 @map("in_selfie_mime")
+  outLatitude        Float?                  @map("out_latitude")
+  outLongitude       Float?                  @map("out_longitude")
+  outAccuracyMeters  Float?                  @map("out_accuracy_meters")
+  outAddress         String?                 @map("out_address")
+  outLocationId      String?                 @map("out_location_id") @db.Uuid
+  outDistanceMeters  Float?                  @map("out_distance_meters")
+  outSelfieKey       String?                 @map("out_selfie_key")
+  outSelfieMime      String?                 @map("out_selfie_mime")
+  inFacePhotoId      String?                 @map("in_face_photo_id") @db.Uuid
+  outFacePhotoId     String?                 @map("out_face_photo_id") @db.Uuid
+  remarks            String?
+  createdByUserId    String                  @map("created_by_user_id") @db.Uuid
+  updatedByUserId    String?                 @map("updated_by_user_id") @db.Uuid
+  createdAt          DateTime                @default(now()) @map("created_at")
+  updatedAt          DateTime                @updatedAt @map("updated_at")
+
+  company           Company             @relation(fields: [companyId], references: [id])
+  attendanceRecord  AttendanceRecord    @relation(fields: [attendanceRecordId], references: [id], onDelete: Cascade)
+  employee          Employee            @relation(fields: [employeeId], references: [id])
+  inLocation        AttendanceLocation? @relation("SessionInLocation", fields: [inLocationId], references: [id])
+  outLocation       AttendanceLocation? @relation("SessionOutLocation", fields: [outLocationId], references: [id])
+  outdoorRejections OutdoorRejection[]
+
+  @@index([employeeId, checkInAt])
+  @@index([companyId, checkInAt])
+  @@index([attendanceRecordId])
+  @@map("hrms_attendance_sessions")
+}
+
+/// Overtime for one employee-day: worked hours minus shift hours.
+model OvertimeRecord {
+  id              String                   @id @default(uuid()) @db.Uuid
+  companyId       String                   @map("company_id") @db.Uuid
+  employeeId      String                   @map("employee_id") @db.Uuid
+  attendanceDate  DateTime                 @map("attendance_date") @db.Date
+  hours           Decimal                  @db.Decimal(5, 2)
+  workedHours     Decimal                  @map("worked_hours") @db.Decimal(5, 2)
+  shiftHours      Decimal                  @map("shift_hours") @db.Decimal(5, 2)
+  reason          String?
+  status          AttendanceOvertimeStatus @default(PENDING)
+  rejectionReason String?                  @map("rejection_reason")
+  decidedByUserId String?                  @map("decided_by_user_id") @db.Uuid
+  decidedAt       DateTime?                @map("decided_at")
+  createdAt       DateTime                 @default(now()) @map("created_at")
+  updatedAt       DateTime                 @updatedAt @map("updated_at")
+
+  company   Company  @relation(fields: [companyId], references: [id])
+  employee  Employee @relation(fields: [employeeId], references: [id])
+  decidedBy User?    @relation("OvertimeDecidedBy", fields: [decidedByUserId], references: [id])
+
+  @@unique([employeeId, attendanceDate])
+  @@index([companyId, status])
+  @@map("hrms_overtime_records")
+}
+
+/// An outdoor punch the admin rejected: times trimmed, originals kept so a
+/// clarification approval (or cancel) can restore them.
+model OutdoorRejection {
+  id                     String                 @id @default(uuid()) @db.Uuid
+  companyId              String                 @map("company_id") @db.Uuid
+  employeeId             String                 @map("employee_id") @db.Uuid
+  sessionId              String                 @map("session_id") @db.Uuid
+  originalCheckIn        DateTime               @map("original_check_in")
+  originalCheckOut       DateTime?              @map("original_check_out")
+  trimmedCheckIn         DateTime               @map("trimmed_check_in")
+  trimmedCheckOut        DateTime?              @map("trimmed_check_out")
+  rejectedReason         String?                @map("rejected_reason")
+  status                 OutdoorRejectionStatus @default(PENDING)
+  clarificationReason    String?                @map("clarification_reason")
+  clarificationProofKey  String?                @map("clarification_proof_key")
+  clarificationProofMime String?                @map("clarification_proof_mime")
+  clarificationProofName String?                @map("clarification_proof_name")
+  clarifiedAt            DateTime?              @map("clarified_at")
+  rejectedByUserId       String                 @map("rejected_by_user_id") @db.Uuid
+  rejectedAt             DateTime               @default(now()) @map("rejected_at")
+  decidedByUserId        String?                @map("decided_by_user_id") @db.Uuid
+  decidedAt              DateTime?              @map("decided_at")
+  isRevoked              Boolean                @default(false) @map("is_revoked")
+  revokedByUserId        String?                @map("revoked_by_user_id") @db.Uuid
+  revokedAt              DateTime?              @map("revoked_at")
+
+  company    Company           @relation(fields: [companyId], references: [id])
+  employee   Employee          @relation(fields: [employeeId], references: [id])
+  session    AttendanceSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  rejectedBy User              @relation("OutdoorRejectionRejectedBy", fields: [rejectedByUserId], references: [id])
+
+  @@index([companyId, status])
+  @@index([employeeId])
+  @@map("hrms_outdoor_rejections")
+}
+
+/// Monthly leave quota per employee per leave type.
+model LeaveBalance {
+  id           String   @id @default(uuid()) @db.Uuid
+  companyId    String   @map("company_id") @db.Uuid
+  employeeId   String   @map("employee_id") @db.Uuid
+  leaveTypeId  String   @map("leave_type_id") @db.Uuid
+  year         Int
+  month        Int
+  allocated    Decimal  @default(0) @db.Decimal(6, 2)
+  used         Decimal  @default(0) @db.Decimal(6, 2)
+  remaining    Decimal  @default(0) @db.Decimal(6, 2)
+  carryForward Decimal  @default(0) @map("carry_forward") @db.Decimal(6, 2)
+  isAdjusted   Boolean  @default(false) @map("is_adjusted")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  company   Company    @relation(fields: [companyId], references: [id])
+  employee  Employee   @relation(fields: [employeeId], references: [id])
+  leaveType LeaveType  @relation(fields: [leaveTypeId], references: [id])
+  leaveDays LeaveDay[]
+
+  @@unique([employeeId, leaveTypeId, year, month])
+  @@index([companyId, year, month])
+  @@map("hrms_leave_balances")
+}
+
+/// One leave day inside a LeaveRequest (Full / Half / Quarter).
+model LeaveDay {
+  id                String            @id @default(uuid()) @db.Uuid
+  companyId         String            @map("company_id") @db.Uuid
+  leaveRequestId    String            @map("leave_request_id") @db.Uuid
+  employeeId        String            @map("employee_id") @db.Uuid
+  leaveDate         DateTime          @map("leave_date") @db.Date
+  durationType      LeaveDurationType @default(FULL) @map("duration_type")
+  fraction          Decimal           @db.Decimal(4, 2)
+  isSandwich        Boolean           @default(false) @map("is_sandwich")
+  paymentType       LeavePaymentType? @map("payment_type")
+  /// How much of `fraction` came from remaining / carry-forward, so a
+  /// refund (Leave Not Taken) gives back exactly what was taken.
+  paidFromRemaining Decimal           @default(0) @map("paid_from_remaining") @db.Decimal(4, 2)
+  paidFromCarry     Decimal           @default(0) @map("paid_from_carry") @db.Decimal(4, 2)
+  leaveBalanceId    String?           @map("leave_balance_id") @db.Uuid
+  taken             Boolean           @default(true)
+  createdAt         DateTime          @default(now()) @map("created_at")
+  updatedAt         DateTime          @updatedAt @map("updated_at")
+
+  company      Company       @relation(fields: [companyId], references: [id])
+  leaveRequest LeaveRequest  @relation(fields: [leaveRequestId], references: [id], onDelete: Cascade)
+  employee     Employee      @relation(fields: [employeeId], references: [id])
+  leaveBalance LeaveBalance? @relation(fields: [leaveBalanceId], references: [id])
+
+  @@index([employeeId, leaveDate])
+  @@index([leaveRequestId])
+  @@map("hrms_leave_days")
+}
+
+/// Paid leave used automatically by "Finalise month" for zero-hour workdays.
+model AutoLeaveHistory {
+  id              String   @id @default(uuid()) @db.Uuid
+  companyId       String   @map("company_id") @db.Uuid
+  employeeId      String   @map("employee_id") @db.Uuid
+  leaveTypeId     String   @map("leave_type_id") @db.Uuid
+  year            Int
+  month           Int
+  used            Decimal  @db.Decimal(6, 2)
+  preRemaining    Decimal  @map("pre_remaining") @db.Decimal(6, 2)
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  company  Company  @relation(fields: [companyId], references: [id])
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@unique([employeeId, leaveTypeId, year, month])
+  @@map("hrms_auto_leave_history")
+}
+
+/// A finalised salary-sheet month (snapshot of the sheet at that moment).
+model AttendanceMonthClose {
+  id             String   @id @default(uuid()) @db.Uuid
+  companyId      String   @map("company_id") @db.Uuid
+  year           Int
+  month          Int
+  snapshotJson   Json     @map("snapshot_json")
+  closedByUserId String   @map("closed_by_user_id") @db.Uuid
+  closedAt       DateTime @default(now()) @map("closed_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, year, month])
+  @@map("hrms_attendance_month_closes")
 }
 
 // ─────────────────────────────────────────────────────────────

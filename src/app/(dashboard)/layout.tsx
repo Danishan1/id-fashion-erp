@@ -48,15 +48,20 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   // specifically, not just barcodes.view (a role can hold view-only
   // oversight of the barcode registry without holding scan itself, e.g.
   // MANAGEMENT).
-  const [approveModules, scanModules] = session?.user?.id
+  // "edit" / "export" gate the Attendance Settings and Salary Sheet links.
+  const [approveModules, scanModules, editModules, exportModules] = session?.user?.id
     ? await Promise.all([
         PermissionService.getModulesWithAction(session.user.id, "approve"),
         PermissionService.getModulesWithAction(session.user.id, "scan"),
+        PermissionService.getModulesWithAction(session.user.id, "edit"),
+        PermissionService.getModulesWithAction(session.user.id, "export"),
       ])
-    : [new Set<Module>(), new Set<Module>()];
+    : [new Set<Module>(), new Set<Module>(), new Set<Module>(), new Set<Module>()];
   const actionModules: Partial<Record<Action, Module[]>> = {
     approve: Array.from(approveModules),
     scan: Array.from(scanModules),
+    edit: Array.from(editModules),
+    export: Array.from(exportModules),
   };
 
   // Phase 2: a support session always shows its banner; a company's Super

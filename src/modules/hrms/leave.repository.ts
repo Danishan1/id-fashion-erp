@@ -11,6 +11,7 @@ export const LeaveTypeRepository = {
 const DETAIL_INCLUDE = {
   employee: { select: { id: true, employeeCode: true, fullName: true } },
   leaveType: { select: { id: true, name: true, annualDays: true } },
+  days: { orderBy: { leaveDate: "asc" as const }, select: { id: true, leaveDate: true, durationType: true, fraction: true, isSandwich: true, paymentType: true, taken: true } },
   approvedBy: { select: { id: true, fullName: true } },
   createdBy: { select: { id: true, fullName: true } },
 } satisfies Prisma.LeaveRequestInclude;
@@ -21,6 +22,8 @@ export const LeaveRequestRepository = {
   update: (id: string, data: Prisma.LeaveRequestUncheckedUpdateInput) => prisma.leaveRequest.update({ where: { id }, data, include: DETAIL_INCLUDE }),
 
   findAnyById: (companyId: string, id: string) => prisma.leaveRequest.findFirst({ where: { id, companyId } }),
+
+  findById: (id: string) => prisma.leaveRequest.findUniqueOrThrow({ where: { id }, include: DETAIL_INCLUDE }),
 
   findMany: (where: Prisma.LeaveRequestWhereInput, args: Omit<Prisma.LeaveRequestFindManyArgs, "where">) =>
     prisma.leaveRequest.findMany({ where, include: DETAIL_INCLUDE, ...args }),

@@ -1,10 +1,11 @@
 import { prisma } from "@/core/db/client";
 import type { ReportDescriptor } from "@/core/reports/report-types";
 import { registerReport } from "./registry";
-import { computeIsLate } from "@/modules/hrms/attendance.service";
+import { istDateKey, isValidDateKey } from "@/modules/hrms/attendance-calculator";
+import { computeEmployeesMonth, DAY_CODE_LABELS } from "@/modules/hrms/attendance-month.service";
 import { parseReportDateRange } from "./report-date-range";
 import { validateStatusFilter } from "./report-filters";
-import { LeaveRequestStatus } from "@prisma/client";
+import { AttendanceOvertimeStatus, LeaveRequestStatus } from "@prisma/client";
 
 function filtersApplied(filters: Record<string, string>, labels: Record<string, string>) {
   return Object.entries(filters)
@@ -122,6 +123,7 @@ async function getLeaveRegisterDescriptor(companyId: string, generatedByName: st
       endDate: true,
       status: true,
       reason: true,
+      days: { where: { taken: true }, select: { fraction: true } },
     },
     orderBy: { startDate: "desc" },
   });
@@ -132,7 +134,8 @@ async function getLeaveRegisterDescriptor(companyId: string, generatedByName: st
     leaveType: r.leaveType.name,
     startDate: r.startDate,
     endDate: r.endDate,
-    days: Math.round((r.endDate.getTime() - r.startDate.getTime()) / 86400000) + 1,
+    // Day-wise requests: the real fractions (half / quarter days, sandwich days included).
+    days: r.days.length > 0 ? r.days.reduce((sum, d) => sum + Number(d.fraction), 0) : Math.round((r.endDate.getTime() - r.startDate.getTime()) / 86400000) + 1,
     status: r.status,
     reason: r.reason ?? "—",
   }));
@@ -169,59 +172,67 @@ registerReport({
 registerReport({ category: HR_CATEGORY, key: "leave-register", title: "Leave Register", buildDescriptor: getLeaveRegisterDescriptor });
 
 // ===========================================================================
-// Category: attendance
+// Category: attendance — built on the attendance module's month engine
+// (src/modules/hrms/attendance-month.service.ts) so reports match the screens.
 // ===========================================================================
 const ATTENDANCE_CATEGORY = "attendance" as const;
 
-async function getDailyAttendanceDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
-  const targetDateStr = filters.date || new Date().toISOString().slice(0, 10);
-  // `new Date("YYYY-MM-DD")` already parses as UTC midnight, matching how
-  // `attendanceDate` (@db.Date) is stored — do NOT round-trip this through a
-  // local-timezone Date constructor (see dashboard.reports.ts's startOfDay
-  // comment for why that silently shifts the day boundary on a server whose
-  // local timezone isn't UTC).
-  const dayStart = new Date(targetDateStr);
-  const dayEnd = new Date(dayStart.getTime() + 86400000);
+const IST_TIME = { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: true } as const;
+function istTime(d: Date | string | null): string {
+  return d ? new Date(d).toLocaleTimeString("en-IN", IST_TIME) : "—";
+}
 
-  const records = await prisma.attendanceRecord.findMany({
-    where: { companyId, attendanceDate: { gte: dayStart, lt: dayEnd } },
-    select: {
-      punchIn: true,
-      punchOut: true,
-      remarks: true,
-      employee: { select: { employeeCode: true, fullName: true, department: { select: { name: true } }, shift: { select: { startTime: true, graceMinutes: true } } } },
-    },
-    orderBy: { employee: { fullName: "asc" } },
+async function activeEmployeeIds(companyId: string, departmentId?: string) {
+  const rows = await prisma.employee.findMany({
+    where: { companyId, isActive: true, deletedAt: null, ...(departmentId ? { departmentId } : {}) },
+    select: { id: true },
+    orderBy: { fullName: "asc" },
   });
+  return rows.map((r) => r.id);
+}
 
-  const rows = records.map((r) => {
-    const punchIn = r.punchIn ? new Date(r.punchIn) : null;
-    const isLate = computeIsLate(punchIn, r.employee.shift?.startTime, r.employee.shift?.graceMinutes);
+async function getDailyAttendanceDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
+  const targetDateStr = filters.date && isValidDateKey(filters.date) ? filters.date : istDateKey(new Date());
+  const ids = await activeEmployeeIds(companyId, filters.departmentId);
+  const months = await computeEmployeesMonth(companyId, ids, Number(targetDateStr.slice(0, 4)), Number(targetDateStr.slice(5, 7)));
+  const departments = new Map(
+    (await prisma.employee.findMany({ where: { id: { in: ids } }, select: { id: true, department: { select: { name: true } } } })).map((e) => [e.id, e.department?.name ?? "—"])
+  );
+
+  const rows = months.map((m) => {
+    const d = m.days.find((x) => x.dateKey === targetDateStr)!;
     return {
-      employeeCode: r.employee.employeeCode,
-      fullName: r.employee.fullName,
-      department: r.employee.department?.name ?? "—",
-      punchIn: punchIn ? punchIn.toLocaleTimeString() : "—",
-      punchOut: r.punchOut ? new Date(r.punchOut).toLocaleTimeString() : "—",
-      isLate: isLate === null ? "—" : isLate ? "Yes" : "No",
-      remarks: r.remarks ?? "—",
+      employeeCode: m.employee.employeeCode,
+      fullName: m.employee.fullName,
+      department: departments.get(m.employee.id) ?? "—",
+      punchIn: istTime(d.firstIn),
+      punchOut: d.hasOpenSession ? "In now" : istTime(d.lastOut),
+      hours: d.workedHours,
+      status: DAY_CODE_LABELS[d.code],
+      isLate: d.isLate === null ? "—" : d.isLate ? "Yes" : "No",
+      outside: d.isOutside ? "Yes" : "No",
+      leave: d.leaveLabel ?? "—",
     };
   });
 
   return {
     title: "Daily Attendance",
-    subtitle: `Attendance for ${targetDateStr}.`,
+    subtitle: `Attendance for ${targetDateStr}. Status comes from hours worked against each employee's shift; times are IST.`,
     filtersApplied: [{ label: "Date", value: targetDateStr }],
     columns: [
       { key: "employeeCode", label: "Employee Code" },
       { key: "fullName", label: "Full Name" },
       { key: "department", label: "Department" },
-      { key: "punchIn", label: "Punch In", type: "text" },
-      { key: "punchOut", label: "Punch Out", type: "text" },
+      { key: "punchIn", label: "First In", type: "text" },
+      { key: "punchOut", label: "Last Out", type: "text" },
+      { key: "hours", label: "Hours", type: "number", align: "right" },
+      { key: "status", label: "Status" },
       { key: "isLate", label: "Late?" },
-      { key: "remarks", label: "Remarks" },
+      { key: "outside", label: "Outside?" },
+      { key: "leave", label: "Leave" },
     ],
     rows,
+    totals: { hours: Math.round(rows.reduce((s, r) => s + r.hours, 0) * 100) / 100 },
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
     generatedAt: new Date().toISOString(),
     generatedByName,
@@ -229,67 +240,164 @@ async function getDailyAttendanceDescriptor(companyId: string, generatedByName: 
 }
 
 async function getMonthlyAttendanceSummaryDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
-  const reference = filters.dateFrom ? new Date(filters.dateFrom) : new Date();
-  // UTC components, not local — see dashboard.reports.ts's startOfDay comment.
-  const monthStart = new Date(Date.UTC(reference.getUTCFullYear(), reference.getUTCMonth(), 1));
-  const monthEnd = new Date(Date.UTC(reference.getUTCFullYear(), reference.getUTCMonth() + 1, 1));
+  const reference = filters.dateFrom && isValidDateKey(filters.dateFrom) ? filters.dateFrom : istDateKey(new Date());
+  const year = Number(reference.slice(0, 4));
+  const month = Number(reference.slice(5, 7));
+  const ids = await activeEmployeeIds(companyId, filters.departmentId);
+  const months = await computeEmployeesMonth(companyId, ids, year, month);
+  const monthLabel = `${year}-${String(month).padStart(2, "0")}`;
 
-  const records = await prisma.attendanceRecord.findMany({
-    where: { companyId, attendanceDate: { gte: monthStart, lt: monthEnd } },
-    select: {
-      punchIn: true,
-      employee: { select: { id: true, employeeCode: true, fullName: true, department: { select: { name: true } }, shift: { select: { startTime: true, graceMinutes: true } } } },
-    },
-  });
-
-  interface EmployeeAgg {
-    employeeCode: string;
-    fullName: string;
-    department: string;
-    presentDays: number;
-    lateDays: number;
-    totalRecords: number;
-  }
-  const byEmployee = new Map<string, EmployeeAgg>();
-  for (const r of records) {
-    const existing = byEmployee.get(r.employee.id) ?? {
-      employeeCode: r.employee.employeeCode,
-      fullName: r.employee.fullName,
-      department: r.employee.department?.name ?? "—",
-      presentDays: 0,
-      lateDays: 0,
-      totalRecords: 0,
-    };
-    existing.totalRecords += 1;
-    if (r.punchIn) {
-      existing.presentDays += 1;
-      const isLate = computeIsLate(new Date(r.punchIn), r.employee.shift?.startTime, r.employee.shift?.graceMinutes);
-      if (isLate) existing.lateDays += 1;
-    }
-    byEmployee.set(r.employee.id, existing);
-  }
-
-  const rows = [...byEmployee.values()].sort((a, b) => a.fullName.localeCompare(b.fullName));
-  const monthLabel = `${monthStart.getUTCFullYear()}-${String(monthStart.getUTCMonth() + 1).padStart(2, "0")}`;
+  const rows = months.map((m) => ({
+    employeeCode: m.employee.employeeCode,
+    fullName: m.employee.fullName,
+    workingDays: m.summary.workingDays,
+    presentDays: m.summary.presentDays,
+    paidLeaveDays: m.summary.paidLeaveDays,
+    unpaidLeaveDays: m.summary.unpaidLeaveDays,
+    absentDays: m.summary.absentDays,
+    weekendDays: m.summary.weekendDays,
+    holidayDays: m.summary.holidayDays,
+    sandwichDays: m.summary.sandwichDays,
+    lateDays: m.summary.lateDays,
+    totalHours: m.summary.totalHours,
+    overtimeHours: m.summary.approvedOvertimeHours,
+  }));
+  const sum = (k: keyof (typeof rows)[number]) => Math.round(rows.reduce((s, r) => s + Number(r[k]), 0) * 100) / 100;
 
   return {
     title: "Monthly Attendance Summary",
-    subtitle: `Summary for ${monthLabel}. Present Days = records with a punch-in; this ERP has no explicit absence-marking mechanism, so no Absent Days column is shown.`,
+    subtitle: `Summary for ${monthLabel}. Present days use the hours rule (full shift = 1, 75% = 0.75, half = 0.5); a weekly off or holiday between two absent/leave days counts as a sandwich absence.`,
     filtersApplied: [{ label: "Month", value: monthLabel }],
     columns: [
       { key: "employeeCode", label: "Employee Code" },
       { key: "fullName", label: "Full Name" },
-      { key: "department", label: "Department" },
-      { key: "presentDays", label: "Present Days", type: "number", align: "right" },
+      { key: "workingDays", label: "Working Days", type: "number", align: "right" },
+      { key: "presentDays", label: "Present", type: "number", align: "right" },
+      { key: "paidLeaveDays", label: "Paid Leave", type: "number", align: "right" },
+      { key: "unpaidLeaveDays", label: "Unpaid Leave", type: "number", align: "right" },
+      { key: "absentDays", label: "Absent", type: "number", align: "right" },
+      { key: "weekendDays", label: "Weekly Off", type: "number", align: "right" },
+      { key: "holidayDays", label: "Holidays", type: "number", align: "right" },
+      { key: "sandwichDays", label: "Sandwich", type: "number", align: "right" },
       { key: "lateDays", label: "Late Days", type: "number", align: "right" },
-      { key: "totalRecords", label: "Total Records", type: "number", align: "right" },
+      { key: "totalHours", label: "Hours", type: "number", align: "right" },
+      { key: "overtimeHours", label: "Approved OT Hours", type: "number", align: "right" },
     ],
     rows: rows as unknown as Record<string, unknown>[],
     totals: {
-      presentDays: rows.reduce((s, r) => s + r.presentDays, 0),
-      lateDays: rows.reduce((s, r) => s + r.lateDays, 0),
-      totalRecords: rows.reduce((s, r) => s + r.totalRecords, 0),
+      presentDays: sum("presentDays"),
+      paidLeaveDays: sum("paidLeaveDays"),
+      unpaidLeaveDays: sum("unpaidLeaveDays"),
+      absentDays: sum("absentDays"),
+      lateDays: sum("lateDays"),
+      totalHours: sum("totalHours"),
+      overtimeHours: sum("overtimeHours"),
     },
+    meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
+    generatedAt: new Date().toISOString(),
+    generatedByName,
+  };
+}
+
+async function getOvertimeRegisterDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
+  const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
+  const records = await prisma.overtimeRecord.findMany({
+    where: {
+      companyId,
+      ...(filters.employeeId ? { employeeId: filters.employeeId } : {}),
+      ...validateStatusFilter(filters, AttendanceOvertimeStatus),
+      ...(dateFrom || dateToExclusive ? { attendanceDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
+    },
+    include: { employee: { select: { employeeCode: true, fullName: true, attendanceProfile: { select: { overtimeRatePerHour: true } } } }, decidedBy: { select: { fullName: true } } },
+    orderBy: { attendanceDate: "desc" },
+  });
+  const rows = records.map((r) => {
+    const rate = r.employee.attendanceProfile?.overtimeRatePerHour ? Number(r.employee.attendanceProfile.overtimeRatePerHour) : 0;
+    return {
+      date: r.attendanceDate,
+      employeeCode: r.employee.employeeCode,
+      fullName: r.employee.fullName,
+      workedHours: Number(r.workedHours),
+      shiftHours: Number(r.shiftHours),
+      hours: Number(r.hours),
+      rate,
+      amount: Math.round(Number(r.hours) * rate * 100) / 100,
+      status: r.status,
+      decidedBy: r.decidedBy?.fullName ?? "—",
+    };
+  });
+  const approved = rows.filter((r) => r.status === "APPROVED");
+  return {
+    title: "Overtime Register",
+    subtitle: "Overtime = hours worked beyond the shift, calculated at punch-out. Totals count approved overtime only.",
+    filtersApplied: filtersApplied(filters, { employeeId: "Employee", status: "Status", dateFrom: "Date From", dateTo: "Date To" }),
+    columns: [
+      { key: "date", label: "Date", type: "date" },
+      { key: "employeeCode", label: "Employee Code" },
+      { key: "fullName", label: "Full Name" },
+      { key: "workedHours", label: "Worked", type: "number", align: "right" },
+      { key: "shiftHours", label: "Shift", type: "number", align: "right" },
+      { key: "hours", label: "OT Hours", type: "number", align: "right" },
+      { key: "rate", label: "Rate / Hour", type: "currency", align: "right" },
+      { key: "amount", label: "Amount", type: "currency", align: "right" },
+      { key: "status", label: "Status" },
+      { key: "decidedBy", label: "Decided By" },
+    ],
+    rows,
+    totals: {
+      hours: Math.round(approved.reduce((s, r) => s + r.hours, 0) * 100) / 100,
+      amount: Math.round(approved.reduce((s, r) => s + r.amount, 0) * 100) / 100,
+    },
+    meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
+    generatedAt: new Date().toISOString(),
+    generatedByName,
+  };
+}
+
+async function getOutdoorPunchRegisterDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
+  const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
+  const sessions = await prisma.attendanceSession.findMany({
+    where: {
+      companyId,
+      ...(filters.employeeId ? { employeeId: filters.employeeId } : {}),
+      OR: [{ isLoginFromOffice: false }, { isLogoutFromOffice: false }, { status: { in: ["PRESENT_FROM_OUTSIDE", "REMOTE"] } }],
+      ...(dateFrom || dateToExclusive ? { attendanceRecord: { attendanceDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } } : {}),
+    },
+    include: {
+      employee: { select: { employeeCode: true, fullName: true } },
+      attendanceRecord: { select: { attendanceDate: true } },
+      outdoorRejections: { orderBy: { rejectedAt: "desc" }, take: 1, select: { status: true, isRevoked: true } },
+    },
+    orderBy: { checkInAt: "desc" },
+  });
+  const rows = sessions.map((s) => {
+    const rej = s.outdoorRejections[0];
+    return {
+      date: s.attendanceRecord.attendanceDate,
+      employeeCode: s.employee.employeeCode,
+      fullName: s.employee.fullName,
+      checkIn: istTime(s.checkInAt),
+      checkOut: istTime(s.checkOutAt),
+      inDistance: s.inDistanceMeters ?? null,
+      outDistance: s.outDistanceMeters ?? null,
+      decision: s.status === "REMOTE" ? "Approved" : rej ? (rej.isRevoked ? "Rejection cancelled" : `Rejected (${rej.status.toLowerCase().replace("_", " ")})`) : "Waiting",
+    };
+  });
+  return {
+    title: "Outdoor Punch Register",
+    subtitle: "Punches made outside every office location, and what was decided.",
+    filtersApplied: filtersApplied(filters, { employeeId: "Employee", dateFrom: "Date From", dateTo: "Date To" }),
+    columns: [
+      { key: "date", label: "Date", type: "date" },
+      { key: "employeeCode", label: "Employee Code" },
+      { key: "fullName", label: "Full Name" },
+      { key: "checkIn", label: "In", type: "text" },
+      { key: "checkOut", label: "Out", type: "text" },
+      { key: "inDistance", label: "In Distance (m)", type: "number", align: "right" },
+      { key: "outDistance", label: "Out Distance (m)", type: "number", align: "right" },
+      { key: "decision", label: "Decision" },
+    ],
+    rows,
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
     generatedAt: new Date().toISOString(),
     generatedByName,
@@ -303,3 +411,5 @@ registerReport({
   title: "Monthly Attendance Summary",
   buildDescriptor: getMonthlyAttendanceSummaryDescriptor,
 });
+registerReport({ category: ATTENDANCE_CATEGORY, key: "overtime-register", title: "Overtime Register", buildDescriptor: getOvertimeRegisterDescriptor });
+registerReport({ category: ATTENDANCE_CATEGORY, key: "outdoor-punch-register", title: "Outdoor Punch Register", buildDescriptor: getOutdoorPunchRegisterDescriptor });

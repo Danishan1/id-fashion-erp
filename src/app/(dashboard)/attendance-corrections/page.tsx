@@ -5,7 +5,12 @@ import { AttendanceCorrectionsListClient } from "./AttendanceCorrectionsListClie
 
 export default async function AttendanceCorrectionsPage() {
   const session = await auth();
-  await PermissionService.assert(session!.user.id, "hrms_attendance", "view").catch(() => notFound());
-
-  return <AttendanceCorrectionsListClient />;
+  const userId = session!.user.id;
+  await PermissionService.assert(userId, "hrms_attendance", "view").catch(() => notFound());
+  const [canApprove, canReject, canViewAll] = await Promise.all([
+    PermissionService.can(userId, "hrms_attendance", "approve"),
+    PermissionService.can(userId, "hrms_attendance", "reject"),
+    PermissionService.can(userId, "hrms_attendance", "view_all"),
+  ]);
+  return <AttendanceCorrectionsListClient canApprove={canApprove} canReject={canReject} canManageTeam={canApprove || canReject || canViewAll} />;
 }

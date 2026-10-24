@@ -7,6 +7,7 @@ import type { BulkImportMasterType } from "@/modules/import/import.schema";
 import { startCrmIngestWorker } from "@/modules/crm/imports/crm-import.worker";
 import { startPlatformJobsWorker } from "@/modules/platform/platform-jobs.worker";
 import { startBulkActionWorker } from "@/modules/bulk-actions/bulk-actions.worker";
+import { startAttendanceJobsWorker } from "@/modules/hrms/attendance-jobs.worker";
 
 /**
  * Standalone process for the Bulk Master Data Import background queue —
@@ -64,12 +65,15 @@ const bulkWorker = startBulkActionWorker();
 // Platform SaaS Phase 4: hourly subscription lifecycle notices.
 const platformWorker = startPlatformJobsWorker();
 
+// Attendance: daily-ish monthly leave credit.
+const attendanceWorker = startAttendanceJobsWorker();
+
 process.on("SIGTERM", async () => {
-  await Promise.all([worker.close(), crmWorker.close(), bulkWorker.close(), platformWorker.close()]);
+  await Promise.all([worker.close(), crmWorker.close(), bulkWorker.close(), platformWorker.close(), attendanceWorker.close()]);
   process.exit(0);
 });
 process.on("SIGINT", async () => {
-  await Promise.all([worker.close(), crmWorker.close(), bulkWorker.close(), platformWorker.close()]);
+  await Promise.all([worker.close(), crmWorker.close(), bulkWorker.close(), platformWorker.close(), attendanceWorker.close()]);
   process.exit(0);
 });
 

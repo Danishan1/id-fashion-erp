@@ -76,6 +76,14 @@ const nextConfig: NextConfig = {
           { key: "Content-Security-Policy", value: contentSecurityPolicy },
         ],
       },
+      // Attendance punching needs the camera (selfie + face match) and GPS
+      // (office geofence). Allowed for this app's own /attendance pages
+      // only; every other page keeps camera/geolocation blocked. Next.js
+      // applies the later matching rule for the same header key.
+      {
+        source: "/attendance/:path*",
+        headers: [{ key: "Permissions-Policy", value: "camera=(self), microphone=(), geolocation=(self)" }],
+      },
     ];
   },
 };

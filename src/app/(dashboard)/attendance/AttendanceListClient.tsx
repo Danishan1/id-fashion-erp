@@ -1,176 +1,226 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useState } from "react";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
-import { DataTable } from "@/components/ui/DataTable";
-import { Modal } from "@/components/ui/Modal";
+import { Button } from "@/components/ui/Button";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { Modal } from "@/components/ui/Modal";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
+import { apiJson, Card, ErrorText, fmtHours, fmtTime, Pill, todayIst } from "./_shared/attendance-ui";
+import { useScopedEmployees } from "./_shared/useScopedEmployees";
 
-interface Option {
-  id: string;
-  employeeCode?: string;
-  fullName?: string;
+type Status = "PRESENT" | "OUTSIDE" | "HALF_DAY" | "ON_LEAVE" | "ABSENT" | "NOT_PUNCHED" | "WEEKLY_OFF" | "HOLIDAY" | "NOT_JOINED";
+
+interface TeamDay {
+  dateKey: string;
+  isToday: boolean;
+  cards: { total: number; present: number; outside: number; halfDay: number; onLeave: number; absent: number; notPunched: number; off: number; late: number };
+  rows: {
+    employee: { id: string; employeeCode: string; fullName: string; shift: { name: string; startTime: string; endTime: string } | null };
+    status: Status;
+    day: { firstIn: string | null; lastOut: string | null; workedHours: number; isLate: boolean | null; hasOpenSession: boolean; sessionCount: number; leaveLabel: string | null; holidayName: string | null; bandLabel: string | null };
+  }[];
 }
 
-interface AttendanceRow {
-  id: string;
-  attendanceDate: string;
-  punchIn: string | null;
-  punchOut: string | null;
-  isLate: boolean | null;
-  remarks: string | null;
-  employee: { fullName: string; employeeCode: string };
-}
+const STATUS_PILL: Record<Status, { label: string; tone: "green" | "red" | "amber" | "blue" | "purple" | "zinc" }> = {
+  PRESENT: { label: "Present", tone: "green" },
+  OUTSIDE: { label: "Outside", tone: "purple" },
+  HALF_DAY: { label: "Half / short day", tone: "amber" },
+  ON_LEAVE: { label: "On leave", tone: "blue" },
+  ABSENT: { label: "Absent", tone: "red" },
+  NOT_PUNCHED: { label: "Not punched", tone: "zinc" },
+  WEEKLY_OFF: { label: "Weekly off", tone: "zinc" },
+  HOLIDAY: { label: "Holiday", tone: "zinc" },
+  NOT_JOINED: { label: "Not joined", tone: "zinc" },
+};
 
-export function AttendanceListClient() {
-  const [showModal, setShowModal] = useState(false);
-  const [employeeId, setEmployeeId] = useState("");
-  const [attendanceDate, setAttendanceDate] = useState("");
-  const [punchIn, setPunchIn] = useState("");
-  const [punchOut, setPunchOut] = useState("");
-  const [remarks, setRemarks] = useState("");
-  const [employees, setEmployees] = useState<Option[]>([]);
+export function AttendanceListClient({ canRecord }: { canRecord: boolean }) {
+  const [date, setDate] = useState(todayIst());
+  const [data, setData] = useState<TeamDay | null>(null);
+  const [filter, setFilter] = useState<Status | "ALL" | "LATE">("ALL");
+  const [search, setSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [refreshKey, setRefreshKey] = useState(0);
+  const [recording, setRecording] = useState(false);
 
+  const load = useCallback(() => {
+    apiJson<TeamDay>(`/api/v1/attendance/team-day?date=${date}`)
+      .then((d) => {
+        setData(d);
+        setError(null);
+      })
+      .catch((e) => setError(e.message));
+  }, [date]);
   useEffect(() => {
-    fetch("/api/v1/employees?pageSize=500")
-      .then((res) => (res.ok ? res.json() : { data: [] }))
-      .then((body) => setEmployees(body.data ?? []))
-      .catch(() => setEmployees([]));
-  }, []);
+    load();
+  }, [load]);
 
-  const submit = async () => {
-    setError(null);
-    const res = await fetch("/api/v1/attendance", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        employeeId,
-        attendanceDate,
-        punchIn: punchIn ? `${attendanceDate}T${punchIn}:00` : undefined,
-        punchOut: punchOut ? `${attendanceDate}T${punchOut}:00` : undefined,
-        remarks: remarks || undefined,
-      }),
-    });
-    if (!res.ok) {
-      const body = await res.json().catch(() => null);
-      setError(body?.error?.message ?? "Failed to record attendance.");
-      return;
-    }
-    setShowModal(false);
-    setEmployeeId("");
-    setAttendanceDate("");
-    setPunchIn("");
-    setPunchOut("");
-    setRemarks("");
-    setRefreshKey((k) => k + 1);
-  };
+  const rows = (data?.rows ?? []).filter(
+    (r) =>
+      (filter === "ALL" || (filter === "LATE" ? r.day.isLate === true : r.status === filter)) &&
+      (!search || r.employee.fullName.toLowerCase().includes(search.toLowerCase()) || r.employee.employeeCode.toLowerCase().includes(search.toLowerCase()))
+  );
+
+  const card = (label: string, value: number, key: Status | "ALL" | "LATE", tone: string) => (
+    <button
+      type="button"
+      onClick={() => setFilter(filter === key ? "ALL" : key)}
+      className={`rounded-lg border p-3 text-left transition-colors ${filter === key ? "border-indigo-500 ring-1 ring-indigo-500" : "border-zinc-200 dark:border-zinc-800"} bg-white dark:bg-zinc-900`}
+    >
+      <div className="text-xs text-zinc-500">{label}</div>
+      <div className={`mt-1 text-2xl font-semibold tabular-nums ${tone}`}>{value}</div>
+    </button>
+  );
 
   return (
     <div className="space-y-4">
-      <Breadcrumb items={[{ label: "Dashboard", href: "/dashboard" }, { label: "Attendance" }]} />
-      <div className="flex items-center justify-between">
+      <Breadcrumb items={[{ label: "Dashboard", href: "/dashboard" }, { label: "Team Attendance" }]} />
+      <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
-          <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Attendance</h1>
-          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-            Daily punch in/out per employee. Late is computed against each employee&apos;s own assigned shift, not one
-            fixed company-wide cutoff.
-          </p>
+          <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Team Attendance</h1>
+          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">Who is in, outside, on leave or absent. Late is checked against each employee&apos;s own shift and grace time.</p>
         </div>
-        <button
-          type="button"
-          onClick={() => setShowModal(true)}
-          className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500"
-        >
-          Record Attendance
-        </button>
+        <div className="flex flex-wrap gap-2 text-sm">
+          <Link href="/attendance/my" className="font-medium text-indigo-600 hover:text-indigo-500">
+            My Attendance
+          </Link>
+          <Link href="/attendance/records" className="font-medium text-indigo-600 hover:text-indigo-500">
+            Monthly Records
+          </Link>
+          {canRecord && (
+            <Button size="xs" onClick={() => setRecording(true)}>
+              Record Attendance
+            </Button>
+          )}
+        </div>
       </div>
-
-      <DataTable<AttendanceRow>
-        key={refreshKey}
-        fetchUrl="/api/v1/attendance"
-        searchPlaceholder="Search by employee name…"
-        columns={[
-          { key: "employee", header: "Employee", render: (row) => `${row.employee.fullName} (${row.employee.employeeCode})` },
-          { key: "attendanceDate", header: "Date", render: (row) => new Date(row.attendanceDate).toLocaleDateString() },
-          { key: "punchIn", header: "Punch In", render: (row) => (row.punchIn ? new Date(row.punchIn).toLocaleTimeString() : "—") },
-          { key: "punchOut", header: "Punch Out", render: (row) => (row.punchOut ? new Date(row.punchOut).toLocaleTimeString() : "—") },
-          {
-            key: "isLate",
-            header: "Status",
-            render: (row) =>
-              !row.punchIn ? (
-                <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700 dark:bg-red-500/10 dark:text-red-400">
-                  Absent
-                </span>
-              ) : row.isLate === true ? (
-                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-500/10 dark:text-amber-300">
-                  Late
-                </span>
-              ) : row.isLate === false ? (
-                <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-500/10 dark:text-green-400">
-                  On Time
-                </span>
-              ) : (
-                <span
-                  className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400"
-                  title="This employee has no shift assigned, so lateness can't be determined."
-                >
-                  No Shift
-                </span>
-              ),
-          },
-        ]}
-      />
-
-      <Modal open={showModal} onClose={() => setShowModal(false)} title="Record Attendance">
-        <div className="space-y-3">
-          <FormField label="Employee" htmlFor="employeeId" required>
-            <SearchableSelect
-              id="employeeId"
-              required
-              value={employeeId}
-              onChange={setEmployeeId}
-              options={employees.map((e) => ({ id: e.id, label: e.fullName ?? "", sublabel: e.employeeCode }))}
-              placeholder="Search employee…"
-            />
-          </FormField>
-          <FormField label="Date" htmlFor="attendanceDate" required>
-            <input id="attendanceDate" type="date" required value={attendanceDate} onChange={(e) => setAttendanceDate(e.target.value)} className={textInputClass()} />
-          </FormField>
-          <div className="grid grid-cols-2 gap-3">
-            <FormField label="Punch In" htmlFor="punchIn">
-              <input id="punchIn" type="time" value={punchIn} onChange={(e) => setPunchIn(e.target.value)} className={textInputClass()} />
-            </FormField>
-            <FormField label="Punch Out" htmlFor="punchOut">
-              <input id="punchOut" type="time" value={punchOut} onChange={(e) => setPunchOut(e.target.value)} className={textInputClass()} />
-            </FormField>
+      <div className="flex flex-wrap gap-2">
+        <input type="date" className={`${textInputClass()} max-w-[12rem]`} value={date} max={todayIst()} onChange={(e) => e.target.value && setDate(e.target.value)} />
+        <input placeholder="Search employee…" className={`${textInputClass()} max-w-xs`} value={search} onChange={(e) => setSearch(e.target.value)} />
+      </div>
+      <ErrorText message={error} />
+      {data && (
+        <>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">
+            {card("Total", data.cards.total, "ALL", "text-zinc-900 dark:text-zinc-50")}
+            {card("Present", data.cards.present, "PRESENT", "text-emerald-600")}
+            {card("Outside", data.cards.outside, "OUTSIDE", "text-violet-600")}
+            {card("Half / short", data.cards.halfDay, "HALF_DAY", "text-amber-600")}
+            {card("On leave", data.cards.onLeave, "ON_LEAVE", "text-sky-600")}
+            {card(data.isToday ? "Not punched" : "Absent", data.isToday ? data.cards.notPunched : data.cards.absent, data.isToday ? "NOT_PUNCHED" : "ABSENT", "text-red-600")}
+            {card("Off / holiday", data.cards.off, "WEEKLY_OFF", "text-zinc-500")}
+            {card("Late", data.cards.late, "LATE", "text-orange-600")}
           </div>
-          <FormField label="Remarks" htmlFor="remarks">
-            <input id="remarks" value={remarks} onChange={(e) => setRemarks(e.target.value)} className={textInputClass()} />
-          </FormField>
-          {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
-          <div className="flex gap-3">
-            <button
-              type="button"
-              onClick={() => setShowModal(false)}
-              className="rounded-md border border-zinc-300 px-4 py-2 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={submit}
-              disabled={!employeeId || !attendanceDate}
-              className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
-            >
-              Save
-            </button>
-          </div>
-        </div>
+          <Card>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-zinc-200 text-sm dark:divide-zinc-800">
+                <thead>
+                  <tr className="text-left text-xs font-medium uppercase text-zinc-500">
+                    <th className="px-2 py-2">Employee</th>
+                    <th className="px-2 py-2">Shift</th>
+                    <th className="px-2 py-2">First in</th>
+                    <th className="px-2 py-2">Last out</th>
+                    <th className="px-2 py-2">Hours</th>
+                    <th className="px-2 py-2">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                  {rows.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="px-2 py-6 text-center text-zinc-500">
+                        No employees.
+                      </td>
+                    </tr>
+                  )}
+                  {rows.map((r) => (
+                    <tr key={r.employee.id}>
+                      <td className="px-2 py-2">
+                        <div className="font-medium">{r.employee.fullName}</div>
+                        <div className="text-xs text-zinc-500">{r.employee.employeeCode}</div>
+                      </td>
+                      <td className="px-2 py-2 text-xs">{r.employee.shift ? `${r.employee.shift.startTime}–${r.employee.shift.endTime}` : <span className="text-zinc-400">No shift</span>}</td>
+                      <td className="px-2 py-2 tabular-nums">
+                        {fmtTime(r.day.firstIn)} {r.day.isLate && <Pill tone="red">Late</Pill>}
+                      </td>
+                      <td className="px-2 py-2 tabular-nums">{r.day.hasOpenSession ? <span className="text-emerald-700">In now</span> : fmtTime(r.day.lastOut)}</td>
+                      <td className="px-2 py-2 tabular-nums">{r.day.workedHours > 0 ? fmtHours(r.day.workedHours) : "—"}</td>
+                      <td className="px-2 py-2">
+                        <Pill tone={STATUS_PILL[r.status].tone}>{STATUS_PILL[r.status].label}</Pill>
+                        {r.day.leaveLabel && <div className="text-xs text-zinc-500">{r.day.leaveLabel}</div>}
+                        {r.day.holidayName && <div className="text-xs text-zinc-500">{r.day.holidayName}</div>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        </>
+      )}
+      <Modal open={recording} onClose={() => setRecording(false)} title="Record attendance (manual)">
+        {recording && (
+          <RecordForm
+            defaultDate={date}
+            onClose={() => setRecording(false)}
+            onDone={() => {
+              setRecording(false);
+              load();
+            }}
+          />
+        )}
       </Modal>
+    </div>
+  );
+}
+
+function RecordForm({ defaultDate, onClose, onDone }: { defaultDate: string; onClose: () => void; onDone: () => void }) {
+  const { options } = useScopedEmployees();
+  const [employeeId, setEmployeeId] = useState("");
+  const [attendanceDate, setAttendanceDate] = useState(defaultDate);
+  const [checkIn, setCheckIn] = useState("");
+  const [checkOut, setCheckOut] = useState("");
+  const [remarks, setRemarks] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async () => {
+    setError(null);
+    try {
+      await apiJson("/api/v1/attendance/sessions", { method: "POST", body: JSON.stringify({ employeeId, attendanceDate, checkIn, checkOut: checkOut || null, remarks }) });
+      onDone();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <ErrorText message={error} />
+      <FormField label="Employee" htmlFor="rec-emp" required>
+        <SearchableSelect id="rec-emp" options={options} value={employeeId} onChange={setEmployeeId} placeholder="Select employee…" />
+      </FormField>
+      <FormField label="Date" htmlFor="rec-date" required>
+        <input id="rec-date" type="date" max={todayIst()} className={textInputClass()} value={attendanceDate} onChange={(e) => setAttendanceDate(e.target.value)} />
+      </FormField>
+      <div className="grid grid-cols-2 gap-3">
+        <FormField label="Check-in" htmlFor="rec-in" required>
+          <input id="rec-in" type="time" className={textInputClass()} value={checkIn} onChange={(e) => setCheckIn(e.target.value)} />
+        </FormField>
+        <FormField label="Check-out" htmlFor="rec-out">
+          <input id="rec-out" type="time" className={textInputClass()} value={checkOut} onChange={(e) => setCheckOut(e.target.value)} />
+        </FormField>
+      </div>
+      <FormField label="Remarks" htmlFor="rec-remarks">
+        <input id="rec-remarks" className={textInputClass()} value={remarks} onChange={(e) => setRemarks(e.target.value)} />
+      </FormField>
+      <p className="text-xs text-zinc-500">Adds a session marked &quot;Added by HR&quot;. It can&apos;t overlap the employee&apos;s other punches.</p>
+      <div className="flex justify-end gap-2">
+        <Button variant="secondary" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button onClick={submit} disabled={!employeeId || !attendanceDate || !checkIn}>
+          Save
+        </Button>
+      </div>
     </div>
   );
 }
