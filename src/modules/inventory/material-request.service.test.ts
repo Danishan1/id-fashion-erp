@@ -18,6 +18,7 @@ vi.mock("./inventory.service", () => ({
   getAvailableQuantity: vi.fn(),
   getAvailableQuantityByColor: vi.fn(),
   getAvailableQuantityByDye: vi.fn(),
+  getFabricRollAvailableQuantity: vi.fn(),
   getStockColorBreakdown: vi.fn(),
   recordInventoryTransaction: vi.fn(),
 }));
@@ -61,7 +62,7 @@ vi.mock("./material-substitution.repository", () => ({
 
 const { MaterialRequestRepository, MaterialRequestItemRepository } = await import("./material-request.repository");
 const { FabricRollRepository } = await import("@/modules/purchasing/fabric-roll.repository");
-const { recordInventoryTransaction, getAvailableQuantity, getAvailableQuantityByColor, getStockColorBreakdown } = await import("./inventory.service");
+const { recordInventoryTransaction, getAvailableQuantity, getAvailableQuantityByColor, getFabricRollAvailableQuantity, getStockColorBreakdown } = await import("./inventory.service");
 const { StockBalanceRepository } = await import("./inventory.repository");
 const { WarehouseRepository } = await import("@/modules/warehouses/warehouse.repository");
 const { PermissionService } = await import("@/core/rbac/PermissionService");
@@ -139,6 +140,7 @@ beforeEach(() => {
   vi.mocked(FabricRollRepository.findAvailableAcrossWarehousesForMaterial).mockReset();
   vi.mocked(getAvailableQuantity).mockReset();
   vi.mocked(getAvailableQuantityByColor).mockReset().mockResolvedValue(0);
+  vi.mocked(getFabricRollAvailableQuantity).mockReset().mockResolvedValue(0);
   // Default: all stock uncoloured, so the colour breakdown mirrors getAvailableQuantity.
   vi.mocked(getStockColorBreakdown)
     .mockReset()
@@ -1600,6 +1602,22 @@ describe("colour-wise issue", () => {
 
     await issueMaterialRequestLine(actor, "line-1", 5);
 
+    expect(recordInventoryTransaction).toHaveBeenCalledWith(expect.anything(), actor, expect.objectContaining({ quantity: -5, colorId: "col-green" }));
+  });
+
+  it("uses fabric roll quantity when line is fabric and has colour", async () => {
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue({
+      ...coloredLine,
+      material: { ...coloredLine.material, materialCategory: "FABRIC" },
+    } as never);
+    vi.mocked(getAvailableQuantity).mockResolvedValue(50);
+    vi.mocked(getFabricRollAvailableQuantity).mockResolvedValue(30);
+    vi.mocked(getAvailableQuantityByColor).mockResolvedValue(0);
+    vi.mocked(MaterialRequestItemRepository.guardedIncrementIssued).mockResolvedValue({ count: 1 } as never);
+
+    await issueMaterialRequestLine(actor, "line-1", 5);
+
+    expect(getFabricRollAvailableQuantity).toHaveBeenCalledWith("co-1", "mat-linen", "wh-1", "col-green", null);
     expect(recordInventoryTransaction).toHaveBeenCalledWith(expect.anything(), actor, expect.objectContaining({ quantity: -5, colorId: "col-green" }));
   });
 });

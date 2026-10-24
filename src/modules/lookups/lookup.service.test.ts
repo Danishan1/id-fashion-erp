@@ -58,7 +58,7 @@ describe("isActive preserved across an ordinary edit, for every lookup entity", 
   });
 
   it("size: update preserves existing isActive when omitted from the payload", async () => {
-    vi.mocked(prisma.size.findFirst).mockResolvedValue({ id: "size-1", isActive: false } as never);
+    vi.mocked(prisma.size.findFirst).mockResolvedValueOnce({ id: "size-1", isActive: false } as never).mockResolvedValueOnce(null);
     await updateSize(actor, "size-1", { code: "M", name: "Medium", sortOrder: 1 } as never);
     expect(prisma.size.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ isActive: false }) }));
   });
@@ -71,6 +71,7 @@ describe("isActive preserved across an ordinary edit, for every lookup entity", 
 
   it("unit: update preserves existing isActive when omitted from the payload", async () => {
     vi.mocked(prisma.unitOfMeasure.findUnique).mockResolvedValue({ id: "unit-1", isActive: false, baseUnitId: null } as never);
+    vi.mocked(prisma.unitOfMeasure.findFirst).mockResolvedValueOnce(null);
     await updateUnit(actor, "unit-1", { code: "PCS", name: "Pieces", conversionFactor: 1 } as never);
     expect(prisma.unitOfMeasure.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ isActive: false }) }));
   });
@@ -104,5 +105,53 @@ describe("colour names are unique per company", () => {
 
     vi.mocked(prisma.color.findFirst).mockResolvedValueOnce({ id: "color-1", isActive: true } as never).mockResolvedValueOnce({ code: "BLACK", isActive: true } as never);
     await expect(updateColor(actor, "color-1", { code: "RED", name: "Black" } as never)).rejects.toBeInstanceOf(BusinessRuleError);
+  });
+});
+
+describe("size names are unique per company", () => {
+  it("refuses a new size whose name already exists, ignoring case and spaces", async () => {
+    vi.mocked(prisma.size.findFirst).mockResolvedValueOnce(null).mockResolvedValueOnce({ code: "XL", isActive: true } as never);
+
+    await expect(createSize(actor, { code: "X-LARGE", name: "  extra large ", sortOrder: 4 } as never)).rejects.toMatchObject({
+      message: expect.stringContaining("XL"),
+    });
+    expect(prisma.size.findFirst).toHaveBeenLastCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ name: { equals: "extra large", mode: "insensitive" } }) })
+    );
+    expect(prisma.size.create).not.toHaveBeenCalled();
+  });
+
+  it("lets a size keep its own name when edited, but not take another size's", async () => {
+    vi.mocked(prisma.size.findFirst).mockResolvedValueOnce({ id: "size-1", isActive: true } as never).mockResolvedValueOnce(null);
+    await updateSize(actor, "size-1", { code: "M", name: "Medium", sortOrder: 2 } as never);
+    expect(prisma.size.findFirst).toHaveBeenLastCalledWith(expect.objectContaining({ where: expect.objectContaining({ NOT: { id: "size-1" } }) }));
+
+    vi.mocked(prisma.size.findFirst).mockResolvedValueOnce({ id: "size-1", isActive: true } as never).mockResolvedValueOnce({ code: "L", isActive: true } as never);
+    await expect(updateSize(actor, "size-1", { code: "M", name: "Large", sortOrder: 2 } as never)).rejects.toBeInstanceOf(BusinessRuleError);
+  });
+});
+
+describe("unit names are globally unique", () => {
+  it("refuses a new unit whose name already exists, ignoring case and spaces", async () => {
+    vi.mocked(prisma.unitOfMeasure.findFirst).mockResolvedValueOnce({ code: "BOX", isActive: true } as never);
+
+    await expect(createUnit(actor, { code: "BOX-2", name: "  box  ", conversionFactor: 1 } as never)).rejects.toMatchObject({
+      message: expect.stringContaining("BOX"),
+    });
+    expect(prisma.unitOfMeasure.findFirst).toHaveBeenLastCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ name: { equals: "box", mode: "insensitive" } }) })
+    );
+    expect(prisma.unitOfMeasure.create).not.toHaveBeenCalled();
+  });
+
+  it("lets a unit keep its own name when edited, but not take another unit's", async () => {
+    vi.mocked(prisma.unitOfMeasure.findUnique).mockResolvedValue({ id: "unit-1", isActive: true, baseUnitId: null } as never);
+    vi.mocked(prisma.unitOfMeasure.findFirst).mockResolvedValueOnce(null);
+    await updateUnit(actor, "unit-1", { code: "BOX", name: "Box", conversionFactor: 1 } as never);
+    expect(prisma.unitOfMeasure.findFirst).toHaveBeenLastCalledWith(expect.objectContaining({ where: expect.objectContaining({ NOT: { id: "unit-1" } }) }));
+
+    vi.mocked(prisma.unitOfMeasure.findUnique).mockResolvedValue({ id: "unit-1", isActive: true, baseUnitId: null } as never);
+    vi.mocked(prisma.unitOfMeasure.findFirst).mockResolvedValueOnce({ code: "KG", isActive: true } as never);
+    await expect(updateUnit(actor, "unit-1", { code: "BOX", name: "Kilogram", conversionFactor: 1 } as never)).rejects.toBeInstanceOf(BusinessRuleError);
   });
 });

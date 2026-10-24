@@ -21,6 +21,7 @@ import {
   getAvailableQuantity,
   getAvailableQuantityByColor,
   getAvailableQuantityByDye,
+  getFabricRollAvailableQuantity,
   getStockColorBreakdown,
   recordInventoryTransaction,
 } from "./inventory.service";
@@ -84,15 +85,23 @@ async function getLineAvailableStock(
   warehouseId: string,
   line: { materialId: string; colorId?: string | null; dyeId: string | null; material: { materialCategory: string | null } }
 ): Promise<number> {
+  const flatAvailable = await getAvailableQuantity(companyId, line.materialId, warehouseId);
+
   // Colour-wise stock (2026-10-21): a line with a colour can only use stock
   // of that colour.
   if (line.colorId) {
+    if (line.material.materialCategory === "FABRIC") {
+      const rollStock = await getFabricRollAvailableQuantity(companyId, line.materialId, warehouseId, line.colorId, line.dyeId);
+      if (rollStock > 0) {
+        return Math.min(rollStock, flatAvailable);
+      }
+    }
     return getAvailableQuantityByColor(companyId, line.materialId, warehouseId, line.colorId);
   }
   if (line.dyeId && line.material.materialCategory === "FABRIC") {
     return getAvailableQuantityByDye(companyId, line.materialId, warehouseId, line.dyeId);
   }
-  return getAvailableQuantity(companyId, line.materialId, warehouseId);
+  return flatAvailable;
 }
 
 /**
@@ -849,11 +858,8 @@ export async function issueMaterialRequestLine(
     // carries the exact same drift risk as the roll itself and wouldn't
     // actually reflect what the ledger guard checks against.
     const flatAvailable = await getAvailableQuantity(actor.companyId, line.materialId, effectiveWarehouseId);
-    // A coloured line can't take more than its colour holds, roll or not.
-    const colorAvailable = line.colorId
-      ? await getAvailableQuantityByColor(actor.companyId, line.materialId, effectiveWarehouseId, line.colorId)
-      : flatAvailable;
-    const rollAvailable = Math.min(Number(roll.remainingQuantity), flatAvailable, colorAvailable);
+    // A roll is already specific to its received colour, so cap against flat available and the roll itself.
+    const rollAvailable = Math.min(Number(roll.remainingQuantity), flatAvailable);
     if (baseQuantity > rollAvailable) {
       throw new BusinessRuleError(
         "INSUFFICIENT_RAW_MATERIAL_STOCK",
@@ -1224,12 +1230,23 @@ export async function getOtherWarehouseStockForLine(actor: ActorContext, lineId:
   }
 
   return balances
-    .map((b) => ({
-      warehouseId: b.warehouseId,
-      warehouseName: warehouseNameById.get(b.warehouseId) ?? "Unknown Warehouse",
-      totalQuantity: line.colorId ? (colorQtyByWarehouse.get(b.warehouseId) ?? 0) : Number(b.quantityOnHand),
-      rolls: rollsByWarehouse.get(b.warehouseId) ?? [],
-    }))
+    .map((b) => {
+      let totalQuantity = Number(b.quantityOnHand);
+      if (line.colorId) {
+        const rollsAtWh = rollsByWarehouse.get(b.warehouseId) ?? [];
+        if (isFabric && rollsAtWh.length > 0) {
+          totalQuantity = rollsAtWh.reduce((sum, r) => sum + r.remainingQuantity, 0);
+        } else if (colorQtyByWarehouse.has(b.warehouseId)) {
+          totalQuantity = colorQtyByWarehouse.get(b.warehouseId) ?? 0;
+        }
+      }
+      return {
+        warehouseId: b.warehouseId,
+        warehouseName: warehouseNameById.get(b.warehouseId) ?? "Unknown Warehouse",
+        totalQuantity,
+        rolls: rollsByWarehouse.get(b.warehouseId) ?? [],
+      };
+    })
     .filter((w) => w.totalQuantity > 0)
     .sort((a, b) => a.warehouseName.localeCompare(b.warehouseName));
 }

@@ -51,6 +51,8 @@ const mockPrismaClient = vi.hoisted(() => ({
   // to exercise the real reservation-creation path.
   productionOrder: { findUnique: vi.fn() },
   salesOrderItem: { findUnique: vi.fn() },
+  lotVariantBreakdown: { findMany: vi.fn() },
+  finishedGoodsReceiptItem: { findMany: vi.fn() },
 }));
 
 vi.mock("@/core/db/client", () => ({
@@ -192,6 +194,8 @@ beforeEach(() => {
   mockPrismaClient.productVariant.findMany.mockReset().mockResolvedValue([]);
   mockPrismaClient.productionOrder.findUnique.mockReset().mockResolvedValue({ salesOrderItemId: null } as never);
   mockPrismaClient.salesOrderItem.findUnique.mockReset();
+  mockPrismaClient.lotVariantBreakdown.findMany.mockReset().mockResolvedValue([]);
+  mockPrismaClient.finishedGoodsReceiptItem.findMany.mockReset().mockResolvedValue([]);
   vi.mocked(recordInventoryTransaction).mockReset();
   vi.mocked(createFinishedGoodsReceiptInTx).mockReset().mockResolvedValue({ id: "fgr-1" } as never);
   vi.mocked(JobOrderProgressEntryRepository.createInTx).mockReset();
@@ -699,6 +703,61 @@ describe("forwardJobOrder", () => {
         })
       );
       expect(recordInventoryTransaction).not.toHaveBeenCalled();
+    });
+
+    it("rejects when variant was not planned/packed in the lot", async () => {
+      stubFinalStageHappyPath();
+      mockPrismaClient.productVariant.findMany.mockResolvedValue([
+        { id: "var-1", color: { name: "Red" }, size: { name: "M" } },
+        { id: "var-2", color: { name: "Blue" }, size: { name: "M" } },
+        { id: "var-3", color: { name: "Green" }, size: { name: "M" } },
+      ]);
+      mockPrismaClient.lotVariantBreakdown.findMany.mockResolvedValue([
+        { productVariantId: "var-1", quantity: 50, productVariant: { color: { name: "Red" }, size: { name: "M" } } },
+        { productVariantId: "var-2", quantity: 50, productVariant: { color: { name: "Blue" }, size: { name: "M" } } },
+      ] as never);
+      mockPrismaClient.finishedGoodsReceiptItem.findMany.mockResolvedValue([]);
+
+      await expect(
+        forwardJobOrder(actor, "jo-1", {
+          quantity: 10,
+          finishedGoodsWarehouseId: "wh-1",
+          variantBreakdown: [
+            { productVariantId: "var-3", quantity: 10 },
+          ],
+        } as never)
+      ).rejects.toMatchObject({
+        code: "VALIDATION_ERROR",
+        message: expect.stringContaining("was not planned or packed for this lot"),
+      });
+    });
+
+    it("rejects when sending more than remaining packed quantity for that variant in the lot", async () => {
+      stubFinalStageHappyPath({ completedQuantity: "30" });
+      mockPrismaClient.productVariant.findMany.mockResolvedValue([
+        { id: "var-1", color: { name: "Red" }, size: { name: "M" } },
+        { id: "var-2", color: { name: "Blue" }, size: { name: "M" } },
+      ]);
+      mockPrismaClient.lotVariantBreakdown.findMany.mockResolvedValue([
+        { productVariantId: "var-1", quantity: 50, productVariant: { color: { name: "Red" }, size: { name: "M" } } },
+        { productVariantId: "var-2", quantity: 50, productVariant: { color: { name: "Blue" }, size: { name: "M" } } },
+      ] as never);
+      mockPrismaClient.finishedGoodsReceiptItem.findMany.mockResolvedValue([
+        { productVariantId: "var-1", quantity: 30 },
+      ] as never);
+
+      await expect(
+        forwardJobOrder(actor, "jo-1", {
+          quantity: 30,
+          finishedGoodsWarehouseId: "wh-1",
+          variantBreakdown: [
+            { productVariantId: "var-1", quantity: 30 },
+          ],
+        } as never)
+      ).rejects.toMatchObject({
+        code: "VALIDATION_ERROR",
+        message: expect.stringContaining("only 20 pcs remaining out of 50 pcs packed for this lot"),
+      });
     });
   });
 });

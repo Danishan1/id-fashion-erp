@@ -780,6 +780,36 @@ export function MaterialRequestWorkflowPanel({
                           Issue
                         </span>
                       )}
+                      {canIssue && line.remainingQuantity <= 0 && line.availableStockQuantity > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIssuingLine(line);
+                            setIssueLocationId("");
+                            setRollQuantities({});
+                            setIssueExtra(true);
+                            setIssueExtraReason("");
+                            setError(null);
+                            setIssueWarehouseId("");
+                            setIssueAltWarehouses(null);
+                            if (line.material.materialCategory === "FABRIC") {
+                              setIssueQty("");
+                              setRollsLoading(true);
+                              setAvailableRolls([]);
+                              fetch(`/api/v1/material-requests/lines/${line.id}/available-rolls`)
+                                .then((res) => res.json())
+                                .then((body) => setAvailableRolls(body.data ?? []))
+                                .finally(() => setRollsLoading(false));
+                            } else {
+                              setIssueQty(String(line.availableStockQuantity));
+                              setAvailableRolls([]);
+                            }
+                          }}
+                          className="mr-2 text-xs font-medium text-amber-600 hover:text-amber-500"
+                        >
+                          Issue Extra
+                        </button>
+                      )}
                       {canIssue && line.remainingQuantity > 0 && !(line.color && line.availableStockQuantity <= 0) && (
                         <button
                           type="button"
@@ -1158,17 +1188,13 @@ export function MaterialRequestWorkflowPanel({
           // ordinary Production Requirement/Damage Replacement lines too,
           // not just Sampling ones.
           const canIssueExtra = true;
-          // With "Issue Extra" checked, the only real ceiling left is
-          // physical stock — the planned/requested quantity is deliberately
-          // no longer a hard cap, matching the confirmed override design.
-          const cap = issueExtra && canIssueExtra ? effectiveAvailable : Math.min(issuingLine.remainingQuantity, effectiveAvailable);
-          const mustPickRoll = isFabric && availableRolls.length > 0 && totalRollQty <= 0;
-          // The real quantity about to be issued — the summed rolls in
-          // fabric-with-rolls mode (Issue Quantity itself becomes a
-          // read-only mirror of this below), the free-typed field otherwise.
           const effectiveIssueQty = isFabric && availableRolls.length > 0 ? totalRollQty : Number(issueQty);
           const isOverPlanned = effectiveIssueQty > issuingLine.remainingQuantity;
-          const needsExtraReason = issueExtra && isOverPlanned && !issueExtraReason.trim();
+          // When over planned, automatically allow issuing extra up to effectiveAvailable
+          const activeIssueExtra = issueExtra || isOverPlanned;
+          const cap = activeIssueExtra && canIssueExtra ? effectiveAvailable : Math.min(issuingLine.remainingQuantity, effectiveAvailable);
+          const mustPickRoll = isFabric && availableRolls.length > 0 && totalRollQty <= 0;
+          const needsExtraReason = isOverPlanned && !issueExtraReason.trim();
           const overCap = effectiveIssueQty > cap;
 
           return (
@@ -1343,19 +1369,17 @@ export function MaterialRequestWorkflowPanel({
                 id="issueQty"
                 type="number"
                 min={0}
-                // Capped by whichever is smaller — the request's own
-                // remaining need, or what's actually on hand. In
-                // fabric-with-rolls mode this field is a read-only mirror of
-                // the roll table's own summed quantities above (each roll's
-                // own input is what's actually editable there); otherwise
-                // it's the original free-typed field, unchanged.
                 disabled={mustPickRoll || (isFabric && availableRolls.length > 0)}
-                max={cap}
+                max={effectiveAvailable}
                 step="0.0001"
                 value={isFabric && availableRolls.length > 0 ? String(totalRollQty) : issueQty}
                 onChange={(e) => {
                   const next = Number(e.target.value);
-                  setIssueQty(e.target.value !== "" && Number.isFinite(next) && next > cap ? String(cap) : e.target.value);
+                  const clamped = e.target.value !== "" && Number.isFinite(next) && next > effectiveAvailable ? String(effectiveAvailable) : e.target.value;
+                  setIssueQty(clamped);
+                  if (next > issuingLine.remainingQuantity) {
+                    setIssueExtra(true);
+                  }
                 }}
                 className={textInputClass()}
               />

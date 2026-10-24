@@ -15,8 +15,9 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
     await PermissionService.assert(session.user.id, "production", "view_all");
 
     const { id } = await params;
+    const lotId = _req.nextUrl.searchParams.get("lotId") || undefined;
     await assertProductionOrderInScope({ companyId: session.user.companyId, userId: session.user.id }, id);
-    const rows = await getVariantBreakdownSuggestions(session.user.companyId, id);
+    const rows = await getVariantBreakdownSuggestions(session.user.companyId, id, lotId);
 
     return NextResponse.json({ data: rows });
   } catch (error) {

@@ -234,6 +234,9 @@ export interface VariantBreakdownSuggestionRow {
    * actually left to put into a new lot. */
   alreadyInLots: number;
   remaining: number | null;
+  lotQuantity?: number | null;
+  alreadySentToFg?: number;
+  remainingForLot?: number | null;
 }
 
 /**
@@ -244,7 +247,11 @@ export interface VariantBreakdownSuggestionRow {
  * style's own active variants with no suggested quantity — purely for manual
  * entry. Read-only, informational — never caps what createLot() will accept.
  */
-export async function getVariantBreakdownSuggestions(companyId: string, productionOrderId: string): Promise<VariantBreakdownSuggestionRow[]> {
+export async function getVariantBreakdownSuggestions(
+  companyId: string,
+  productionOrderId: string,
+  lotId?: string
+): Promise<VariantBreakdownSuggestionRow[]> {
   const order = await ProductionOrderRepository.findAnyById(companyId, productionOrderId);
   if (!order) throw new BusinessRuleError("NOT_FOUND", "Production order not found.", { id: productionOrderId });
 
@@ -255,6 +262,27 @@ export async function getVariantBreakdownSuggestions(companyId: string, producti
   });
   const alreadyMap = new Map(alreadyRows.map((r) => [r.productVariantId, Number(r._sum.quantity ?? 0)]));
 
+  let lotVariantsMap: Map<string, number> | null = null;
+  let alreadySentToFgMap: Map<string, number> | null = null;
+  if (lotId) {
+    const lotBreakdowns = await prisma.lotVariantBreakdown.findMany({
+      where: { lotId },
+    });
+    if (lotBreakdowns.length > 0) {
+      lotVariantsMap = new Map(lotBreakdowns.map((b) => [b.productVariantId, Number(b.quantity)]));
+      const receipts = await prisma.finishedGoodsReceiptItem.findMany({
+        where: { finishedGoodsReceipt: { lotId } },
+        select: { productVariantId: true, quantity: true },
+      });
+      alreadySentToFgMap = new Map();
+      for (const r of receipts) {
+        if (r.productVariantId) {
+          alreadySentToFgMap.set(r.productVariantId, (alreadySentToFgMap.get(r.productVariantId) ?? 0) + Number(r.quantity));
+        }
+      }
+    }
+  }
+
   if (order.salesOrderItemId) {
     const item = await prisma.salesOrderItem.findFirst({
       where: { id: order.salesOrderItemId },
@@ -264,6 +292,9 @@ export async function getVariantBreakdownSuggestions(companyId: string, producti
 
     return item.breakdown.map((b) => {
       const already = alreadyMap.get(b.productVariantId) ?? 0;
+      const lotQty = lotVariantsMap ? (lotVariantsMap.get(b.productVariantId) ?? 0) : null;
+      const sent = alreadySentToFgMap ? (alreadySentToFgMap.get(b.productVariantId) ?? 0) : 0;
+      const remainingForLot = lotQty !== null ? Math.max(0, lotQty - sent) : null;
       return {
         productVariantId: b.productVariantId,
         colorName: b.productVariant.color.name,
@@ -272,6 +303,7 @@ export async function getVariantBreakdownSuggestions(companyId: string, producti
         orderedQuantity: b.orderedQuantity,
         alreadyInLots: already,
         remaining: b.orderedQuantity - already,
+        ...(lotId ? { lotQuantity: lotQty, alreadySentToFg: sent, remainingForLot } : {}),
       };
     });
   }
@@ -281,15 +313,21 @@ export async function getVariantBreakdownSuggestions(companyId: string, producti
     include: { color: true, size: true },
     orderBy: [{ color: { name: "asc" } }, { size: { sortOrder: "asc" } }],
   });
-  return variants.map((v) => ({
-    productVariantId: v.id,
-    colorName: v.color.name,
-    sizeName: v.size.name,
-    skuCode: v.skuCode,
-    orderedQuantity: null,
-    alreadyInLots: alreadyMap.get(v.id) ?? 0,
-    remaining: null,
-  }));
+  return variants.map((v) => {
+    const lotQty = lotVariantsMap ? (lotVariantsMap.get(v.id) ?? 0) : null;
+    const sent = alreadySentToFgMap ? (alreadySentToFgMap.get(v.id) ?? 0) : 0;
+    const remainingForLot = lotQty !== null ? Math.max(0, lotQty - sent) : null;
+    return {
+      productVariantId: v.id,
+      colorName: v.color.name,
+      sizeName: v.size.name,
+      skuCode: v.skuCode,
+      orderedQuantity: null,
+      alreadyInLots: alreadyMap.get(v.id) ?? 0,
+      remaining: null,
+      ...(lotId ? { lotQuantity: lotQty, alreadySentToFg: sent, remainingForLot } : {}),
+    };
+  });
 }
 
 async function assertLotAtRest(lotId: string, action: string) {

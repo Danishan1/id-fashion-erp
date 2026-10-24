@@ -325,7 +325,8 @@ async function completeAtFinalStageInTx(
 export async function resolveFinalStageVariantBreakdown(
   productId: string,
   quantity: number,
-  variantBreakdown: { productVariantId: string; quantity: number }[]
+  variantBreakdown: { productVariantId: string; quantity: number }[],
+  lotId?: string
 ): Promise<{ productVariantId: string; quantity: number }[] | null> {
   const variants = await ProductVariantRepository.findManyActiveByProductId(productId);
   if (variants.length === 0) return null;
@@ -356,6 +357,64 @@ export async function resolveFinalStageVariantBreakdown(
       `The colour/size breakdown (${sum}) must sum to exactly the quantity being completed (${quantity}).`,
       { breakdownSum: sum, quantity }
     );
+  }
+
+  if (lotId && prisma.lotVariantBreakdown?.findMany && prisma.finishedGoodsReceiptItem?.findMany) {
+    const lotVariants = await prisma.lotVariantBreakdown.findMany({
+      where: { lotId },
+      include: { productVariant: { include: { color: true, size: true } } },
+    });
+
+    if (lotVariants.length > 0) {
+      const existingReceipts = await prisma.finishedGoodsReceiptItem.findMany({
+        where: { finishedGoodsReceipt: { lotId } },
+        select: { productVariantId: true, quantity: true },
+      });
+
+      const alreadySentMap = new Map<string, number>();
+      for (const item of existingReceipts) {
+        if (item.productVariantId) {
+          alreadySentMap.set(
+            item.productVariantId,
+            (alreadySentMap.get(item.productVariantId) ?? 0) + Number(item.quantity)
+          );
+        }
+      }
+
+      const lotVariantMap = new Map(
+        lotVariants.map((lv) => [
+          lv.productVariantId,
+          {
+            planned: Number(lv.quantity),
+            variantName: `${lv.productVariant.color.name} / ${lv.productVariant.size.name}`,
+          },
+        ])
+      );
+
+      for (const row of variantBreakdown) {
+        const lotInfo = lotVariantMap.get(row.productVariantId);
+        const label = lotInfo?.variantName ?? "Variant";
+
+        if (!lotInfo || lotInfo.planned <= 0) {
+          throw new BusinessRuleError(
+            "VALIDATION_ERROR",
+            `Variant "${label}" was not planned or packed for this lot (0 pcs in lot). Only products packed in this lot can be sent to Finished Goods.`,
+            { productVariantId: row.productVariantId }
+          );
+        }
+
+        const alreadySent = alreadySentMap.get(row.productVariantId) ?? 0;
+        const remaining = Math.max(0, lotInfo.planned - alreadySent);
+
+        if (row.quantity > remaining + EPSILON) {
+          throw new BusinessRuleError(
+            "VALIDATION_ERROR",
+            `Cannot send ${row.quantity} pcs of "${label}" to Finished Goods — only ${remaining} pcs remaining out of ${lotInfo.planned} pcs packed for this lot (${alreadySent} pcs already sent).`,
+            { productVariantId: row.productVariantId, quantity: row.quantity, remaining, planned: lotInfo.planned, alreadySent }
+          );
+        }
+      }
+    }
   }
 
   return variantBreakdown;
@@ -598,7 +657,8 @@ export async function cascadeReceivedThroughStagesInTx(
       const resolvedVariantBreakdown = await resolveFinalStageVariantBreakdown(
         current.productionOrder.productId,
         params.quantity,
-        params.variantBreakdown ?? []
+        params.variantBreakdown ?? [],
+        current.lot.id
       );
       await completeAtFinalStageInTx(tx, actor, {
         productId: current.productionOrder.productId,
@@ -1569,7 +1629,7 @@ export async function forwardJobOrder(actor: ActorContext, jobOrderId: string, i
   // the transaction opens, so a rejection here never leaves a partial write
   // behind.
   const variantBreakdown = targetStage.isFinal
-    ? await resolveFinalStageVariantBreakdown(order.productId, input.quantity, input.variantBreakdown ?? [])
+    ? await resolveFinalStageVariantBreakdown(order.productId, input.quantity, input.variantBreakdown ?? [], jobOrder.lot.id)
     : null;
 
   const result = await prisma.$transaction(async (tx) => {
@@ -1770,7 +1830,7 @@ export async function recordQcInspection(actor: ActorContext, jobOrderId: string
   // behind.
   const variantBreakdown =
     input.acceptedQuantity > 0 && nextStage?.isFinal
-      ? await resolveFinalStageVariantBreakdown(order.productId, input.acceptedQuantity, input.variantBreakdown ?? [])
+      ? await resolveFinalStageVariantBreakdown(order.productId, input.acceptedQuantity, input.variantBreakdown ?? [], jobOrder.lot.id)
       : null;
 
   const inspection = await prisma.$transaction(async (tx) => {

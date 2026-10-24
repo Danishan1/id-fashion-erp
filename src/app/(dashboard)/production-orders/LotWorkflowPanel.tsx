@@ -71,6 +71,9 @@ interface FinalStageVariantOption {
   colorName: string;
   sizeName: string;
   skuCode: string;
+  lotQuantity?: number | null;
+  alreadySentToFg?: number;
+  remainingForLot?: number | null;
 }
 
 interface LotDetail {
@@ -426,12 +429,29 @@ export function LotWorkflowPanel({
         : nextStageAfter(forwardTarget.productionStage.sequence)
       : undefined;
     const isFinalStage = !!resolved?.isFinal;
+    const targetLotId = lotId;
     (isFinalStage
-      ? fetch(`/api/v1/production-orders/${productionOrderId}/variant-breakdown-suggestions`)
+      ? fetch(`/api/v1/production-orders/${productionOrderId}/variant-breakdown-suggestions?lotId=${targetLotId}`)
           .then((res) => res.json())
           .then((body) => {
-            const rows = (body.data ?? []) as Array<{ productVariantId: string; colorName: string; sizeName: string; skuCode: string }>;
-            return rows.map((r) => ({ productVariantId: r.productVariantId, colorName: r.colorName, sizeName: r.sizeName, skuCode: r.skuCode }));
+            const rows = (body.data ?? []) as Array<{
+              productVariantId: string;
+              colorName: string;
+              sizeName: string;
+              skuCode: string;
+              lotQuantity?: number | null;
+              alreadySentToFg?: number;
+              remainingForLot?: number | null;
+            }>;
+            return rows.map((r) => ({
+              productVariantId: r.productVariantId,
+              colorName: r.colorName,
+              sizeName: r.sizeName,
+              skuCode: r.skuCode,
+              lotQuantity: r.lotQuantity,
+              alreadySentToFg: r.alreadySentToFg,
+              remainingForLot: r.remainingForLot,
+            }));
           })
           .catch(() => [] as FinalStageVariantOption[])
       : Promise.resolve<FinalStageVariantOption[]>([])
@@ -445,12 +465,29 @@ export function LotWorkflowPanel({
   useEffect(() => {
     const resolved = qcTarget ? nextStageAfter(qcTarget.productionStage.sequence) : undefined;
     const isFinalStage = !!qcTarget && Number(qcAccepted) > 0 && !!resolved?.isFinal;
+    const targetLotId = lotId;
     (isFinalStage
-      ? fetch(`/api/v1/production-orders/${productionOrderId}/variant-breakdown-suggestions`)
+      ? fetch(`/api/v1/production-orders/${productionOrderId}/variant-breakdown-suggestions?lotId=${targetLotId}`)
           .then((res) => res.json())
           .then((body) => {
-            const rows = (body.data ?? []) as Array<{ productVariantId: string; colorName: string; sizeName: string; skuCode: string }>;
-            return rows.map((r) => ({ productVariantId: r.productVariantId, colorName: r.colorName, sizeName: r.sizeName, skuCode: r.skuCode }));
+            const rows = (body.data ?? []) as Array<{
+              productVariantId: string;
+              colorName: string;
+              sizeName: string;
+              skuCode: string;
+              lotQuantity?: number | null;
+              alreadySentToFg?: number;
+              remainingForLot?: number | null;
+            }>;
+            return rows.map((r) => ({
+              productVariantId: r.productVariantId,
+              colorName: r.colorName,
+              sizeName: r.sizeName,
+              skuCode: r.skuCode,
+              lotQuantity: r.lotQuantity,
+              alreadySentToFg: r.alreadySentToFg,
+              remainingForLot: r.remainingForLot,
+            }));
           })
           .catch(() => [] as FinalStageVariantOption[])
       : Promise.resolve<FinalStageVariantOption[]>([])
@@ -463,10 +500,24 @@ export function LotWorkflowPanel({
 
   const forwardBreakdownTotal = Object.values(forwardVariantQtyById).reduce((sum, v) => sum + (Number(v) || 0), 0);
   const forwardBreakdownValid =
-    forwardVariantOptions.length === 0 || Math.abs(forwardBreakdownTotal - Number(forwardQty || 0)) < 0.0001;
+    (forwardVariantOptions.length === 0 || Math.abs(forwardBreakdownTotal - Number(forwardQty || 0)) < 0.0001) &&
+    forwardVariantOptions.every((v) => {
+      const entered = Number(forwardVariantQtyById[v.productVariantId] || 0);
+      if (v.remainingForLot !== null && v.remainingForLot !== undefined) {
+        return entered <= v.remainingForLot + 0.0001;
+      }
+      return true;
+    });
   const qcBreakdownTotal = Object.values(qcVariantQtyById).reduce((sum, v) => sum + (Number(v) || 0), 0);
   const qcBreakdownValid =
-    qcVariantOptions.length === 0 || Math.abs(qcBreakdownTotal - Number(qcAccepted || 0)) < 0.0001;
+    (qcVariantOptions.length === 0 || Math.abs(qcBreakdownTotal - Number(qcAccepted || 0)) < 0.0001) &&
+    qcVariantOptions.every((v) => {
+      const entered = Number(qcVariantQtyById[v.productVariantId] || 0);
+      if (v.remainingForLot !== null && v.remainingForLot !== undefined) {
+        return entered <= v.remainingForLot + 0.0001;
+      }
+      return true;
+    });
 
   const startWorkerError = validateWorkerRows(startWorkers, Number(lot.quantity));
   // The stage the lot will start at: the one picked, else the first active one (same rule as the backend).
@@ -1302,29 +1353,43 @@ export function LotWorkflowPanel({
                         <th className="px-2 py-1.5 font-medium">Color</th>
                         <th className="px-2 py-1.5 font-medium">Size</th>
                         <th className="px-2 py-1.5 font-medium">SKU</th>
-                        <th className="px-2 py-1.5 text-right font-medium">Qty</th>
+                        <th className="px-2 py-1.5 text-right font-medium">In Lot</th>
+                        <th className="px-2 py-1.5 text-right font-medium">Sent to FG</th>
+                        <th className="px-2 py-1.5 text-right font-medium">Remaining</th>
+                        <th className="px-2 py-1.5 text-right font-medium">Qty to Send</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {forwardVariantOptions.map((v) => (
-                        <tr key={v.productVariantId} className="border-t border-zinc-100 dark:border-zinc-800">
-                          <td className="px-2 py-1.5 text-zinc-700 dark:text-zinc-200">{v.colorName}</td>
-                          <td className="px-2 py-1.5 text-zinc-700 dark:text-zinc-200">{v.sizeName}</td>
-                          <td className="px-2 py-1.5 text-zinc-500">{v.skuCode}</td>
-                          <td className="px-2 py-1.5 text-right">
-                            <input
-                              type="number"
-                              min={0}
-                              step="0.0001"
-                              value={forwardVariantQtyById[v.productVariantId] ?? ""}
-                              onChange={(e) =>
-                                setForwardVariantQtyById((prev) => ({ ...prev, [v.productVariantId]: e.target.value }))
-                              }
-                              className="w-24 rounded border border-zinc-300 px-2 py-1 text-right text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                            />
-                          </td>
-                        </tr>
-                      ))}
+                      {forwardVariantOptions.map((v) => {
+                        const maxAllowed = v.remainingForLot !== null && v.remainingForLot !== undefined ? v.remainingForLot : undefined;
+                        const isExhausted = maxAllowed !== undefined && maxAllowed <= 0;
+                        return (
+                          <tr key={v.productVariantId} className={`border-t border-zinc-100 dark:border-zinc-800 ${isExhausted ? "opacity-50" : ""}`}>
+                            <td className="px-2 py-1.5 text-zinc-700 dark:text-zinc-200">{v.colorName}</td>
+                            <td className="px-2 py-1.5 text-zinc-700 dark:text-zinc-200">{v.sizeName}</td>
+                            <td className="px-2 py-1.5 text-zinc-500">{v.skuCode}</td>
+                            <td className="px-2 py-1.5 text-right text-zinc-600 dark:text-zinc-400">{v.lotQuantity ?? "—"}</td>
+                            <td className="px-2 py-1.5 text-right text-zinc-600 dark:text-zinc-400">{v.alreadySentToFg ?? 0}</td>
+                            <td className="px-2 py-1.5 text-right font-medium text-zinc-900 dark:text-zinc-50">{v.remainingForLot ?? "—"}</td>
+                            <td className="px-2 py-1.5 text-right">
+                              <input
+                                type="number"
+                                min={0}
+                                max={maxAllowed}
+                                step="0.0001"
+                                disabled={isExhausted}
+                                value={forwardVariantQtyById[v.productVariantId] ?? ""}
+                                onChange={(e) => {
+                                  const next = Number(e.target.value);
+                                  const clamped = maxAllowed !== undefined && e.target.value !== "" && Number.isFinite(next) && next > maxAllowed ? String(maxAllowed) : e.target.value;
+                                  setForwardVariantQtyById((prev) => ({ ...prev, [v.productVariantId]: clamped }));
+                                }}
+                                className="w-24 rounded border border-zinc-300 px-2 py-1 text-right text-sm dark:border-zinc-700 dark:bg-zinc-950 disabled:bg-zinc-100 dark:disabled:bg-zinc-900"
+                              />
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -1447,29 +1512,43 @@ export function LotWorkflowPanel({
                         <th className="px-2 py-1.5 font-medium">Color</th>
                         <th className="px-2 py-1.5 font-medium">Size</th>
                         <th className="px-2 py-1.5 font-medium">SKU</th>
-                        <th className="px-2 py-1.5 text-right font-medium">Qty</th>
+                        <th className="px-2 py-1.5 text-right font-medium">In Lot</th>
+                        <th className="px-2 py-1.5 text-right font-medium">Sent to FG</th>
+                        <th className="px-2 py-1.5 text-right font-medium">Remaining</th>
+                        <th className="px-2 py-1.5 text-right font-medium">Qty to Send</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {qcVariantOptions.map((v) => (
-                        <tr key={v.productVariantId} className="border-t border-zinc-100 dark:border-zinc-800">
-                          <td className="px-2 py-1.5 text-zinc-700 dark:text-zinc-200">{v.colorName}</td>
-                          <td className="px-2 py-1.5 text-zinc-700 dark:text-zinc-200">{v.sizeName}</td>
-                          <td className="px-2 py-1.5 text-zinc-500">{v.skuCode}</td>
-                          <td className="px-2 py-1.5 text-right">
-                            <input
-                              type="number"
-                              min={0}
-                              step="0.0001"
-                              value={qcVariantQtyById[v.productVariantId] ?? ""}
-                              onChange={(e) =>
-                                setQcVariantQtyById((prev) => ({ ...prev, [v.productVariantId]: e.target.value }))
-                              }
-                              className="w-24 rounded border border-zinc-300 px-2 py-1 text-right text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                            />
-                          </td>
-                        </tr>
-                      ))}
+                      {qcVariantOptions.map((v) => {
+                        const maxAllowed = v.remainingForLot !== null && v.remainingForLot !== undefined ? v.remainingForLot : undefined;
+                        const isExhausted = maxAllowed !== undefined && maxAllowed <= 0;
+                        return (
+                          <tr key={v.productVariantId} className={`border-t border-zinc-100 dark:border-zinc-800 ${isExhausted ? "opacity-50" : ""}`}>
+                            <td className="px-2 py-1.5 text-zinc-700 dark:text-zinc-200">{v.colorName}</td>
+                            <td className="px-2 py-1.5 text-zinc-700 dark:text-zinc-200">{v.sizeName}</td>
+                            <td className="px-2 py-1.5 text-zinc-500">{v.skuCode}</td>
+                            <td className="px-2 py-1.5 text-right text-zinc-600 dark:text-zinc-400">{v.lotQuantity ?? "—"}</td>
+                            <td className="px-2 py-1.5 text-right text-zinc-600 dark:text-zinc-400">{v.alreadySentToFg ?? 0}</td>
+                            <td className="px-2 py-1.5 text-right font-medium text-zinc-900 dark:text-zinc-50">{v.remainingForLot ?? "—"}</td>
+                            <td className="px-2 py-1.5 text-right">
+                              <input
+                                type="number"
+                                min={0}
+                                max={maxAllowed}
+                                step="0.0001"
+                                disabled={isExhausted}
+                                value={qcVariantQtyById[v.productVariantId] ?? ""}
+                                onChange={(e) => {
+                                  const next = Number(e.target.value);
+                                  const clamped = maxAllowed !== undefined && e.target.value !== "" && Number.isFinite(next) && next > maxAllowed ? String(maxAllowed) : e.target.value;
+                                  setQcVariantQtyById((prev) => ({ ...prev, [v.productVariantId]: clamped }));
+                                }}
+                                className="w-24 rounded border border-zinc-300 px-2 py-1 text-right text-sm dark:border-zinc-700 dark:bg-zinc-950 disabled:bg-zinc-100 dark:disabled:bg-zinc-900"
+                              />
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>

@@ -372,6 +372,33 @@ export async function getFinishedGoodsSaleableQuantity(
  * for materials plainly never tracked by the roll, not because none is
  * actually in stock.
  */
+/**
+ * Available roll quantity for a fabric material at a warehouse, optionally scoped
+ * to a specific color and/or dye.
+ */
+export async function getFabricRollAvailableQuantity(
+  companyId: string,
+  productId: string,
+  warehouseId: string,
+  colorId?: string | null,
+  dyeId?: string | null
+): Promise<number> {
+  const result = await prisma.fabricRoll.aggregate({
+    where: {
+      companyId,
+      status: "IN_STOCK",
+      goodsReceiptItem: {
+        productId,
+        warehouseId,
+        ...(colorId ? { purchaseOrderItem: { colorId } } : {}),
+      },
+      ...(dyeId ? { dyeId } : {}),
+    },
+    _sum: { remainingQuantity: true },
+  });
+  return Number(result._sum.remainingQuantity ?? 0);
+}
+
 export async function getAvailableQuantityByDye(
   companyId: string,
   productId: string,

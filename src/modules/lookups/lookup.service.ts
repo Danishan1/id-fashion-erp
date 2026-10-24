@@ -93,15 +93,30 @@ export async function listSizes(companyId: string) {
   return LookupRepository.size.findMany({ where: { companyId }, orderBy: { sortOrder: "asc" } });
 }
 
+async function assertSizeNameFree(companyId: string, name: string, exceptId?: string) {
+  const clash = await LookupRepository.size.findFirst({
+    where: { companyId, name: { equals: name.trim(), mode: "insensitive" }, ...(exceptId ? { NOT: { id: exceptId } } : {}) },
+    select: { code: true, isActive: true },
+  });
+  if (clash) {
+    throw new BusinessRuleError(
+      "DUPLICATE_DOC_NUMBER",
+      `A size named "${name.trim()}" already exists (code ${clash.code}${clash.isActive ? "" : ", inactive"}). Use that size instead of creating a second one.`,
+      { name: name.trim(), existingCode: clash.code }
+    );
+  }
+}
+
 export async function createSize(actor: ActorContext, input: SizeInput) {
   const existing = await LookupRepository.size.findFirst({ where: { companyId: actor.companyId, code: input.code } });
   if (existing) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Size code "${input.code}" is already in use.`);
+  await assertSizeNameFree(actor.companyId, input.name);
 
   const size = await LookupRepository.size.create({
     data: {
       companyId: actor.companyId,
       code: input.code,
-      name: input.name,
+      name: input.name.trim(),
       sortOrder: input.sortOrder,
       isActive: input.isActive ?? true,
     },
@@ -122,12 +137,13 @@ export async function createSize(actor: ActorContext, input: SizeInput) {
 export async function updateSize(actor: ActorContext, id: string, input: SizeInput) {
   const existing = await LookupRepository.size.findFirst({ where: { id, companyId: actor.companyId } });
   if (!existing) throw new BusinessRuleError("NOT_FOUND", "Size not found.", { id });
+  await assertSizeNameFree(actor.companyId, input.name, id);
 
   const updated = await LookupRepository.size.update({
     where: { id },
     data: {
       code: input.code,
-      name: input.name,
+      name: input.name.trim(),
       sortOrder: input.sortOrder,
       isActive: input.isActive !== undefined ? input.isActive : existing.isActive,
     },
@@ -149,6 +165,20 @@ export async function updateSize(actor: ActorContext, id: string, input: SizeInp
 
 export async function listUnits() {
   return LookupRepository.unit.findMany({ orderBy: { code: "asc" } });
+}
+
+async function assertUnitNameFree(name: string, exceptId?: string) {
+  const clash = await LookupRepository.unit.findFirst({
+    where: { name: { equals: name.trim(), mode: "insensitive" }, ...(exceptId ? { NOT: { id: exceptId } } : {}) },
+    select: { code: true, isActive: true },
+  });
+  if (clash) {
+    throw new BusinessRuleError(
+      "DUPLICATE_DOC_NUMBER",
+      `A unit named "${name.trim()}" already exists (code ${clash.code}${clash.isActive ? "" : ", inactive"}). Use that unit instead of creating a second one.`,
+      { name: name.trim(), existingCode: clash.code }
+    );
+  }
 }
 
 /**
@@ -173,13 +203,14 @@ async function assertValidBaseUnit(baseUnitId: string, unitIdBeingSaved?: string
 export async function createUnit(actor: ActorContext, input: UnitInput) {
   const existing = await LookupRepository.unit.findUnique({ where: { code: input.code } });
   if (existing) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Unit code "${input.code}" is already in use.`);
+  await assertUnitNameFree(input.name);
 
   if (input.baseUnitId) await assertValidBaseUnit(input.baseUnitId);
 
   const unit = await LookupRepository.unit.create({
     data: {
       code: input.code,
-      name: input.name,
+      name: input.name.trim(),
       conversionFactor: input.conversionFactor,
       baseUnitId: input.baseUnitId || null,
       isActive: input.isActive ?? true,
@@ -201,6 +232,7 @@ export async function createUnit(actor: ActorContext, input: UnitInput) {
 export async function updateUnit(actor: ActorContext, id: string, input: UnitInput) {
   const existing = await LookupRepository.unit.findUnique({ where: { id } });
   if (!existing) throw new BusinessRuleError("NOT_FOUND", "Unit not found.", { id });
+  await assertUnitNameFree(input.name, id);
 
   if (input.baseUnitId) await assertValidBaseUnit(input.baseUnitId, id);
 
@@ -208,7 +240,7 @@ export async function updateUnit(actor: ActorContext, id: string, input: UnitInp
     where: { id },
     data: {
       code: input.code,
-      name: input.name,
+      name: input.name.trim(),
       conversionFactor: input.conversionFactor,
       baseUnitId: input.baseUnitId || null,
       isActive: input.isActive !== undefined ? input.isActive : existing.isActive,
