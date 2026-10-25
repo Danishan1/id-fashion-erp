@@ -1080,6 +1080,67 @@ describe("recordQcInspection", () => {
       );
       expect(recordInventoryTransaction).not.toHaveBeenCalled();
     });
+
+    it("rejects QC-accept when variant was not planned or packed for this lot", async () => {
+      stubAcceptToFinalHappyPath();
+      mockPrismaClient.productVariant.findMany.mockResolvedValue([
+        { id: "var-1", color: { name: "Red" }, size: { name: "M" } },
+        { id: "var-2", color: { name: "Blue" }, size: { name: "M" } },
+        { id: "var-3", color: { name: "Green" }, size: { name: "M" } },
+      ]);
+      mockPrismaClient.lotVariantBreakdown.findMany.mockResolvedValue([
+        { productVariantId: "var-1", quantity: 5, productVariant: { color: { name: "Red" }, size: { name: "M" } } },
+        { productVariantId: "var-2", quantity: 5, productVariant: { color: { name: "Blue" }, size: { name: "M" } } },
+      ] as never);
+      mockPrismaClient.finishedGoodsReceiptItem.findMany.mockResolvedValue([]);
+
+      await expect(
+        recordQcInspection(actor, "jo-1", {
+          inspectedQuantity: 10,
+          acceptedQuantity: 10,
+          rejectedQuantity: 0,
+          damagedQuantity: 0,
+          result: "PASS",
+          finishedGoodsWarehouseId: "wh-1",
+          variantBreakdown: [{ productVariantId: "var-3", quantity: 10 }],
+          defects: [],
+        } as never)
+      ).rejects.toMatchObject({
+        code: "VALIDATION_ERROR",
+        message: expect.stringContaining("was not planned or packed for this lot"),
+      });
+    });
+
+    it("rejects QC-accept when sending more than remaining packed quantity for that variant in the lot", async () => {
+      stubAcceptToFinalHappyPath();
+      mockPrismaClient.productVariant.findMany.mockResolvedValue([
+        { id: "var-1", color: { name: "Red" }, size: { name: "M" } },
+        { id: "var-2", color: { name: "Blue" }, size: { name: "M" } },
+      ]);
+      mockPrismaClient.lotVariantBreakdown.findMany.mockResolvedValue([
+        { productVariantId: "var-1", quantity: 10, productVariant: { color: { name: "Red" }, size: { name: "M" } } },
+        { productVariantId: "var-2", quantity: 10, productVariant: { color: { name: "Blue" }, size: { name: "M" } } },
+      ] as never);
+      mockPrismaClient.finishedGoodsReceiptItem.findMany.mockResolvedValue([
+        { productVariantId: "var-1", quantity: 6 },
+      ] as never);
+
+      await expect(
+        recordQcInspection(actor, "jo-1", {
+          inspectedQuantity: 10,
+          acceptedQuantity: 10,
+          rejectedQuantity: 0,
+          damagedQuantity: 0,
+          result: "PASS",
+          finishedGoodsWarehouseId: "wh-1",
+          variantBreakdown: [{ productVariantId: "var-1", quantity: 10 }],
+          defects: [],
+        } as never)
+      ).rejects.toMatchObject({
+        code: "VALIDATION_ERROR",
+        message: expect.stringContaining("only 4 pcs remaining out of 10 pcs packed for this lot"),
+      });
+    });
   });
 });
 
