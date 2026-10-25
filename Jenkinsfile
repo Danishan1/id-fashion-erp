@@ -71,6 +71,7 @@ pipeline {
                         cp "$TEST_ENV_FILE" .env
                         echo "Running tests against the test database..."
                         npm test
+
                     '''
                 }
             }
