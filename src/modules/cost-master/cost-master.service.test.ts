@@ -28,7 +28,7 @@ describe("Cost Master Service (Unit Tests)", () => {
   const sampleInput = {
     code: "CM-01",
     name: "Packaging Labor",
-    type: "LABOR" as const,
+    type: "PER_UNIT" as const,
     rate: 15.5,
     isActive: true,
   };
@@ -57,7 +57,7 @@ describe("Cost Master Service (Unit Tests)", () => {
         companyId: "co-1",
         code: "CM-01",
         name: "Packaging Labor",
-        type: "LABOR",
+        type: "PER_UNIT",
         rate: 15.5,
         isActive: true,
       },
@@ -85,7 +85,7 @@ describe("Cost Master Service (Unit Tests)", () => {
   });
 
   it("updates existing cost master and writes audit log", async () => {
-    const existing = { id: "cm-1", companyId: "co-1", code: "CM-01", name: "Old Name", type: "LABOR", rate: 10, isActive: true };
+    const existing = { id: "cm-1", companyId: "co-1", code: "CM-01", name: "Old Name", type: "PER_UNIT", rate: 10, isActive: true };
     const updated = { ...existing, name: "Updated Name", rate: 20 };
     vi.mocked(CostMasterRepository.findFirst).mockResolvedValue(existing as never);
     vi.mocked(CostMasterRepository.update).mockResolvedValue(updated as never);
@@ -99,7 +99,7 @@ describe("Cost Master Service (Unit Tests)", () => {
     expect(result).toEqual(updated);
     expect(CostMasterRepository.update).toHaveBeenCalledWith({
       where: { id: "cm-1" },
-      data: { code: "CM-01", name: "Updated Name", type: "LABOR", rate: 20, isActive: true },
+      data: { code: "CM-01", name: "Updated Name", type: "PER_UNIT", rate: 20, isActive: true },
     });
     expect(writeAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({

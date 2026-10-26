@@ -169,7 +169,6 @@ describe("Fabric Config Service (Unit Tests)", () => {
         code: "DYE-RED",
         name: "Reactive Red",
         dyeTypeId: "dt-1",
-        unitId: "uom-1",
         isActive: true,
       });
 
