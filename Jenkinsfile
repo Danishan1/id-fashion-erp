@@ -72,6 +72,7 @@ pipeline {
                         echo "Checking test database migrations..."
                         npx prisma migrate status
                         echo "Running tests against the test database..."
+                        npx prisma migrate deploy
                         npm test
 
                     '''
