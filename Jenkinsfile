@@ -69,6 +69,8 @@ pipeline {
                         trap restore_env EXIT
 
                         cp "$TEST_ENV_FILE" .env
+                        echo "Checking test database migrations..."
+                        npx prisma migrate status
                         echo "Running tests against the test database..."
                         npm test
 
