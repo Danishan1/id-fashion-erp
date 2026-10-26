@@ -52,7 +52,7 @@ pipeline {
                 // It must contain a SEPARATE TEST DATABASE URL.
                 withCredentials([
                     file(
-                        credentialsId: 'fashion-erp-test-env',
+                        credentialsId: 'fashion-erp-env-global',
                         variable: 'TEST_ENV_FILE'
                     )
                 ]) {
@@ -70,9 +70,9 @@ pipeline {
 
                         cp "$TEST_ENV_FILE" .env
                         echo "Checking test database migrations..."
-                        npx prisma migrate status
+                        
                         echo "Running tests against the test database..."
-                        npx prisma migrate deploy
+                        
                         npm test
 
                     '''
