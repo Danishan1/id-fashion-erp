@@ -10,6 +10,7 @@
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",
+    "db:check-migrations": "node scripts/check-migrations.mjs",
     "worker": "tsx watch src/core/jobs/worker.ts"
   },
   "dependencies": {

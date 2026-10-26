@@ -9,7 +9,11 @@
  *  6. Leave Application with auto-sandwich detection, balance deduction & approval
  *  7. Team Day Dashboard cards & Salary Sheet payroll aggregation
  *
- * Runs against the dev database in .env (DATABASE_URL). It creates its own
+ * Skipped unless HRMS_IT_DATABASE_URL points at a DISPOSABLE, migrated
+ * database (it writes users, employees, settings…). It never uses the
+ * DATABASE_URL from .env, so CI/Jenkins can never run it against production.
+ *   HRMS_IT_DATABASE_URL=postgresql://…/hrms_it npx vitest run src/modules/hrms/attendance.integration.test.ts
+ * It creates its own
  * supervisor, worker, employee, location and leave type, and removes them
  * (and restores the company's attendance settings) afterwards.
  *
@@ -17,8 +21,14 @@
  * same way the CRM integration tests do — so the flows are tested without
  * depending on how the dev database's roles happen to be set up.
  */
-import "dotenv/config";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+
+// Point the Prisma client at the disposable database before any import runs.
+const DB_URL = vi.hoisted(() => {
+  const url = process.env.HRMS_IT_DATABASE_URL;
+  if (url) process.env.DATABASE_URL = url;
+  return url;
+});
 
 vi.mock("@/core/rbac/PermissionService", () => ({
   PermissionService: {
@@ -61,8 +71,6 @@ import {
   getTeamMonth,
   getSalarySheet,
 } from "./attendance-team.service";
-
-const DB_URL = process.env.DATABASE_URL;
 
 describe.skipIf(!DB_URL)("HRMS Attendance & Leave (Integration Test Suite)", () => {
   const runId = `it_${Date.now().toString(36)}`;
