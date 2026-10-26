@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Button } from "@/components/ui/Button";
+import Link from "next/link";
+import { Button, buttonClasses } from "@/components/ui/Button";
 
 /**
  * Live selfie + GPS + face match, ported from the old FaceRecognition.jsx:
@@ -78,11 +79,13 @@ interface Props {
   threshold: number;
   frames: number;
   gpsAccuracyMeters: number;
+  /** Set when the viewer may enrol face photos for this employee (HR / Admin / Super Admin). */
+  enrolHref?: string | null;
   onCapture: (capture: PunchCapture) => Promise<void>;
   onCancel: () => void;
 }
 
-export function FacePunchCamera({ type, facePhotoIds, requireFace, threshold, frames, gpsAccuracyMeters, onCapture, onCancel }: Props) {
+export function FacePunchCamera({ type, facePhotoIds, requireFace, threshold, frames, gpsAccuracyMeters, enrolHref = null, onCapture, onCancel }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [status, setStatus] = useState("Starting camera…");
@@ -252,11 +255,21 @@ export function FacePunchCamera({ type, facePhotoIds, requireFace, threshold, fr
     return (
       <div className="space-y-3">
         <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-950 dark:text-amber-200">
-          Your face photos are not enrolled yet, so you can&apos;t punch. Ask HR to enrol your photos in Attendance → Settings → Employees.
+          Your face photos are not enrolled yet, so you can&apos;t punch.{" "}
+          {enrolHref
+            ? "Enrol them now (up to 3 clear, front-facing photos), then punch again."
+            : "Ask HR, Admin or Super Admin to enrol your photos in Attendance → Settings → Employees."}
         </p>
-        <Button variant="secondary" onClick={onCancel}>
-          Close
-        </Button>
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={onCancel}>
+            Close
+          </Button>
+          {enrolHref && (
+            <Link href={enrolHref} className={buttonClasses("primary", "sm")}>
+              Enrol face photos
+            </Link>
+          )}
+        </div>
       </div>
     );
   }

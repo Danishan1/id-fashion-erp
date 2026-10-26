@@ -12,7 +12,7 @@ import { MyOvertimeList } from "./MyOvertimeList";
 import { MyOutdoorRejections } from "./MyOutdoorRejections";
 
 interface Today {
-  employee: { fullName: string; employeeCode: string; shift: { name: string; startTime: string; endTime: string } | null };
+  employee: { id: string; fullName: string; employeeCode: string; shift: { name: string; startTime: string; endTime: string } | null };
   dateKey: string;
   isPunchedIn: boolean;
   sessions: {
@@ -35,7 +35,7 @@ interface Today {
 
 type TabId = "today" | "month" | "overtime" | "outdoor";
 
-export function MyAttendanceClient() {
+export function MyAttendanceClient({ canEnrolFaces = false }: { canEnrolFaces?: boolean }) {
   const [tab, setTab] = useState<TabId>("today");
   const [today, setToday] = useState<Today | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -187,6 +187,7 @@ export function MyAttendanceClient() {
           <FacePunchCamera
             type={punchType}
             facePhotoIds={today.facePhotoIds}
+            enrolHref={canEnrolFaces ? `/attendance/face-enrolment/${today.employee.id}` : null}
             requireFace={today.rules.requireFace}
             threshold={today.rules.faceMatchThreshold}
             frames={today.rules.faceMatchFrames}
