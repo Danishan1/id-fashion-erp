@@ -9,8 +9,8 @@ Part of `accounts-payment-requests-plan`. Depends on: foundation, accountant-pay
 Employee Advance module (`employee-advance.service.ts`, `/accounts/employee-advances`).
 
 ## Fields (spec)
-Imprest Amount (2 dp), Payto Name (**Employee picker** — the existing imprest is employee-only; non-employee
-imprest → ask user; if needed add Payee support to EmployeeAdvance later), Due Date (default today), Voice
+Imprest Amount (2 dp), Payto Name (**Employee picker only** — user decision 2026-10-27: imprest is never given
+to non-employees; inactive employees not selectable), Due Date (default today), Voice
 Remark, Remark, "Do you have any document?" YES/NO (default NO; YES ⇒ file required).
 Default: requester may raise for themselves (pre-select own linked Employee via `User.employeeId`).
 

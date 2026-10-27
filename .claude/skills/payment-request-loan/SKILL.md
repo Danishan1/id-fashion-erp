@@ -1,35 +1,37 @@
 ---
 name: payment-request-loan
-description: Plan for Internal transfer → Request Loan Payment — loan amount, purpose sub-category, purpose name, loan pay-to, from bank account, due date, voice remark, remark, file; posts to a LOAN_GIVEN (asset) or LOAN_TAKEN repayment (liability) financial account — needs the user's answer which one.
+description: Plan for Internal transfer → Request Loan Payment (the company LENDS money) — loan amount, purpose sub-category, purpose name, loan pay-to, from bank account, due date, voice remark, remark, file; payout posts Dr Loan Given (asset) / Cr bank.
 ---
 
-# Request Loan Payment
+# Request Loan Payment (loan given by us)
 
-Part of `accounts-payment-requests-plan`. Depends on: foundation, financial-accounts, payee-master, accountant-payout.
+Part of `accounts-payment-requests-plan`. Depends on: foundation, approval-matrix, financial-accounts,
+payee-master, accountant-payout.
+User decision (2026-10-27): **we lend** — no EMI/repayment-of-our-own-loan flow.
 
 ## Fields (spec)
 Loan Amount (2 dp), Purpose sub category (select — Purpose master, purposeGroup LOAN, parent/child), Purpose
-Name (select/text within sub category), Loan Payto Name (PayToPicker: Payee/Employee/Supplier), From Account
-(bank account select, kinds CURRENT/SAVINGS/CASH — **pre-selected at request time**, accountant may change at
-payout), Payment Due Date (default today), Voice Remark, Remark, upload file (optional).
+Name (select/text within sub category), Loan Payto Name (PayToPicker: Employee / Payee / Supplier — required),
+From Account (bank account select, kinds CURRENT/SAVINGS/CASH — chosen at request, accountant may change at
+payout), Payment Due Date (default today), Voice Remark, Remark, upload file (optional — loan agreement).
 
-## ⚠ Open question (ask before building)
-"Loan payment" = (A) we **lend** money (staff loan / party loan) → Dr LOAN-GIVEN <party> / Cr bank, or
-(B) we **repay** a loan we took (EMI) → Dr LOAN-TAKEN <lender> [+ Dr interest expense split] / Cr bank.
-Plan supports both via a required `loanDirection` field (GIVEN / REPAYMENT) and a "Loan account" select of
-`BankAccount` kind LOAN_GIVEN / LOAN_TAKEN; for REPAYMENT add optional principal/interest split (interest → EXP-INTEREST).
+## Loan account
+One `BankAccount` of kind LOAN_GIVEN per borrower, auto-created on first payout if missing (name "Loan — <pay-to>",
+ledger under `LOAN-GIVEN` parent). Form shows the borrower's current outstanding loan (ledger balance).
 
 ## Routing / payout
-APPROVAL_THEN_PAY; full payout only. Payout handler posts an `InternalTransfer` from the From Account to the loan
-financial account (InternalTransfer already Dr to / Cr from — works once financial-accounts gives each its ledger;
-interest split needs one extra journal line → extend InternalTransfer with optional `chargesAccountId/amount`
-or post a plain Journal via `postJournalCore` with sourceModule INTERNAL_TRANSFER).
+Approval Matrix (default APPROVAL_THEN_PAY); full payout only. Payout = `InternalTransfer` From Account → loan
+account: **Dr LOAN-GIVEN-<borrower> / Cr bank**. No P&L impact.
+
+## Out of scope (note)
+Loan recovery (borrower pays back / salary deduction for staff loans) is a receipt-side flow — later
+(Dr bank / Cr LOAN-GIVEN; interest → income).
 
 ## Tests
-GIVEN journal; REPAYMENT with interest split; from-account must be money account; full payout only.
+loan account auto-created once per borrower; journal exact; from-account must be a money account; partial refused;
+outstanding shown.
 
 ## Done checklist
-- [ ] user answer recorded here
-- [ ] loan financial accounts usable
 - [ ] form + payout
+- [ ] auto loan account
 - [ ] tests

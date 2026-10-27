@@ -15,8 +15,8 @@ GST/VAT number (fetched from `Supplier.taxRegistrationNo`), Choose document (req
 Discount, Amount; Total, Total GST, Grand Total), Payment Due Date, Mode of Transfer, Voice Remark, Remark.
 
 ## Validation
-Amount = Grand Total (or ≤ Grand Total when paying part — then "Amount" = amount requested now; ask user; default:
-Amount requested ≤ Grand Total, bill booked for full Grand Total). Supplier invoice number unique per supplier
+One invoice per request (user decision 2026-10-27). Amount requested ≤ Grand Total (bill is always booked for
+the full Grand Total; any balance stays payable on the purchase invoice). Supplier invoice number unique per supplier
 among non-cancelled purchase invoices (the existing partial unique index already enforces it — map P2002 to a
 clean message). Optional link to a PO / Goods Receipt when lines are PO materials (v2).
 

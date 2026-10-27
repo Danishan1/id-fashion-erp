@@ -19,15 +19,18 @@ APPROVAL_THEN_PAY.
 ## Payout
 Handler creates `Payment` (direction PAYMENT_OUT, supplierId, amount = payout amount, allocations []) and posts it
 in the same tx (`postPaymentInTx`), stores `paymentId` on the payout row (many payouts ⇒ many payments).
-Journal = existing: Dr AP / Cr bank. **Improvement option**: post to `SUP-ADV` (Advance to suppliers) instead
-of AP so AP never shows a debit balance; then allocation must move SUP-ADV → AP. Bigger change to `allocatePayment`
-(today "no new journal") — recommend keep Dr AP for v1, list as follow-up. Decide with user.
+User decision (2026-10-27): post to a separate **Advance to Suppliers** account.
+Journal: **Dr SUP-ADV / Cr bank** (not AP). Needs a flag `isAdvance` on `Payment` so `postPayment` debits
+SUP-ADV instead of AP for supplier advances made through this request. `allocatePayment` must then post a
+reclass journal **Dr AP / Cr SUP-ADV** for the allocated amount (today it posts nothing) — only for advance
+payments; older on-account payments keep current behaviour. Supplier advance balance = unallocated amount of
+that supplier's advance payments (shown on supplier ledger / outstanding).
 
 ## Later use
 The resulting unallocated payment is what `payment-request-supplier-adjustment` consumes.
 
 ## Tests
-inactive supplier refused; payout creates posted payment with zero allocations; unallocated balance visible;
+inactive supplier refused; payout creates posted payment with zero allocations and Dr SUP-ADV; later allocation posts Dr AP / Cr SUP-ADV; unallocated balance visible;
 partial payouts create separate payments.
 
 ## Done checklist

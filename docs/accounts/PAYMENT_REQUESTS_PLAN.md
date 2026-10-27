@@ -60,18 +60,22 @@ Legend: ✅ exists · ♻️ reuse with changes · ❌ missing
 ### Cross-cutting improvements recommended
 1. **One hub table `PaymentRequest`** (request + approval + payout queue) with a `requestType`, common fields (amount, pay-to, due date, remark, mode of transfer, status) and type-specific child data. On payout it calls the **existing posting engines** (Expense, Payment, PurchaseInvoice, InternalTransfer, EmployeeAdvance) — no second journal engine. Keep old pages working; hub becomes the new entry point.
 2. **Routing per type** (`PaymentRequestTypeSetting`): `APPROVAL_THEN_PAY` (default) or `DIRECT_TO_ACCOUNTANT` (Salary). Approver ≠ creator, payer ≠ creator (existing self-approval guard).
-3. **Financial accounts**: give each `BankAccount` a `kind` (CURRENT, SAVINGS, CASH, FD, RD, CREDIT_CARD, LOAN_TAKEN, LOAN_GIVEN, INVESTMENT) and its own ledger sub-account under BANK/CASH/etc. This fixes bank→bank transfers and gives FD/RD/card/loan real balances.
+3. **Financial accounts**: give each `BankAccount` a `kind` (CURRENT, SAVINGS, CASH, FD, RD, CREDIT_CARD, LOAN_GIVEN, INVESTMENT) and its own ledger sub-account under BANK/CASH/etc. This fixes bank→bank transfers and gives FD/RD/card/loan real balances.
 4. **GST-complete payables lines** shared by Tax Invoice, Supplier Bill and Adjustment: CGST/SGST/IGST from place of supply vs company state, ITC Y/N, RCM, HSN, discount, decimal(2) validation — reuse `src/lib/gst.ts`.
 5. **Payee master** for non-supplier pay-to names (with optional GSTIN/bank details) so "GST fetched from pay-to" works for b3.
 6. **Statuses**: `PENDING_APPROVAL → APPROVED → PARTIALLY_PAID → PAID`, `REJECTED` (terminal, reason), `CANCELLED`; direct types start at `APPROVED`. Due-date overdue is derived, never stored.
 7. **Reports**: payment-request register, due/overdue queue, TDS register, GST input register (ITC/RCM), salary payout report.
 
-### Open questions for the user (asked inside each skill too)
-- Loan: is "Request Loan Payment" money **lent** by us, or **EMI repayment** of a loan we took? (affects asset vs liability)
-- "RDS" = Recurring Deposit?
-- Advance (reminder): on payment post as "Advance to party" and adjust later when the invoice arrives — OK?
-- Who approves which type (one approver role for all, or per type / amount limit)?
-- Does salary payout need bank file export (NEFT bulk sheet)?
+### Decisions from the user (2026-10-27)
+- Loan = money **lent** by us (asset LOAN-GIVEN). No EMI-repayment flow.
+- RDS = Recurring Deposit; the accountant raises it manually every month (no auto-schedule).
+- Advance (reminder): payout → "Advance to party" (ADV-PAID), adjusted when the invoice arrives.
+- Salary: bulk from the salary module + single create from Payment Requests.
+- Approval: a dedicated **Approval Matrix** module (who approves which type / amount, whether approver may also pay) — skill `payment-request-approval-matrix`.
+- Supplier on-account → separate **Advance to Suppliers** (SUP-ADV) account; adjustment posts Dr AP / Cr SUP-ADV.
+- One invoice per request.
+- Imprest: employees only.
+- Still open: bank bulk NEFT file for salary payout?
 
 ## 3. Skill list (build order)
 See `.claude/skills/accounts-payment-requests-plan/SKILL.md`.

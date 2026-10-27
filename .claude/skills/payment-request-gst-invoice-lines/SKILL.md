@@ -13,8 +13,8 @@ Part of `accounts-payment-requests-plan`. Depends on: foundation, payee-master. 
 - `placeOfSupplyStateCode` dropdown from `GST_STATE_CODES` (default = company state)
 - `payToGstin` read-only, fetched from Supplier.taxRegistrationNo / Payee.gstin; editable override with format check
 - `isRawMaterialForProduction` Y/N · `paymentDueDate` · `modeOfTransfer`
-- Invoice table: `invoiceNumber`, `invoiceDate` (one invoice per request; plan allows several invoices → child
-  `PaymentRequestInvoice` 1..n, each with its own lines — confirm with user, default 1)
+- Invoice table: `invoiceNumber`, `invoiceDate` — **one invoice per request** (user decision 2026-10-27);
+  stored on the request header, lines in `PaymentRequestInvoiceLine`
 
 ## Line fields (`PaymentRequestInvoiceLine`)
 description (req), isForStock (bool), purposeId (→ ExpensePurpose, gives GL account), productId (optional, only

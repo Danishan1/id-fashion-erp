@@ -24,8 +24,8 @@ with supplier-bill) **and** call `allocatePayment()` for each chosen payment in 
 `kind=ADJUSTMENT`, amount = adjusted, no journal) — the accountant has nothing to pay.
 
 ## Journal
-Purchase invoice post: Dr expense/COGS [+ITC] / Cr AP. Allocation: none (existing rule — on-account payment
-already debited AP). If SUP-ADV option from supplier-on-account is adopted, allocation posts Dr AP / Cr SUP-ADV.
+Purchase invoice post: Dr expense/COGS [+ITC] / Cr AP. Allocation of an advance payment (decision 2026-10-27):
+**Dr AP / Cr SUP-ADV**. Older on-account payments (made before SUP-ADV existed, already Dr AP) allocate with no journal.
 
 ## Tests
 over-allocation refused; payment of another supplier refused; invoice becomes PAID/PARTIALLY_PAID; no

@@ -6,24 +6,24 @@ description: Plan for Internal transfer → Request For RDS Payment (recurring d
 # Request RDS (Recurring Deposit) Payment
 
 Part of `accounts-payment-requests-plan`. Depends on: foundation, financial-accounts, accountant-payout.
-⚠ Confirm with user: "RDS" = Recurring Deposit Scheme (assumed).
+User decision (2026-10-27): RDS = Recurring Deposit; the **accountant creates the request manually every month**.
 
 ## Fields (spec)
 RDS amount (2 dp), RDS account name (select `BankAccount` kind RECURRING_DEPOSIT, required), Due Date (default
 today), Voice Remark, Remark, upload (optional).
 
-## Improvement
-RD = monthly installments: offer "Repeat monthly" → auto-create next month's request (or a schedule list on
-the RD account: installment amount + day of month; a daily job creates the request N days before). v1: manual.
+## Monthly creation (manual)
+No auto-schedule. Help the accountant: "Copy last month's RD request" button (same account + amount, due date +1
+month) and a warning if an RD request for the same account already exists in the same month.
 
 ## Routing / payout
-Default APPROVAL_THEN_PAY (often pre-approved — allow DIRECT_TO_ACCOUNTANT in type settings). Full payout.
+Default APPROVAL_THEN_PAY (often pre-approved — admin can set DIRECT_TO_ACCOUNTANT for RECURRING_DEPOSIT in the Approval Matrix). Full payout.
 Journal: Dr RD-<acct> / Cr bank via InternalTransfer.
 
 ## Tests
-only RD-kind accounts; journal; (v2) schedule creates one request per month, idempotent.
+only RD-kind accounts; journal; copy-last-month pre-fills; same-month duplicate warning.
 
 ## Done checklist
 - [ ] form + payout
 - [ ] tests
-- [ ] decision on recurring schedule recorded
+- [ ] copy-last-month + duplicate warning

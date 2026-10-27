@@ -25,7 +25,8 @@ reuse, tests and a done-checklist. Build one skill at a time, tick its checklist
 | 2 | `payment-request-financial-accounts` | bank kinds + ledger per bank/FD/RD/card/loan/investment | — |
 | 3 | `payment-request-payee-master` | pay-to master w/ GSTIN, purpose master | 1 |
 | 4 | `payment-request-gst-invoice-lines` | shared invoice table, CGST/SGST/IGST, ITC, RCM, place of supply | 1, 3 |
-| 5 | `payment-request-accountant-payout` | To-Pay queue, Pay modal, payout handlers, InTx extractions | 1, 2 |
+| 4a | `payment-request-approval-matrix` | who approves which type / amount, approver-may-pay rule | 1 |
+| 5 | `payment-request-accountant-payout` | To-Pay queue, Pay modal, payout handlers, InTx extractions | 1, 2, 4a |
 | 6 | `payment-request-salary` | a. Salary Request (bulk from salary sheet, direct to accountant) | 1, 2, 5 |
 | 7 | `payment-request-voucher-single` | b4 Voucher Single Purpose | 1, 3, 5 |
 | 8 | `payment-request-advance-reminder` | b1 Request Advance Payment (reminder) | 1, 3, 5 |
@@ -43,7 +44,7 @@ reuse, tests and a done-checklist. Build one skill at a time, tick its checklist
 | 20 | `payment-request-fixed-deposit` | d3 Fixed Deposits | 2, 5 |
 | 21 | `payment-request-recurring-deposit` | d5 RDS Payment | 2, 5 |
 | 22 | `payment-request-credit-card` | d7 Credit Card Payment | 2, 5 |
-| 23 | `payment-request-loan` | d1 Loan Payment (open question: lend vs repay) | 2, 3, 5 |
+| 23 | `payment-request-loan` | d1 Loan Payment (we lend) | 2, 3, 5 |
 | 24 | `payment-request-reports-and-rollout` | reports, nav, notifications, QA | all |
 
 Steps 2 and 3 can run in parallel with 1's UI work; 7–9, 13 and 17–22 are independent once 1/2/5 exist.
@@ -56,12 +57,17 @@ Steps 2 and 3 can run in parallel with 1's UI work; 7–9, 13 and 17–22 are in
 - [ ] d1 Loan · [ ] d2 Imprest · [ ] d3 FD · [ ] d4 Cash · [ ] d5 RDS · [ ] d6 Bank-to-bank · [ ] d7 Credit card
 - [ ] Voice remark + remark on every request type
 
-## Open questions to ask the user (collected)
-1. Loan = we lend, or we repay an EMI? (`payment-request-loan`)
-2. RDS = Recurring Deposit? recurring auto-schedule wanted? (`payment-request-recurring-deposit`)
-3. Advance reminder posted to "Advances to parties" and adjusted when the bill comes — OK?
-4. Salary requests created automatically on month finalise, or by an explicit button? Bank bulk-file export?
-5. Approver per type / amount limit? Can approver also be the payer?
-6. Supplier on-account: keep Dr AP (today) or separate "Advance to suppliers" account?
-7. Multiple invoices per tax-invoice/supplier-bill request, or one invoice per request?
-8. Imprest for non-employees allowed?
+## Decisions (user, 2026-10-27)
+1. **Loan** = we LEND money only (Dr LOAN-GIVEN / Cr bank). No EMI-repayment flow. (`payment-request-loan`)
+2. **RDS** = Recurring Deposit. The accountant raises it manually each month; no auto-schedule.
+3. **Advance reminder**: payout posts to "Advance to party" (ADV-PAID), adjusted when the bill arrives. Accepted.
+4. **Salary**: bulk requests come from the salary module (Salary Sheet), and a single salary request can also
+   be created from Payment Requests. Both, as planned.
+5. **Approval**: a separate **Approval Matrix** module decides who approves which request type (with optional
+   amount slabs) and whether the approver may also pay → new skill `payment-request-approval-matrix`.
+6. **Supplier on-account** posts to a separate **Advance to Suppliers** (SUP-ADV) asset; adjusting it against a
+   bill posts Dr AP / Cr SUP-ADV.
+7. **One invoice per request** (tax invoice, supplier bill, adjustment).
+8. **Imprest** = employees only.
+
+Still open (ask when building): bank bulk NEFT file for salary payout?

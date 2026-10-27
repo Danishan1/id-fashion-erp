@@ -15,17 +15,18 @@ FD/RD/credit card/loan balances can't exist.
 
 ## Fields to add on `BankAccount`
 - `accountKind` enum `FinancialAccountKind`: CURRENT, SAVINGS, CASH, FIXED_DEPOSIT, RECURRING_DEPOSIT,
-  CREDIT_CARD, LOAN_TAKEN, LOAN_GIVEN, INVESTMENT (default CURRENT for existing rows)
+  CREDIT_CARD, LOAN_GIVEN, INVESTMENT (default CURRENT for existing rows). No LOAN_TAKEN — user decided loan
+  requests are only money we lend.
 - `ledgerAccountId` FK ChartOfAccount (@unique) — auto-created child account under the right parent:
   CURRENT/SAVINGS → parent BANK (ASSET); CASH → CASH; FD/RD/LOAN_GIVEN/INVESTMENT → new ASSET parents
-  `FD`, `RD`, `LOAN-GIVEN`, `INVESTMENTS`; CREDIT_CARD → new LIABILITY parent `CC-PAY`; LOAN_TAKEN → LIABILITY `LOAN-TAKEN`
+  `FD`, `RD`, `LOAN-GIVEN`, `INVESTMENTS`; CREDIT_CARD → new LIABILITY parent `CC-PAY`
 - optional: `maturityDate`, `interestRate`, `openingBalance` (FD/RD/loan), `creditLimit` (card)
 - Bank-number fields become optional for CASH/INVESTMENT kinds (Zod refine per kind)
 
 ## New system control accounts (seed + `ensure…` upsert on first use, like `ensureExpensesPayableAccount`)
 `SALARY-PAY` (LIABILITY Salaries Payable), `EXP-SALARY` (exists), `ADV-PAID` (ASSET Advances to parties),
-`SUP-ADV` (ASSET Advance to suppliers — optional, see supplier-on-account skill), `GST-RCM-PAY` (LIABILITY),
-`INVESTMENTS`, `FD`, `RD`, `LOAN-GIVEN`, `LOAN-TAKEN`, `CC-PAY` parents.
+`SUP-ADV` (ASSET Advance to Suppliers — required, user decision), `GST-RCM-PAY` (LIABILITY),
+`INVESTMENTS`, `FD`, `RD`, `LOAN-GIVEN`, `CC-PAY` parents.
 
 ## Posting rule change (careful — shared code)
 Add one resolver `resolveMoneyAccount(companyId, paymentType, bankAccountId?)` in a new

@@ -24,15 +24,15 @@ month, configurable later), remark, voice remark. Breakdown (gross, deductions, 
 Rows with `netPay` null (no fixed salary) or 0 → skipped and listed in a "not created" report.
 
 ## Creation
-- **Bulk**: button "Create Salary Requests" on the Salary Sheet page after finalise (and optionally automatic
-  inside `finaliseSalaryMonth` — recommend explicit button so HR finalising ≠ money obligation by surprise; ask
-  user). One request per employee, idempotency key `salary:<closeId>:<employeeId>` → re-run is safe.
-- **Single**: New → Salary Request: pick employee + month (must be a finalised month unless "Ad-hoc salary"
+- **Bulk (from the salary module — user decision 2026-10-27)**: button "Create Salary Requests" on the Salary
+  Sheet page, enabled once the month is finalised. One request per employee, idempotency key
+  `salary:<closeId>:<employeeId>` → re-run is safe.
+- **Single (from Payment Requests — also confirmed)**: New → Salary Request: pick employee + month (must be a finalised month unless "Ad-hoc salary"
   checkbox → requires remark), amount.
 - Duplicate guard: one non-cancelled salary request per (employee, year, month) unless ad-hoc.
 
 ## Routing / status
-`DIRECT_TO_ACCOUNTANT` → created as `APPROVED`. Partial pay allowed (salary in installments).
+Approval Matrix default rule for SALARY = `DIRECT_TO_ACCOUNTANT` → created as `APPROVED` (admin may change). Partial pay allowed (salary in installments).
 
 ## Journal
 - On bulk creation (accrual, one journal per month): Dr EXP-SALARY (sum gross earned) / Cr SALARY-PAY (sum
@@ -47,7 +47,7 @@ requester list hides them otherwise.
 
 ## UI
 Salary Sheet page: "Create Salary Requests" (disabled until finalised, shows count/total, already-created
-state). Payment Requests → Salary tab: month filter, "Pay all" bulk payout, bank export later (ask: NEFT bulk file?).
+state). Payment Requests → Salary tab: month filter, "Pay all" bulk payout, bank bulk NEFT file — still an open question.
 
 ## Reuse
 `getSalarySheet`, `AttendanceMonthClose`, `exportSalarySheetXlsx`, Employee bank fields, payout handler.

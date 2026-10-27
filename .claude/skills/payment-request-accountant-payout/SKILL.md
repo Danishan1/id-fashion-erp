@@ -5,7 +5,7 @@ description: Plan for the accountant's "To Pay" queue and the Pay action on any 
 
 # Accountant payout (Pay action + queue)
 
-Part of `accounts-payment-requests-plan`. Depends on: foundation, financial-accounts.
+Part of `accounts-payment-requests-plan`. Depends on: foundation, approval-matrix, financial-accounts.
 
 ## Queue UI
 `/accounts/payment-requests?tab=to-pay`: APPROVED + PARTIALLY_PAID requests, sorted by due date, overdue
@@ -30,14 +30,14 @@ functions as thin wrappers. Don't call PermissionService inside InTx variants (r
 |---|---|
 | Salary | Dr SALARY-PAY / Cr bank per employee (payroll accrual done at request creation) |
 | Expenditure | an Expense in APPROVED state on first payout (internal `createApprovedExpenseInTx`), then `recordExpensePaymentInTx` |
-| Supplier on account | Payment PAYMENT_OUT, zero allocations, posted |
+| Supplier on account | Payment PAYMENT_OUT marked advance, zero allocations, posted Dr SUP-ADV / Cr bank |
 | Supplier bill | PurchaseInvoice (direct lines) posted at approval → Payment allocated to it at payout |
 | Adjustment | no cash: `allocatePayment` only (no payout row amount moved; marks request PAID) |
 | Internal transfer types | InternalTransfer posted (from/to = financial accounts), or EmployeeAdvance issued (imprest) |
 
 ## Self-approval / segregation
 Pay = `payment_requests.post` with `resourceContext.createdBy` (creator can't pay own request unless SUPER_ADMIN).
-Approver may also pay (allowed — confirm with user if they want approver ≠ payer).
+Whether an approver may also pay comes from the request's Approval Matrix rule (`approverMayPay`, default false).
 
 ## Idempotency
 Pay modal sends `idempotencyKey` (UUID per modal open); `PaymentRequestPayout @@unique([companyId, idempotencyKey])`, P2002 → return existing.

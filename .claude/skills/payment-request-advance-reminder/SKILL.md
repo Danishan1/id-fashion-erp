@@ -22,7 +22,7 @@ Part of `accounts-payment-requests-plan`. Depends on: foundation, payee-master, 
 Validation must be server-side too: `hasInvoice=true` ⇒ at least one non-voice attachment before submit
 (two-step: create request then upload ⇒ submit gate, or multipart create like `expenses/upload-bill`).
 
-## Meaning
+## Meaning (confirmed by user 2026-10-27)
 "Reminder" = money must go out but no expense classification yet. Accountant pays it as an **advance**.
 
 ## Routing / status
@@ -34,7 +34,7 @@ Default APPROVAL_THEN_PAY (configurable). Standard statuses + extra derived flag
 - Adjustment later ("Adjust advance" action on the request, or from Tax Invoice / Voucher request "adjust
   against advance"): Dr expense [+ GST-ITC] / Cr ADV-PAID. Reuse EmployeeAdvanceSettlement *pattern* (not the
   model — that one is employee-only); new `PaymentRequestAdjustment` rows (amount ≤ unadjusted).
-- If pay-to is a Supplier: offer to use Supplier on Account instead (Payment PAYMENT_OUT) — hint in UI.
+- If pay-to is a registered Supplier: steer to Supplier on Account (posts to SUP-ADV) — hint in UI.
 
 ## API/UI
 Form in `/accounts/payment-requests/new?type=ADVANCE_REMINDER`; detail shows Adjust Advance modal.
@@ -48,4 +48,3 @@ adjustment cap; adjustment journal.
 - [ ] payout handler (ADV-PAID)
 - [ ] adjustment action + journal
 - [ ] tests
-- [ ] open question answered: is ADV-PAID treatment OK for the user?

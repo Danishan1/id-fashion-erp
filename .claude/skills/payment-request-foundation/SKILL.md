@@ -40,14 +40,15 @@ form component, required fields, default routing, payout handler key. New type =
   snapshot, `sourceModule`/`sourceRecordId` for salary, links to created docs: `expenseId`, `paymentId`,
   `purchaseInvoiceId`, `internalTransferId`, `employeeAdvanceId` — all nullable, @unique where 1:1)
 - `PaymentRequestStatus`: PENDING_APPROVAL, APPROVED, PARTIALLY_PAID, PAID, REJECTED, CANCELLED
-- `PaymentRequestTypeSetting` (companyId, requestType, routing APPROVAL_THEN_PAY | DIRECT_TO_ACCOUNTANT,
-  isEnabled, optional approvalLimit) — missing row = registry default
+- `PaymentRequestTypeSetting` (companyId, requestType, isEnabled) — missing row = enabled. **Routing, approvers,
+  amount slabs and approver-may-pay live in the Approval Matrix** (`payment-request-approval-matrix`, user decision).
 - `PaymentRequestPayout` (one row per payout: date, amount, paymentTypeId, bankAccountId, UTR/reference,
   journalId / linked document id) — see `payment-request-accountant-payout`
 - Migration hand-written (non-interactive workaround in CLAUDE.md), additive only, plus a rollback note.
 
 ## Status flow
-create → routing APPROVAL_THEN_PAY ⇒ `PENDING_APPROVAL`; DIRECT_TO_ACCOUNTANT ⇒ `APPROVED` straight away.
+create → Approval Matrix rule resolved and frozen: APPROVAL_THEN_PAY ⇒ `PENDING_APPROVAL` (level 1..N);
+DIRECT_TO_ACCOUNTANT ⇒ `APPROVED` straight away.
 PENDING_APPROVAL → Approve ⇒ APPROVED | Reject (reason required) ⇒ REJECTED (terminal) | Cancel ⇒ CANCELLED.
 APPROVED → Pay (part) ⇒ PARTIALLY_PAID → Pay rest ⇒ PAID. Cancel only while paidAmount = 0.
 Edit only in PENDING_APPROVAL (and APPROVED for direct types, before any payout). "Overdue" = derived
