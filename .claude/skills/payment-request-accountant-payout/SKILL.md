@@ -46,8 +46,21 @@ Pay modal sends `idempotencyKey` (UUID per modal open); `PaymentRequestPayout @@
 partial then full → PAID; over-pay refused; concurrent pay race (guard count=0 → rollback); bank required for
 non-cash; full-only types reject partial; each handler's journal lines exact; cancel blocked once paid.
 
-## Done checklist
-- [ ] InTx extractions with old tests unchanged
-- [ ] payout service + route + modal + queue tab
-- [ ] payment proof attachment
-- [ ] tests + live check of one request per group
+## Done checklist (built 2026-10-27)
+- [x] payout service `payout.service.ts` + `POST /api/v1/payment-requests/:id/payouts` + Pay modal + "Payments made"
+      table; the To Pay tab already existed. Migration `20261027160000_payment_request_payouts` (+ `payments.is_advance`).
+- [x] handlers for the types that can be raised today:
+      SUPPLIER_ON_ACCOUNT → posted Payment (isAdvance) Dr SUP-ADV / Cr Cash-Bank;
+      CASH_WITHDRAWAL → posted InternalTransfer, Dr CASH / Cr BANK (full only);
+      INVESTMENT → journal Dr INVESTMENTS / Cr Cash-Bank (one control account until financial-accounts).
+      Every other type refuses "not available yet" until its own skill registers a handler in `PAYOUT_HANDLERS`.
+- [x] `allocatePayment` on an advance Payment posts Dr AP / Cr SUP-ADV for the allocated part.
+- [x] `reverseJournal` refuses PAYMENT_REQUEST-sourced journals.
+- [x] approver-may-pay enforced (`mayPayAfterApproving`); Super Admin exempt, like its other overrides.
+- [x] payment proof: uploaded on the request's own Files & Voice Remarks (no separate payout attachment target).
+- [x] tests (payout.service.test.ts + advance reclass test), full suite 3650 green, live payouts checked in the DB.
+
+As built (difference from the plan above): no `…InTx` extraction of the existing services. Each handler creates its
+document directly in POSTED state inside the payout transaction and posts the journal through `postJournalCore`
+(the same engine) — the existing services' own DRAFT→POST flows and permission checks are untouched. A new type adds
+a handler; it never edits another module's service.

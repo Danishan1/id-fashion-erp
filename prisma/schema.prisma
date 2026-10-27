@@ -273,6 +273,7 @@ model Company {
 
   productionOrderColorFabrics ProductionOrderColorFabric[]
   stockColorBalances          StockColorBalance[]
+  paymentRequestPayouts       PaymentRequestPayout[]
 
   @@map("companies")
 }
@@ -1090,6 +1091,7 @@ model User {
   permissionOverrides                UserPermissionOverride[]     @relation("UserPermissionOverrideUser")
   permissionOverridesCreated         UserPermissionOverride[]     @relation("UserPermissionOverrideCreatedBy")
   productionOrderColorFabricsUpdated ProductionOrderColorFabric[] @relation("ProductionOrderColorFabricUpdatedBy")
+  paymentRequestPayoutsCreated       PaymentRequestPayout[]       @relation("PaymentRequestPayoutCreatedBy")
 
   @@unique([companyId, supportForPlatformUserId])
   @@map("users")
@@ -2815,6 +2817,7 @@ model PaymentType {
   employeeAdvances      EmployeeAdvance[]
   internalTransfersFrom InternalTransfer[]     @relation("InternalTransferFrom")
   internalTransfersTo   InternalTransfer[]     @relation("InternalTransferTo")
+  paymentRequestPayouts PaymentRequestPayout[]
 
   @@unique([companyId, code])
   @@map("payment_types")
@@ -2835,13 +2838,14 @@ model BankAccount {
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @updatedAt @map("updated_at")
 
-  company               Company            @relation(fields: [companyId], references: [id])
+  company               Company                @relation(fields: [companyId], references: [id])
   payments              Payment[]
   expenses              Expense[]
   expensePayments       ExpensePayment[]
   employeeAdvances      EmployeeAdvance[]
-  internalTransfersFrom InternalTransfer[] @relation("InternalTransferFromBank")
-  internalTransfersTo   InternalTransfer[] @relation("InternalTransferToBank")
+  internalTransfersFrom InternalTransfer[]     @relation("InternalTransferFromBank")
+  internalTransfersTo   InternalTransfer[]     @relation("InternalTransferToBank")
+  paymentRequestPayouts PaymentRequestPayout[]
 
   @@unique([companyId, code])
   @@map("bank_accounts")
@@ -7017,6 +7021,7 @@ model Journal {
   internalTransfer          InternalTransfer?
   employeeAdvance           EmployeeAdvance?
   employeeAdvanceSettlement EmployeeAdvanceSettlement?
+  paymentRequestPayout      PaymentRequestPayout?
 
   @@unique([companyId, journalNumber])
   @@map("journals")
@@ -7640,6 +7645,10 @@ model Payment {
   // Free text — cheque number, bank UTR/reference, etc. We don't control it.
   referenceNumber String?          @map("reference_number")
   amount          Decimal          @map("amount") @db.Decimal(18, 2)
+  // Supplier advance (Payments Request "on account", 2026-10-27): posted to
+  // SUP-ADV (Advance to Suppliers) instead of AP; allocating it to a bill
+  // later moves that part from SUP-ADV to AP.
+  isAdvance       Boolean          @default(false) @map("is_advance")
   status          PaymentStatus    @default(DRAFT)
   // Always company.baseCurrencyCode — every Sales/Purchase Order (and thus
   // invoice) this pays against is already forced to base currency, so no
@@ -7656,16 +7665,17 @@ model Payment {
   createdAt       DateTime         @default(now()) @map("created_at")
   updatedAt       DateTime         @updatedAt @map("updated_at")
 
-  company     Company             @relation(fields: [companyId], references: [id])
-  branch      Branch?             @relation(fields: [branchId], references: [id])
-  customer    Customer?           @relation(fields: [customerId], references: [id])
-  supplier    Supplier?           @relation(fields: [supplierId], references: [id])
-  paymentType PaymentType         @relation(fields: [paymentTypeId], references: [id])
-  bankAccount BankAccount?        @relation(fields: [bankAccountId], references: [id])
-  journal     Journal?            @relation(fields: [journalId], references: [id])
-  postedBy    User?               @relation("PaymentPostedBy", fields: [postedByUserId], references: [id])
-  createdBy   User                @relation("PaymentCreatedBy", fields: [createdByUserId], references: [id])
-  allocations PaymentAllocation[]
+  company              Company               @relation(fields: [companyId], references: [id])
+  branch               Branch?               @relation(fields: [branchId], references: [id])
+  customer             Customer?             @relation(fields: [customerId], references: [id])
+  supplier             Supplier?             @relation(fields: [supplierId], references: [id])
+  paymentType          PaymentType           @relation(fields: [paymentTypeId], references: [id])
+  bankAccount          BankAccount?          @relation(fields: [bankAccountId], references: [id])
+  journal              Journal?              @relation(fields: [journalId], references: [id])
+  postedBy             User?                 @relation("PaymentPostedBy", fields: [postedByUserId], references: [id])
+  createdBy            User                  @relation("PaymentCreatedBy", fields: [createdByUserId], references: [id])
+  allocations          PaymentAllocation[]
+  paymentRequestPayout PaymentRequestPayout?
 
   @@unique([companyId, branchId, paymentNumber])
   @@unique([companyId, idempotencyKey])
@@ -7978,6 +7988,7 @@ model PaymentRequest {
   cancelledBy  User?                    @relation("PaymentRequestCancelledBy", fields: [cancelledByUserId], references: [id])
   approvalRule PaymentApprovalRule?     @relation(fields: [approvalRuleId], references: [id])
   approvals    PaymentRequestApproval[]
+  payouts      PaymentRequestPayout[]
 
   @@unique([companyId, requestNumber])
   @@unique([companyId, idempotencyKey])
@@ -8057,6 +8068,42 @@ model PaymentRequestApproval {
   @@map("payment_request_approvals")
 }
 
+// One payment made against a payment request (full or part). The request's
+// type decides what is created: a posted Payment (supplier advance), a posted
+// InternalTransfer (cash withdrawal) or a plain journal (investment). Every
+// payout has exactly one journal; its sourceModule is PAYMENT or
+// PAYMENT_REQUEST, both of which reverseJournal() refuses.
+model PaymentRequestPayout {
+  id                 String   @id @default(uuid()) @db.Uuid
+  companyId          String   @map("company_id") @db.Uuid
+  paymentRequestId   String   @map("payment_request_id") @db.Uuid
+  paymentDate        DateTime @map("payment_date") @db.Date
+  amount             Decimal  @db.Decimal(18, 2)
+  paymentTypeId      String   @map("payment_type_id") @db.Uuid
+  bankAccountId      String?  @map("bank_account_id") @db.Uuid
+  referenceNumber    String?  @map("reference_number")
+  notes              String?
+  journalId          String   @unique @map("journal_id") @db.Uuid
+  paymentId          String?  @unique @map("payment_id") @db.Uuid
+  internalTransferId String?  @unique @map("internal_transfer_id") @db.Uuid
+  createdByUserId    String   @map("created_by_user_id") @db.Uuid
+  idempotencyKey     String?  @map("idempotency_key")
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  company          Company           @relation(fields: [companyId], references: [id])
+  paymentRequest   PaymentRequest    @relation(fields: [paymentRequestId], references: [id])
+  paymentType      PaymentType       @relation(fields: [paymentTypeId], references: [id])
+  bankAccount      BankAccount?      @relation(fields: [bankAccountId], references: [id])
+  journal          Journal           @relation(fields: [journalId], references: [id])
+  payment          Payment?          @relation(fields: [paymentId], references: [id])
+  internalTransfer InternalTransfer? @relation(fields: [internalTransferId], references: [id])
+  createdBy        User              @relation("PaymentRequestPayoutCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@unique([companyId, idempotencyKey])
+  @@index([paymentRequestId])
+  @@map("payment_request_payouts")
+}
+
 // ─────────────────────────────────────────────────────────────
 // Internal Transfer — moving money between two of the company's own
 // Cash/Bank accounts (e.g. cash deposited into the bank). Zero P&L impact,
@@ -8100,15 +8147,16 @@ model InternalTransfer {
   createdAt         DateTime               @default(now()) @map("created_at")
   updatedAt         DateTime               @updatedAt @map("updated_at")
 
-  company         Company      @relation(fields: [companyId], references: [id])
-  branch          Branch?      @relation(fields: [branchId], references: [id])
-  fromPaymentType PaymentType  @relation("InternalTransferFrom", fields: [fromPaymentTypeId], references: [id])
-  toPaymentType   PaymentType  @relation("InternalTransferTo", fields: [toPaymentTypeId], references: [id])
-  fromBankAccount BankAccount? @relation("InternalTransferFromBank", fields: [fromBankAccountId], references: [id])
-  toBankAccount   BankAccount? @relation("InternalTransferToBank", fields: [toBankAccountId], references: [id])
-  journal         Journal?     @relation(fields: [journalId], references: [id])
-  postedBy        User?        @relation("InternalTransferPostedBy", fields: [postedByUserId], references: [id])
-  createdBy       User         @relation("InternalTransferCreatedBy", fields: [createdByUserId], references: [id])
+  company              Company               @relation(fields: [companyId], references: [id])
+  branch               Branch?               @relation(fields: [branchId], references: [id])
+  fromPaymentType      PaymentType           @relation("InternalTransferFrom", fields: [fromPaymentTypeId], references: [id])
+  toPaymentType        PaymentType           @relation("InternalTransferTo", fields: [toPaymentTypeId], references: [id])
+  fromBankAccount      BankAccount?          @relation("InternalTransferFromBank", fields: [fromBankAccountId], references: [id])
+  toBankAccount        BankAccount?          @relation("InternalTransferToBank", fields: [toBankAccountId], references: [id])
+  journal              Journal?              @relation(fields: [journalId], references: [id])
+  postedBy             User?                 @relation("InternalTransferPostedBy", fields: [postedByUserId], references: [id])
+  createdBy            User                  @relation("InternalTransferCreatedBy", fields: [createdByUserId], references: [id])
+  paymentRequestPayout PaymentRequestPayout?
 
   @@unique([companyId, branchId, transferNumber])
   @@unique([companyId, idempotencyKey])

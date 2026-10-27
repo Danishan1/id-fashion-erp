@@ -301,6 +301,8 @@ export async function reverseJournal(actor: ActorContext, id: string, input: Rev
     original.sourceModule === "SALES_INVOICE" ||
     original.sourceModule === "PURCHASE_INVOICE" ||
     original.sourceModule === "EXPENSE" ||
+    // Payments Request payouts (2026-10-27): reversing would desync the request's paidAmount.
+    original.sourceModule === "PAYMENT_REQUEST" ||
     original.sourceModule === "EXPENSE_PAYMENT"
   ) {
     throw new BusinessRuleError(

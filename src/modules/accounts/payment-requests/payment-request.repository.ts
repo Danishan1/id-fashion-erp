@@ -13,6 +13,17 @@ const DETAIL_INCLUDE = {
   rejectedBy: { select: { id: true, fullName: true } },
   cancelledBy: { select: { id: true, fullName: true } },
   approvals: { orderBy: { decidedAt: "asc" }, include: { user: { select: { id: true, fullName: true } } } },
+  payouts: {
+    orderBy: { createdAt: "asc" },
+    include: {
+      paymentType: { select: { name: true, type: true } },
+      bankAccount: { select: { name: true, bankName: true } },
+      journal: { select: { id: true, journalNumber: true } },
+      payment: { select: { id: true, paymentNumber: true } },
+      internalTransfer: { select: { id: true, transferNumber: true } },
+      createdBy: { select: { fullName: true } },
+    },
+  },
 } satisfies Prisma.PaymentRequestInclude;
 
 export const PaymentRequestRepository = {

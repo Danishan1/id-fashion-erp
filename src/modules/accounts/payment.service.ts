@@ -477,7 +477,46 @@ export async function allocatePayment(actor: ActorContext, id: string, input: Pa
 
   const newRows = await buildAndValidateAllocations(actor.companyId, payment.direction, partyId, unallocated, input.allocations);
 
+  // A supplier advance (Payments Request "on account") sits in SUP-ADV, not AP.
+  // Allocating it to bills moves that amount: Dr AP / Cr SUP-ADV.
+  const reclass = payment.isAdvance
+    ? await (async () => {
+        const [ap, supAdv] = await Promise.all([
+          ChartOfAccountRepository.findByCode(actor.companyId, "AP"),
+          ChartOfAccountRepository.findByCode(actor.companyId, "SUP-ADV"),
+        ]);
+        if (!ap || !supAdv) {
+          throw new BusinessRuleError("NOT_FOUND", "The Accounts Payable or Advance to Suppliers account is missing from the Chart of Accounts.");
+        }
+        const journalNumber = await generateDocumentNumber({ companyId: actor.companyId, branchId: payment.branchId ?? null, documentType: "JOURNAL" });
+        return { ap, supAdv, journalNumber, amount: round2(newRows.reduce((sum, r) => sum + r.allocatedAmount, 0)) };
+      })()
+    : null;
+
   await prisma.$transaction(async (tx) => {
+    if (reclass && reclass.amount > 0) {
+      const journal = await tx.journal.create({
+        data: {
+          companyId: actor.companyId,
+          branchId: payment.branchId ?? null,
+          journalNumber: reclass.journalNumber,
+          journalDate: new Date(),
+          status: "DRAFT",
+          narration: `Supplier advance ${payment.paymentNumber} adjusted against bills`,
+          sourceModule: "PAYMENT",
+          sourceRecordId: payment.id,
+          createdByUserId: actor.userId,
+          lines: {
+            create: [
+              { accountId: reclass.ap.id, lineNumber: 1, debitAmount: reclass.amount, creditAmount: 0, description: `Advance ${payment.paymentNumber} adjusted` },
+              { accountId: reclass.supAdv.id, lineNumber: 2, debitAmount: 0, creditAmount: reclass.amount, description: `Advance ${payment.paymentNumber} adjusted` },
+            ],
+          },
+        },
+      });
+      await postJournalCore(tx, journal.id, "DRAFT", actor.userId);
+    }
+
     for (const row of newRows) {
       await applyAllocationInTx(tx, row);
       await tx.paymentAllocation.create({

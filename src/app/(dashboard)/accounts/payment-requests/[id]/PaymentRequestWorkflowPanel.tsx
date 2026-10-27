@@ -14,7 +14,9 @@ import {
   type PaymentRequestGroupKey,
   type PaymentRequestTypeKey,
 } from "@/modules/accounts/payment-requests/request-type-registry";
+import Link from "next/link";
 import { PaymentRequestForm } from "../PaymentRequestForm";
+import { PayoutModal } from "./PayoutModal";
 import { PAYMENT_REQUEST_STATUS_STYLES } from "../statusStyles";
 
 interface PaymentRequestDetail {
@@ -48,13 +50,31 @@ interface PaymentRequestDetail {
     levels: { level: number; anyApprover: boolean; users: { name: string }[]; roles: { name: string }[] }[];
   } | null;
   approvals: { id: string; level: number; decision: "APPROVED" | "REJECTED"; remark: string | null; decidedAt: string; user: { fullName: string } }[];
+  payouts: {
+    id: string;
+    paymentDate: string;
+    amount: string;
+    referenceNumber: string | null;
+    paymentType: { name: string; type: string };
+    bankAccount: { name: string; bankName: string } | null;
+    journal: { id: string; journalNumber: string };
+    payment: { id: string; paymentNumber: string } | null;
+    internalTransfer: { id: string; transferNumber: string } | null;
+    createdBy: { fullName: string };
+  }[];
 }
+
+/** Paid in one go (one transfer / deposit) — mirrors FULL_PAYOUT_ONLY in payout.service.ts. */
+const FULL_PAYOUT_ONLY = ["CASH_WITHDRAWAL", "FIXED_DEPOSIT", "RECURRING_DEPOSIT", "BANK_TRANSFER", "LOAN", "IMPREST"];
 
 interface Permissions {
   canApprove: boolean;
   canReject: boolean;
   canEdit: boolean;
   canCancel: boolean;
+  canPay: boolean;
+  /** Approved, but this type cannot be paid from here yet (its skill is not built). */
+  payNotAvailableYet: boolean;
   canEditFiles: boolean;
 }
 
@@ -69,6 +89,8 @@ export function PaymentRequestWorkflowPanel({ request, permissions }: { request:
   const [showReject, setShowReject] = useState(false);
   const [rejectionReason, setRejectionReason] = useState("");
   const [showEdit, setShowEdit] = useState(false);
+  const [showPay, setShowPay] = useState(false);
+  const remaining = Math.round((Number(request.amount) - Number(request.paidAmount)) * 100) / 100;
 
   const runAction = async (path: string, body?: unknown) => {
     setIsBusy(true);
@@ -102,7 +124,7 @@ export function PaymentRequestWorkflowPanel({ request, permissions }: { request:
       ? "anyone with the Approve permission"
       : [...currentLevel.roles.map((r) => `role ${r.name}`), ...currentLevel.users.map((u) => u.name)].join(", ");
 
-  const hasActions =permissions.canApprove || permissions.canReject || permissions.canEdit || permissions.canCancel;
+  const hasActions = permissions.canPay || permissions.canApprove || permissions.canReject || permissions.canEdit || permissions.canCancel;
 
   return (
     <div className="space-y-6">
@@ -135,7 +157,9 @@ export function PaymentRequestWorkflowPanel({ request, permissions }: { request:
 
       {(request.status === "APPROVED" || request.status === "PARTIALLY_PAID") && (
         <div className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800 dark:border-blue-900 dark:bg-blue-500/10 dark:text-blue-300">
-          Waiting for the accountant to pay. Paying from this screen comes with the payout step.
+          {permissions.payNotAvailableYet
+            ? "Approved. Paying this request type from here is not available yet."
+            : `Waiting for the accountant to pay ₹${formatCurrency(remaining)}.`}
         </div>
       )}
 
@@ -190,6 +214,16 @@ export function PaymentRequestWorkflowPanel({ request, permissions }: { request:
 
       {hasActions && (
         <div className="flex flex-wrap gap-2">
+          {permissions.canPay && (
+            <button
+              type="button"
+              disabled={isBusy}
+              onClick={() => setShowPay(true)}
+              className="rounded-md bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-500 disabled:opacity-60"
+            >
+              Pay
+            </button>
+          )}
           {permissions.canApprove && (
             <button
               type="button"
@@ -230,6 +264,59 @@ export function PaymentRequestWorkflowPanel({ request, permissions }: { request:
               Cancel Request
             </button>
           )}
+        </div>
+      )}
+
+      {request.payouts.length > 0 && (
+        <div>
+          <p className="text-sm font-medium text-zinc-900 dark:text-zinc-50">Payments made</p>
+          <div className="mt-2 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="text-left text-xs uppercase text-zinc-500">
+                <tr>
+                  <th className="py-1 pr-4">Date</th>
+                  <th className="py-1 pr-4">Amount</th>
+                  <th className="py-1 pr-4">Paid from</th>
+                  <th className="py-1 pr-4">Reference</th>
+                  <th className="py-1 pr-4">Document</th>
+                  <th className="py-1 pr-4">Journal</th>
+                  <th className="py-1 pr-4">By</th>
+                </tr>
+              </thead>
+              <tbody>
+                {request.payouts.map((p) => (
+                  <tr key={p.id} className="border-t border-zinc-100 dark:border-zinc-800">
+                    <td className="py-1 pr-4">{p.paymentDate.slice(0, 10)}</td>
+                    <td className="py-1 pr-4">₹{formatCurrency(p.amount)}</td>
+                    <td className="py-1 pr-4">
+                      {p.paymentType.name}
+                      {p.bankAccount ? ` — ${p.bankAccount.name}` : ""}
+                    </td>
+                    <td className="py-1 pr-4">{p.referenceNumber ?? "—"}</td>
+                    <td className="py-1 pr-4">
+                      {p.payment ? (
+                        <Link href={`/accounts/payments/${p.payment.id}`} className="text-indigo-600 hover:text-indigo-500">
+                          {p.payment.paymentNumber}
+                        </Link>
+                      ) : p.internalTransfer ? (
+                        <Link href={`/accounts/internal-transfers/${p.internalTransfer.id}`} className="text-indigo-600 hover:text-indigo-500">
+                          {p.internalTransfer.transferNumber}
+                        </Link>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="py-1 pr-4">
+                      <Link href={`/accounts/journals/${p.journal.id}`} className="text-indigo-600 hover:text-indigo-500">
+                        {p.journal.journalNumber}
+                      </Link>
+                    </td>
+                    <td className="py-1 pr-4">{p.createdBy.fullName}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -295,6 +382,22 @@ export function PaymentRequestWorkflowPanel({ request, permissions }: { request:
           if (await runAction("cancel")) setConfirm(null);
         }}
       />
+
+      {showPay && (
+        <PayoutModal
+          open={showPay}
+          requestId={request.id}
+          requestNumber={request.requestNumber}
+          remaining={remaining}
+          fullOnly={FULL_PAYOUT_ONLY.includes(request.requestType)}
+          isCashWithdrawal={request.requestType === "CASH_WITHDRAWAL"}
+          onClose={() => setShowPay(false)}
+          onPaid={() => {
+            setShowPay(false);
+            router.refresh();
+          }}
+        />
+      )}
 
       <Modal open={showReject} onClose={() => setShowReject(false)} title="Reject request">
         <form

@@ -47,6 +47,7 @@ const { FinanceConfigRepository } = await import("@/modules/finance-config/finan
 const { PaymentRepository, CompanyRepository } = await import("./payment.repository");
 const { SalesInvoiceRepository } = await import("./sales-invoice.repository");
 const { PurchaseInvoiceRepository } = await import("./purchase-invoice.repository");
+const { generateDocumentNumber } = await import("@/core/numbering/DocumentNumberingService");
 const { ChartOfAccountRepository } = await import("./chart-of-account.repository");
 const { postJournalCore } = await import("./journal.service");
 const { createPayment, postPayment, cancelPayment, allocatePayment, listPayments, getPaymentById } = await import("./payment.service");
@@ -573,6 +574,46 @@ describe("allocatePayment — applying an already-POSTED payment's unallocated r
     expect(result).toMatchObject({ id: "pay-1" });
     expect(createSpy).toHaveBeenCalledWith({ data: { paymentId: "pay-1", salesInvoiceId: "inv-1", purchaseInvoiceId: null, allocatedAmount: 150 } });
     expect(fakeTx.journal.create).not.toHaveBeenCalled();
+  });
+
+  it("a supplier advance moves the allocated part from Advance to Suppliers to AP (Dr AP / Cr SUP-ADV)", async () => {
+    const advance = {
+      id: "pay-adv",
+      paymentNumber: "PAY-9",
+      branchId: null,
+      status: "POSTED",
+      direction: "PAYMENT_OUT" as const,
+      customerId: null,
+      supplierId: "sup-1",
+      amount: "500",
+      isAdvance: true,
+      createdByUserId: "user-1",
+      allocations: [],
+    };
+    vi.mocked(PaymentRepository.findByIdWithDetails).mockResolvedValue(advance as never);
+    vi.mocked(PurchaseInvoiceRepository.findAnyById).mockResolvedValue({
+      id: "pinv-1",
+      supplierId: "sup-1",
+      status: "POSTED",
+      totalAmount: "1000",
+      paidAmount: "0",
+    } as never);
+    vi.mocked(ChartOfAccountRepository.findByCode).mockImplementation((async (_c: string, code: string) => ({ id: `acct-${code}` })) as never);
+    vi.mocked(generateDocumentNumber).mockResolvedValue("JRN-9");
+
+    const fakeTx = makeFakeTx();
+    vi.mocked(prisma.$transaction).mockImplementation((cb: unknown) =>
+      (cb as (tx: unknown) => Promise<unknown>)({ ...fakeTx, paymentAllocation: { create: vi.fn() } })
+    );
+
+    await allocatePayment(actor, "pay-adv", { allocations: [{ purchaseInvoiceId: "pinv-1", allocatedAmount: 300 }] });
+
+    const journal = fakeTx.journal.create.mock.calls[0][0].data;
+    expect(journal).toMatchObject({ journalNumber: "JRN-9", sourceModule: "PAYMENT", sourceRecordId: "pay-adv" });
+    expect(journal.lines.create).toEqual([
+      expect.objectContaining({ accountId: "acct-AP", debitAmount: 300, creditAmount: 0 }),
+      expect.objectContaining({ accountId: "acct-SUP-ADV", debitAmount: 0, creditAmount: 300 }),
+    ]);
   });
 });
 
