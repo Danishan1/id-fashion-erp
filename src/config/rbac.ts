@@ -79,6 +79,9 @@ export const MODULES = [
   // (salary, expenditure, supplier, internal transfer). Its own module so any
   // department can raise a request without getting the expenses ledger.
   "payment_requests",
+  // Payment Request Approval Matrix (2026-10-27): who approves which request
+  // type / amount. Separate so only senior accounts staff can change it.
+  "payment_request_settings",
   "financial_reports",
   "dispatch",
   "reports",
@@ -258,6 +261,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     expenses: ["view", "approve", "reject"],
     // The approver of payment requests; never pays (no "post").
     payment_requests: ["view", "view_all", "approve", "reject", "export"],
+    payment_request_settings: ["view"],
     financial_reports: ["view", "export", "print"],
     // "approve" added for Extra Dispatch Quantity (2026-09-30) — the
     // checkpoint gate confirmDispatch() asserts when a dispatch's own extra
@@ -474,6 +478,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     // either, unlike ACCOUNTS_EXECUTIVE below which gets neither.
     expenses: ["view", "create", "edit", "approve", "reject", "post", "cancel", "export", "print"],
     payment_requests: ["view", "view_all", "create", "edit", "approve", "reject", "post", "cancel", "export", "print"],
+    payment_request_settings: ["view", "edit"],
     financial_reports: ["view", "export", "print"],
     // Limited administrative visibility (company/AI-provider settings) only
     // — deliberately NOT administration_users/administration_roles, per the

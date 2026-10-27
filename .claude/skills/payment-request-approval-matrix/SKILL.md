@@ -55,9 +55,18 @@ slab resolution incl. boundaries; branch rule beats all-branch rule; overlap ref
 can't approve; same user can't approve two levels; approver-may-pay false blocks payout; deactivated approver
 ignored; rule change doesn't affect already-submitted requests (snapshot).
 
-## Done checklist
-- [ ] schema + migration
-- [ ] resolver + decision service
-- [ ] admin UI + timeline + "To approve" filter
-- [ ] notifications
-- [ ] tests
+## Done checklist (built 2026-10-27)
+- [x] schema + migration `20261027140000_payment_approval_matrix` (+ CHECKs: role XOR user, level 1–3, amounts) + rollback
+- [x] resolver + decision service (`approval-matrix.service.ts`; request plan frozen in `approvalPlanJson`, current level's
+      approvers copied to `currentApprover*` columns for SQL filtering)
+- [x] admin UI `/accounts/payment-requests/approval-matrix` + request timeline + "To Approve" filter
+- [x] in-app notifications (named approvers of the next level; raiser on final approve/reject). A level with no
+      rule ("any approver") notifies nobody — too many users.
+- [x] tests (approval-matrix.service.test.ts + request multi-level tests), full suite 3635 green, live API check
+
+As built (differences from the plan above):
+- RBAC module `payment_request_settings` (view/edit): ACCOUNTS_MANAGER view+edit, MANAGEMENT view.
+- SUPER_ADMIN role holders may decide any level (override); still never two levels of one request.
+- Editing a request is blocked once any level is approved; before that, editing re-resolves the plan.
+- `approverMayPay` is stored on the request; the payout skill must enforce it.
+- Per-type enable/disable (old `PaymentRequestTypeSetting`) not built — not needed yet.

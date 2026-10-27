@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { DataTable } from "@/components/ui/DataTable";
@@ -43,9 +44,10 @@ interface Props {
   canCreate: boolean;
   canApprove: boolean;
   canPay: boolean;
+  canViewMatrix: boolean;
 }
 
-export function PaymentRequestsHubClient({ canCreate, canApprove, canPay }: Props) {
+export function PaymentRequestsHubClient({ canCreate, canApprove, canPay, canViewMatrix }: Props) {
   const router = useRouter();
   const [group, setGroup] = useState<PaymentRequestGroupKey | "">("");
   const [view, setView] = useState<View>("all");
@@ -76,7 +78,14 @@ export function PaymentRequestsHubClient({ canCreate, canApprove, canPay }: Prop
     <div className="space-y-4">
       <div>
         <Breadcrumb items={[{ label: "Accounts", href: "/accounts" }, { label: "Payment Requests" }]} />
-        <h1 className="mt-2 text-lg font-semibold text-zinc-900 dark:text-zinc-50">Payment Requests</h1>
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+          <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Payment Requests</h1>
+          {canViewMatrix && (
+            <Link href="/accounts/payment-requests/approval-matrix" className="text-sm font-medium text-indigo-600 hover:text-indigo-500">
+              Approval Matrix →
+            </Link>
+          )}
+        </div>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
           Raise a request to pay money out. It goes to an approver (Salary goes straight to the accountant), and the
           accountant pays it. Add a remark or a voice remark on any request.

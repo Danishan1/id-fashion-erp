@@ -3,6 +3,7 @@ import { auth } from "@/core/auth/auth";
 import { PermissionService } from "@/core/rbac/PermissionService";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { getPaymentRequestById } from "@/modules/accounts/payment-requests/payment-request.service";
+import { getApproverIdentity, isListedApprover } from "@/modules/accounts/payment-requests/approval-matrix.service";
 import { PaymentRequestWorkflowPanel } from "./PaymentRequestWorkflowPanel";
 
 export default async function PaymentRequestDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -25,6 +26,12 @@ export default async function PaymentRequestDetailPage({ params }: { params: Pro
     PermissionService.can(userId, "payment_requests", "create"),
   ]);
   const pending = request.status === "PENDING_APPROVAL";
+  // Approval Matrix: only the current level's approvers, never twice on one request.
+  const identity = await getApproverIdentity(userId);
+  const decidesThisLevel =
+    pending &&
+    isListedApprover(request, userId, identity) &&
+    !request.approvals.some((a) => a.userId === userId && a.decision === "APPROVED");
 
   return (
     <div className="space-y-6">
@@ -43,9 +50,9 @@ export default async function PaymentRequestDetailPage({ params }: { params: Pro
         key={id}
         request={JSON.parse(JSON.stringify(request))}
         permissions={{
-          canApprove: pending && canApprove,
-          canReject: pending && canReject,
-          canEdit: pending && (isRaiser || canEditOthers),
+          canApprove: decidesThisLevel && canApprove,
+          canReject: decidesThisLevel && canReject,
+          canEdit: pending && request.approvals.length === 0 && (isRaiser || canEditOthers),
           canCancel:
             (pending || request.status === "APPROVED") && unpaid && (isRaiser || canCancelOthers),
           canEditFiles: canCreate && request.status !== "CANCELLED" && request.status !== "REJECTED",

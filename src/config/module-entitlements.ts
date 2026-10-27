@@ -57,7 +57,7 @@ export const ENTITLEMENT_PACKAGES = [
     key: "ACCOUNTS",
     label: "Accounts",
     description: "Journals, invoices, payments, expenses, payment requests and financial reports.",
-    modules: ["accounts", "invoices", "payments", "expenses", "payment_requests", "financial_reports"],
+    modules: ["accounts", "invoices", "payments", "expenses", "payment_requests", "payment_request_settings", "financial_reports"],
   },
   {
     key: "CRM",

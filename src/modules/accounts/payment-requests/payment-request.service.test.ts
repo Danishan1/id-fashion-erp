@@ -6,6 +6,14 @@ vi.mock("@/core/numbering/DocumentNumberingService", () => ({ generateDocumentNu
 vi.mock("@/core/rbac/PermissionService", () => ({
   PermissionService: { assert: vi.fn(), can: vi.fn(), getAllowedBranchIds: vi.fn() },
 }));
+vi.mock("@/core/notifications/NotificationService", () => ({ createNotification: vi.fn() }));
+vi.mock("./approval-matrix.repository", () => ({
+  ApprovalMatrixRepository: {
+    findActiveRulesFor: vi.fn(),
+    findUserRoles: vi.fn(),
+    findApproverUserIds: vi.fn(),
+  },
+}));
 vi.mock("./payment-request.repository", () => ({
   PaymentRequestRepository: {
     findMany: vi.fn(),
@@ -14,6 +22,8 @@ vi.mock("./payment-request.repository", () => ({
     findByIdempotencyKey: vi.fn(),
     create: vi.fn(),
     updateIfStatus: vi.fn(),
+    recordDecision: vi.fn(),
+    hasApproved: vi.fn(),
     countByGroupAndStatus: vi.fn(),
     findBaseCurrencyCode: vi.fn(),
     findActiveSupplier: vi.fn(),
@@ -24,6 +34,8 @@ vi.mock("./payment-request.repository", () => ({
 const { PermissionService } = await import("@/core/rbac/PermissionService");
 const { generateDocumentNumber } = await import("@/core/numbering/DocumentNumberingService");
 const { PaymentRequestRepository } = await import("./payment-request.repository");
+const { ApprovalMatrixRepository } = await import("./approval-matrix.repository");
+const { createNotification } = await import("@/core/notifications/NotificationService");
 const {
   createPaymentRequest,
   updatePaymentRequest,
@@ -55,6 +67,13 @@ function storedRequest(overrides: Record<string, unknown> = {}) {
     paymentDueDate: new Date("2026-10-27"),
     remark: null,
     createdByUserId: "user-1",
+    approvals: [],
+    approvalPlanJson: null,
+    requiredApprovalLevels: 1,
+    currentApprovalLevel: 1,
+    currentLevelAnyApprover: true,
+    currentApproverUserIds: [],
+    currentApproverRoleIds: [],
     ...overrides,
   };
 }
@@ -75,6 +94,11 @@ beforeEach(() => {
   vi.mocked(PaymentRequestRepository.create).mockResolvedValue(storedRequest() as never);
   vi.mocked(PaymentRequestRepository.findByIdWithDetails).mockResolvedValue(storedRequest() as never);
   vi.mocked(PaymentRequestRepository.updateIfStatus).mockResolvedValue({ count: 1 });
+  vi.mocked(PaymentRequestRepository.recordDecision).mockResolvedValue(true);
+  vi.mocked(PaymentRequestRepository.hasApproved).mockResolvedValue(false);
+  vi.mocked(ApprovalMatrixRepository.findActiveRulesFor).mockResolvedValue([]);
+  vi.mocked(ApprovalMatrixRepository.findUserRoles).mockResolvedValue([]);
+  vi.mocked(ApprovalMatrixRepository.findApproverUserIds).mockResolvedValue([]);
 });
 
 describe("schema", () => {
@@ -180,22 +204,25 @@ describe("approve / reject / edit / cancel", () => {
     grant("approve");
     await approvePaymentRequest({ companyId: "co-1", userId: "approver" }, "pr-1");
     expect(PermissionService.assert).toHaveBeenCalledWith("approver", "payment_requests", "approve", { createdBy: "user-1" });
-    expect(vi.mocked(PaymentRequestRepository.updateIfStatus).mock.calls[0][1]).toEqual(["PENDING_APPROVAL"]);
+    const [, level, decision, data] = vi.mocked(PaymentRequestRepository.recordDecision).mock.calls[0];
+    expect(level).toBe(1);
+    expect(decision).toMatchObject({ decision: "APPROVED", userId: "approver" });
+    expect(data).toMatchObject({ status: "APPROVED", approvedByUserId: "approver" });
+    expect(createNotification).toHaveBeenCalledWith(expect.objectContaining({ userId: "user-1", relatedModule: "PAYMENT_REQUEST" }));
   });
 
   it("refuses to approve when the request already moved on", async () => {
     grant("approve");
-    vi.mocked(PaymentRequestRepository.updateIfStatus).mockResolvedValueOnce({ count: 0 });
+    vi.mocked(PaymentRequestRepository.recordDecision).mockResolvedValueOnce(false);
     await expect(approvePaymentRequest(actor, "pr-1")).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
   });
 
   it("stores the rejection reason", async () => {
     grant("reject");
     await rejectPaymentRequest(actor, "pr-1", "Not needed");
-    expect(vi.mocked(PaymentRequestRepository.updateIfStatus).mock.calls[0][2]).toMatchObject({
-      status: "REJECTED",
-      rejectionReason: "Not needed",
-    });
+    const [, , decision, data] = vi.mocked(PaymentRequestRepository.recordDecision).mock.calls[0];
+    expect(decision).toMatchObject({ decision: "REJECTED", remark: "Not needed" });
+    expect(data).toMatchObject({ status: "REJECTED", rejectionReason: "Not needed" });
   });
 
   it("lets the raiser edit their own pending request without the edit permission", async () => {
@@ -227,5 +254,104 @@ describe("approve / reject / edit / cancel", () => {
 
     vi.mocked(PaymentRequestRepository.updateIfStatus).mockResolvedValueOnce({ count: 0 });
     await expect(cancelPaymentRequest(actor, "pr-1")).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+  });
+});
+
+describe("approval matrix on requests", () => {
+  const twoLevelPlan = {
+    ruleId: "rule-1",
+    routing: "APPROVAL_THEN_PAY",
+    approverMayPay: false,
+    levels: [
+      { level: 1, anyApprover: false, users: [{ id: "u-l1", name: "L1" }], roles: [] },
+      { level: 2, anyApprover: false, users: [], roles: [{ id: "role-fin", name: "FINANCE" }] },
+    ],
+  };
+  const twoLevelRequest = (o: Record<string, unknown> = {}) =>
+    storedRequest({
+      approvalPlanJson: twoLevelPlan,
+      requiredApprovalLevels: 2,
+      currentLevelAnyApprover: false,
+      currentApproverUserIds: ["u-l1"],
+      currentApproverRoleIds: [],
+      ...o,
+    });
+
+  it("freezes the matching rule's plan on create; a direct rule creates it already approved", async () => {
+    vi.mocked(ApprovalMatrixRepository.findActiveRulesFor).mockResolvedValueOnce([
+      { id: "r-big", branchId: null, minAmount: 50000, maxAmount: null, routing: "APPROVAL_THEN_PAY", approvalLevels: 1, approverMayPay: true, approvers: [{ level: 1, roleId: null, userId: "u-boss", role: null, user: { id: "u-boss", fullName: "Boss" } }] },
+      { id: "r-small", branchId: null, minAmount: 0, maxAmount: 50000, routing: "DIRECT_TO_ACCOUNTANT", approvalLevels: 1, approverMayPay: false, approvers: [] },
+    ] as never);
+    await createPaymentRequest(actor, { requestType: "CASH_WITHDRAWAL", amount: 1000, payToName: "x" });
+    expect(vi.mocked(PaymentRequestRepository.create).mock.calls[0][0]).toMatchObject({
+      status: "APPROVED",
+      routing: "DIRECT_TO_ACCOUNTANT",
+      approvalRuleId: "r-small",
+      requiredApprovalLevels: 0,
+    });
+  });
+
+  it("level 1 approval moves the request to level 2 and notifies its approvers", async () => {
+    vi.mocked(PaymentRequestRepository.findByIdWithDetails).mockResolvedValue(twoLevelRequest() as never);
+    vi.mocked(ApprovalMatrixRepository.findApproverUserIds).mockResolvedValue(["u-fin"]);
+    grant("approve");
+    await approvePaymentRequest({ companyId: "co-1", userId: "u-l1" }, "pr-1", "ok");
+
+    const [, level, decision, data] = vi.mocked(PaymentRequestRepository.recordDecision).mock.calls[0];
+    expect(level).toBe(1);
+    expect(decision).toMatchObject({ remark: "ok" });
+    expect(data).toEqual({ currentApprovalLevel: 2, currentLevelAnyApprover: false, currentApproverUserIds: [], currentApproverRoleIds: ["role-fin"] });
+    expect(createNotification).toHaveBeenCalledWith(expect.objectContaining({ userId: "u-fin" }));
+  });
+
+  it("refuses someone who is not an approver of the current level", async () => {
+    vi.mocked(PaymentRequestRepository.findByIdWithDetails).mockResolvedValue(twoLevelRequest() as never);
+    grant("approve");
+    await expect(approvePaymentRequest({ companyId: "co-1", userId: "stranger" }, "pr-1")).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    expect(PaymentRequestRepository.recordDecision).not.toHaveBeenCalled();
+  });
+
+  it("lets a role holder decide level 2 but not someone who already approved level 1", async () => {
+    vi.mocked(PaymentRequestRepository.findByIdWithDetails).mockResolvedValue(
+      twoLevelRequest({ currentApprovalLevel: 2, currentApproverUserIds: [], currentApproverRoleIds: ["role-fin"] }) as never
+    );
+    vi.mocked(ApprovalMatrixRepository.findUserRoles).mockResolvedValue([{ roleId: "role-fin", role: { name: "FINANCE" } }] as never);
+    grant("approve");
+
+    vi.mocked(PaymentRequestRepository.hasApproved).mockResolvedValueOnce(true);
+    await expect(approvePaymentRequest({ companyId: "co-1", userId: "u-fin" }, "pr-1")).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+
+    await approvePaymentRequest({ companyId: "co-1", userId: "u-fin" }, "pr-1");
+    expect(vi.mocked(PaymentRequestRepository.recordDecision).mock.calls[0][3]).toMatchObject({ status: "APPROVED" });
+  });
+
+  it("blocks editing once a level has been approved", async () => {
+    vi.mocked(PaymentRequestRepository.findByIdWithDetails).mockResolvedValue(
+      twoLevelRequest({ approvals: [{ id: "a1", level: 1, decision: "APPROVED", userId: "u-l1" }] }) as never
+    );
+    await expect(updatePaymentRequest(actor, "pr-1", { amount: 5, payToName: "x" })).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+  });
+
+  it("'To Approve' filters to the actor's current-level requests they haven't approved", async () => {
+    vi.mocked(PaymentRequestRepository.findMany).mockResolvedValue([]);
+    vi.mocked(PaymentRequestRepository.count).mockResolvedValue(0);
+    vi.mocked(ApprovalMatrixRepository.findUserRoles).mockResolvedValue([{ roleId: "role-fin", role: { name: "FINANCE" } }] as never);
+    grant("approve");
+    await listPaymentRequests(actor, listQuery, { view: "approve" });
+    const where = vi.mocked(PaymentRequestRepository.findMany).mock.calls[0][0];
+    expect(where).toMatchObject({
+      status: "PENDING_APPROVAL",
+      createdByUserId: { not: "user-1" },
+      approvals: { none: { userId: "user-1", decision: "APPROVED" } },
+    });
+    expect(where.AND).toEqual([
+      {
+        OR: [
+          { currentLevelAnyApprover: true },
+          { currentApproverUserIds: { has: "user-1" } },
+          { currentApproverRoleIds: { hasSome: ["role-fin"] } },
+        ],
+      },
+    ]);
   });
 });

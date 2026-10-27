@@ -193,6 +193,7 @@ model Company {
   expenses                            Expense[]
   expensePayments                     ExpensePayment[]
   paymentRequests                     PaymentRequest[]
+  paymentApprovalRules                PaymentApprovalRule[]
   dispatches                          Dispatch[]
   jobWorkOrders                       JobWorkOrder[]
   jobWorkReceipts                     JobWorkReceipt[]
@@ -324,6 +325,7 @@ model Branch {
   expensePayments            ExpensePayment[]
   dispatches                 Dispatch[]
   paymentRequests            PaymentRequest[]
+  paymentApprovalRules       PaymentApprovalRule[]
   jobWorkOrders              JobWorkOrder[]
   customInvoices             CustomInvoice[]
   internalTransfers          InternalTransfer[]
@@ -987,6 +989,9 @@ model User {
   paymentRequestsApproved                    PaymentRequest[]                     @relation("PaymentRequestApprovedBy")
   paymentRequestsRejected                    PaymentRequest[]                     @relation("PaymentRequestRejectedBy")
   paymentRequestsCancelled                   PaymentRequest[]                     @relation("PaymentRequestCancelledBy")
+  paymentApprovalRulesCreated                PaymentApprovalRule[]                @relation("PaymentApprovalRuleCreatedBy")
+  paymentApprovalRuleApprovers               PaymentApprovalRuleApprover[]
+  paymentRequestApprovals                    PaymentRequestApproval[]
   expensesPosted                             Expense[]                            @relation("ExpensePostedBy")
   expensesApproved                           Expense[]                            @relation("ExpenseApprovedBy")
   expensesRejected                           Expense[]                            @relation("ExpenseRejectedBy")
@@ -1099,11 +1104,12 @@ model Role {
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
-  company               Company                     @relation(fields: [companyId], references: [id])
-  rolePermissions       RolePermission[]
-  userBranchRoles       UserBranchRole[]
-  productionStageAccess RoleProductionStageAccess[]
-  branchAccess          RoleBranchAccess[]
+  company                      Company                       @relation(fields: [companyId], references: [id])
+  rolePermissions              RolePermission[]
+  userBranchRoles              UserBranchRole[]
+  productionStageAccess        RoleProductionStageAccess[]
+  branchAccess                 RoleBranchAccess[]
+  paymentApprovalRuleApprovers PaymentApprovalRuleApprover[]
 
   @@unique([companyId, name])
   @@map("roles")
@@ -7909,53 +7915,69 @@ enum PaymentModeOfTransfer {
 }
 
 model PaymentRequest {
-  id                String                 @id @default(uuid()) @db.Uuid
-  companyId         String                 @map("company_id") @db.Uuid
-  branchId          String?                @map("branch_id") @db.Uuid
-  requestNumber     String                 @map("request_number")
-  requestType       PaymentRequestType     @map("request_type")
+  id                      String                 @id @default(uuid()) @db.Uuid
+  companyId               String                 @map("company_id") @db.Uuid
+  branchId                String?                @map("branch_id") @db.Uuid
+  requestNumber           String                 @map("request_number")
+  requestType             PaymentRequestType     @map("request_type")
   // Derived from requestType when created (registry) — stored so lists filter by group cheaply.
-  requestGroup      PaymentRequestGroup    @map("request_group")
-  status            PaymentRequestStatus   @default(PENDING_APPROVAL)
+  requestGroup            PaymentRequestGroup    @map("request_group")
+  status                  PaymentRequestStatus   @default(PENDING_APPROVAL)
   // Snapshot of how this request was routed when it was raised.
-  routing           PaymentRequestRouting  @default(APPROVAL_THEN_PAY)
-  amount            Decimal                @db.Decimal(18, 2)
-  paidAmount        Decimal                @default(0) @map("paid_amount") @db.Decimal(18, 2)
-  currencyCode      String                 @map("currency_code") @db.Char(3)
+  routing                 PaymentRequestRouting  @default(APPROVAL_THEN_PAY)
+  amount                  Decimal                @db.Decimal(18, 2)
+  paidAmount              Decimal                @default(0) @map("paid_amount") @db.Decimal(18, 2)
+  currencyCode            String                 @map("currency_code") @db.Char(3)
   // Who the money goes to. Always filled (copied from the picked supplier /
   // employee so lists never need a join); the typed links are set when the
   // request type picks a real record.
-  payToName         String                 @map("pay_to_name")
-  supplierId        String?                @map("supplier_id") @db.Uuid
-  employeeId        String?                @map("employee_id") @db.Uuid
-  paymentDueDate    DateTime               @map("payment_due_date") @db.Date
-  modeOfTransfer    PaymentModeOfTransfer? @map("mode_of_transfer")
-  remark            String?
+  payToName               String                 @map("pay_to_name")
+  supplierId              String?                @map("supplier_id") @db.Uuid
+  employeeId              String?                @map("employee_id") @db.Uuid
+  paymentDueDate          DateTime               @map("payment_due_date") @db.Date
+  modeOfTransfer          PaymentModeOfTransfer? @map("mode_of_transfer")
+  remark                  String?
   // Small type-only fields (e.g. salary month) until a type needs real columns.
-  typeDataJson      Json?                  @map("type_data_json")
+  typeDataJson            Json?                  @map("type_data_json")
   // Where an auto-created request came from (e.g. a finalised salary month).
-  sourceModule      String?                @map("source_module")
-  sourceRecordId    String?                @map("source_record_id") @db.Uuid
-  approvedAt        DateTime?              @map("approved_at")
-  approvedByUserId  String?                @map("approved_by_user_id") @db.Uuid
-  rejectedAt        DateTime?              @map("rejected_at")
-  rejectedByUserId  String?                @map("rejected_by_user_id") @db.Uuid
-  rejectionReason   String?                @map("rejection_reason")
-  cancelledAt       DateTime?              @map("cancelled_at")
-  cancelledByUserId String?                @map("cancelled_by_user_id") @db.Uuid
-  createdByUserId   String                 @map("created_by_user_id") @db.Uuid
-  idempotencyKey    String?                @map("idempotency_key")
-  createdAt         DateTime               @default(now()) @map("created_at")
-  updatedAt         DateTime               @updatedAt @map("updated_at")
+  sourceModule            String?                @map("source_module")
+  sourceRecordId          String?                @map("source_record_id") @db.Uuid
+  approvedAt              DateTime?              @map("approved_at")
+  approvedByUserId        String?                @map("approved_by_user_id") @db.Uuid
+  rejectedAt              DateTime?              @map("rejected_at")
+  rejectedByUserId        String?                @map("rejected_by_user_id") @db.Uuid
+  rejectionReason         String?                @map("rejection_reason")
+  cancelledAt             DateTime?              @map("cancelled_at")
+  cancelledByUserId       String?                @map("cancelled_by_user_id") @db.Uuid
+  // Approval Matrix (2026-10-27): the rule used and a frozen copy of its
+  // levels (approvalPlanJson), so editing the matrix never changes a request
+  // already raised. The current level's approvers are copied into the arrays
+  // below so "To Approve" can be filtered in SQL.
+  approvalRuleId          String?                @map("approval_rule_id") @db.Uuid
+  approvalPlanJson        Json?                  @map("approval_plan_json")
+  requiredApprovalLevels  Int                    @default(1) @map("required_approval_levels")
+  currentApprovalLevel    Int                    @default(1) @map("current_approval_level")
+  // true = anyone holding payment_requests.approve may decide this level (no matrix rule).
+  currentLevelAnyApprover Boolean                @default(true) @map("current_level_any_approver")
+  currentApproverUserIds  String[]               @default([]) @map("current_approver_user_ids") @db.Uuid
+  currentApproverRoleIds  String[]               @default([]) @map("current_approver_role_ids") @db.Uuid
+  // May a user who approved this request also pay it? From the rule (default no).
+  approverMayPay          Boolean                @default(false) @map("approver_may_pay")
+  createdByUserId         String                 @map("created_by_user_id") @db.Uuid
+  idempotencyKey          String?                @map("idempotency_key")
+  createdAt               DateTime               @default(now()) @map("created_at")
+  updatedAt               DateTime               @updatedAt @map("updated_at")
 
-  company     Company   @relation(fields: [companyId], references: [id])
-  branch      Branch?   @relation(fields: [branchId], references: [id])
-  supplier    Supplier? @relation(fields: [supplierId], references: [id])
-  employee    Employee? @relation(fields: [employeeId], references: [id])
-  createdBy   User      @relation("PaymentRequestCreatedBy", fields: [createdByUserId], references: [id])
-  approvedBy  User?     @relation("PaymentRequestApprovedBy", fields: [approvedByUserId], references: [id])
-  rejectedBy  User?     @relation("PaymentRequestRejectedBy", fields: [rejectedByUserId], references: [id])
-  cancelledBy User?     @relation("PaymentRequestCancelledBy", fields: [cancelledByUserId], references: [id])
+  company      Company                  @relation(fields: [companyId], references: [id])
+  branch       Branch?                  @relation(fields: [branchId], references: [id])
+  supplier     Supplier?                @relation(fields: [supplierId], references: [id])
+  employee     Employee?                @relation(fields: [employeeId], references: [id])
+  createdBy    User                     @relation("PaymentRequestCreatedBy", fields: [createdByUserId], references: [id])
+  approvedBy   User?                    @relation("PaymentRequestApprovedBy", fields: [approvedByUserId], references: [id])
+  rejectedBy   User?                    @relation("PaymentRequestRejectedBy", fields: [rejectedByUserId], references: [id])
+  cancelledBy  User?                    @relation("PaymentRequestCancelledBy", fields: [cancelledByUserId], references: [id])
+  approvalRule PaymentApprovalRule?     @relation(fields: [approvalRuleId], references: [id])
+  approvals    PaymentRequestApproval[]
 
   @@unique([companyId, requestNumber])
   @@unique([companyId, idempotencyKey])
@@ -7964,6 +7986,75 @@ model PaymentRequest {
   @@index([companyId, createdByUserId])
   @@index([companyId, paymentDueDate])
   @@map("payment_requests")
+}
+
+// Approval Matrix (2026-10-27) — who approves which payment request type,
+// by branch and amount slab ([minAmount, maxAmount) — max null = no limit),
+// in 1..3 levels. No matching active rule = the type's default routing with
+// one level that anyone holding payment_requests.approve can decide.
+model PaymentApprovalRule {
+  id              String                @id @default(uuid()) @db.Uuid
+  companyId       String                @map("company_id") @db.Uuid
+  requestType     PaymentRequestType    @map("request_type")
+  // null = every branch; a branch rule wins over an all-branch rule.
+  branchId        String?               @map("branch_id") @db.Uuid
+  minAmount       Decimal               @default(0) @map("min_amount") @db.Decimal(18, 2)
+  maxAmount       Decimal?              @map("max_amount") @db.Decimal(18, 2)
+  routing         PaymentRequestRouting
+  approvalLevels  Int                   @default(1) @map("approval_levels")
+  approverMayPay  Boolean               @default(false) @map("approver_may_pay")
+  isActive        Boolean               @default(true) @map("is_active")
+  createdByUserId String                @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime              @default(now()) @map("created_at")
+  updatedAt       DateTime              @updatedAt @map("updated_at")
+
+  company   Company                       @relation(fields: [companyId], references: [id])
+  branch    Branch?                       @relation(fields: [branchId], references: [id])
+  createdBy User                          @relation("PaymentApprovalRuleCreatedBy", fields: [createdByUserId], references: [id])
+  approvers PaymentApprovalRuleApprover[]
+  requests  PaymentRequest[]
+
+  @@index([companyId, requestType, isActive])
+  @@map("payment_approval_rules")
+}
+
+// One approver of one level: a role (everyone holding it) or a named user —
+// exactly one of the two (CHECK in the migration).
+model PaymentApprovalRuleApprover {
+  id     String  @id @default(uuid()) @db.Uuid
+  ruleId String  @map("rule_id") @db.Uuid
+  level  Int
+  roleId String? @map("role_id") @db.Uuid
+  userId String? @map("user_id") @db.Uuid
+
+  rule PaymentApprovalRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  role Role?               @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  user User?               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([ruleId])
+  @@map("payment_approval_rule_approvers")
+}
+
+enum PaymentApprovalDecision {
+  APPROVED
+  REJECTED
+}
+
+// Append-only history of every approval decision on a payment request.
+model PaymentRequestApproval {
+  id               String                  @id @default(uuid()) @db.Uuid
+  paymentRequestId String                  @map("payment_request_id") @db.Uuid
+  level            Int
+  decision         PaymentApprovalDecision
+  userId           String                  @map("user_id") @db.Uuid
+  remark           String?
+  decidedAt        DateTime                @default(now()) @map("decided_at")
+
+  paymentRequest PaymentRequest @relation(fields: [paymentRequestId], references: [id], onDelete: Cascade)
+  user           User           @relation(fields: [userId], references: [id])
+
+  @@index([paymentRequestId])
+  @@map("payment_request_approvals")
 }
 
 // ─────────────────────────────────────────────────────────────

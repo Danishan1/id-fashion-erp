@@ -8,11 +8,12 @@ export default async function PaymentRequestsPage() {
   const userId = session!.user.id;
   await PermissionService.assert(userId, "payment_requests", "view").catch(() => notFound());
 
-  const [canCreate, canApprove, canPay] = await Promise.all([
+  const [canCreate, canApprove, canPay, canViewMatrix] = await Promise.all([
     PermissionService.can(userId, "payment_requests", "create"),
     PermissionService.can(userId, "payment_requests", "approve"),
     PermissionService.can(userId, "payment_requests", "post"),
+    PermissionService.can(userId, "payment_request_settings", "view"),
   ]);
 
-  return <PaymentRequestsHubClient canCreate={canCreate} canApprove={canApprove} canPay={canPay} />;
+  return <PaymentRequestsHubClient canCreate={canCreate} canApprove={canApprove} canPay={canPay} canViewMatrix={canViewMatrix} />;
 }

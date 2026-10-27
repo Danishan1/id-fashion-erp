@@ -12,6 +12,7 @@ const DETAIL_INCLUDE = {
   approvedBy: { select: { id: true, fullName: true } },
   rejectedBy: { select: { id: true, fullName: true } },
   cancelledBy: { select: { id: true, fullName: true } },
+  approvals: { orderBy: { decidedAt: "asc" }, include: { user: { select: { id: true, fullName: true } } } },
 } satisfies Prisma.PaymentRequestInclude;
 
 export const PaymentRequestRepository = {
@@ -31,6 +32,33 @@ export const PaymentRequestRepository = {
   /** Guarded write: only succeeds while the request is still in one of `fromStatuses` and unpaid. */
   updateIfStatus: (id: string, fromStatuses: PaymentRequestStatus[], data: Prisma.PaymentRequestUncheckedUpdateManyInput) =>
     prisma.paymentRequest.updateMany({ where: { id, status: { in: fromStatuses }, paidAmount: 0 }, data }),
+
+  /**
+   * One approval decision: logs it and moves the request, only if it is still
+   * pending at `level` (a concurrent decision on the same level loses and
+   * nothing is written). Returns false when the guard lost.
+   */
+  recordDecision: (
+    id: string,
+    level: number,
+    decision: { decision: "APPROVED" | "REJECTED"; userId: string; remark: string | null },
+    data: Prisma.PaymentRequestUncheckedUpdateManyInput
+  ) =>
+    prisma.$transaction(async (tx) => {
+      const { count } = await tx.paymentRequest.updateMany({
+        where: { id, status: "PENDING_APPROVAL", currentApprovalLevel: level },
+        data,
+      });
+      if (count === 0) return false;
+      await tx.paymentRequestApproval.create({ data: { paymentRequestId: id, level, ...decision } });
+      return true;
+    }),
+
+  countApprovals: (paymentRequestId: string) => prisma.paymentRequestApproval.count({ where: { paymentRequestId } }),
+
+  /** Has this user already approved an earlier level of the request? */
+  hasApproved: (paymentRequestId: string, userId: string) =>
+    prisma.paymentRequestApproval.count({ where: { paymentRequestId, userId, decision: "APPROVED" } }).then((n) => n > 0),
 
   countByGroupAndStatus: (where: Prisma.PaymentRequestWhereInput) =>
     prisma.paymentRequest.groupBy({ by: ["requestGroup", "status"], where, _count: { _all: true } }),

@@ -40,6 +40,14 @@ interface PaymentRequestDetail {
   approvedBy: { fullName: string } | null;
   rejectedBy: { fullName: string } | null;
   cancelledBy: { fullName: string } | null;
+  requiredApprovalLevels: number;
+  currentApprovalLevel: number;
+  approverMayPay: boolean;
+  approvalPlanJson: {
+    ruleId: string | null;
+    levels: { level: number; anyApprover: boolean; users: { name: string }[]; roles: { name: string }[] }[];
+  } | null;
+  approvals: { id: string; level: number; decision: "APPROVED" | "REJECTED"; remark: string | null; decidedAt: string; user: { fullName: string } }[];
 }
 
 interface Permissions {
@@ -55,7 +63,9 @@ export function PaymentRequestWorkflowPanel({ request, permissions }: { request:
   const def = PAYMENT_REQUEST_TYPE_DEFS[request.requestType];
   const [error, setError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
-  const [confirm, setConfirm] = useState<"approve" | "cancel" | null>(null);
+  const [confirm, setConfirm] = useState<"cancel" | null>(null);
+  const [showApprove, setShowApprove] = useState(false);
+  const [approveRemark, setApproveRemark] = useState("");
   const [showReject, setShowReject] = useState(false);
   const [rejectionReason, setRejectionReason] = useState("");
   const [showEdit, setShowEdit] = useState(false);
@@ -83,7 +93,16 @@ export function PaymentRequestWorkflowPanel({ request, permissions }: { request:
     }
   };
 
-  const hasActions = permissions.canApprove || permissions.canReject || permissions.canEdit || permissions.canCancel;
+  const plan = request.approvalPlanJson;
+  const isLastLevel = request.currentApprovalLevel >= request.requiredApprovalLevels;
+  const currentLevel = plan?.levels.find((l) => l.level === request.currentApprovalLevel);
+  const currentApprovers = !currentLevel
+    ? ""
+    : currentLevel.anyApprover
+      ? "anyone with the Approve permission"
+      : [...currentLevel.roles.map((r) => `role ${r.name}`), ...currentLevel.users.map((u) => u.name)].join(", ");
+
+  const hasActions =permissions.canApprove || permissions.canReject || permissions.canEdit || permissions.canCancel;
 
   return (
     <div className="space-y-6">
@@ -131,6 +150,39 @@ export function PaymentRequestWorkflowPanel({ request, permissions }: { request:
         {request.cancelledBy && <Item label="Cancelled By" value={request.cancelledBy.fullName} />}
       </dl>
 
+      {request.status === "PENDING_APPROVAL" && currentLevel && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-500/10 dark:text-amber-300">
+          Waiting for level {request.currentApprovalLevel} of {request.requiredApprovalLevels} — approver: {currentApprovers}.
+        </div>
+      )}
+
+      {(request.approvals.length > 0 || (plan && plan.levels.length > 1)) && (
+        <div>
+          <p className="text-sm font-medium text-zinc-900 dark:text-zinc-50">Approval history</p>
+          {request.approvals.length === 0 ? (
+            <p className="mt-1 text-sm text-zinc-500">No decision yet.</p>
+          ) : (
+            <ol className="mt-2 space-y-2 border-l border-zinc-200 pl-4 dark:border-zinc-800">
+              {request.approvals.map((a) => (
+                <li key={a.id} className="text-sm">
+                  <span className={a.decision === "APPROVED" ? "font-medium text-green-700 dark:text-green-400" : "font-medium text-red-700 dark:text-red-400"}>
+                    Level {a.level} {a.decision === "APPROVED" ? "approved" : "rejected"}
+                  </span>{" "}
+                  by {a.user.fullName} · {formatIstDateTime(a.decidedAt)}
+                  {a.remark && <p className="text-zinc-600 dark:text-zinc-400">“{a.remark}”</p>}
+                </li>
+              ))}
+            </ol>
+          )}
+          {request.routing !== "DIRECT_TO_ACCOUNTANT" && (
+            <p className="mt-2 text-xs text-zinc-500">
+              {plan?.ruleId ? "Approval Matrix rule applied." : "No matrix rule — default approval."}{" "}
+              {request.approverMayPay ? "An approver may also pay it." : "An approver may not pay it."}
+            </p>
+          )}
+        </div>
+      )}
+
       <div>
         <p className="text-sm text-zinc-500 dark:text-zinc-400">Remark</p>
         <p className="mt-1 whitespace-pre-wrap text-sm text-zinc-900 dark:text-zinc-50">{request.remark || "—"}</p>
@@ -142,7 +194,7 @@ export function PaymentRequestWorkflowPanel({ request, permissions }: { request:
             <button
               type="button"
               disabled={isBusy}
-              onClick={() => setConfirm("approve")}
+              onClick={() => setShowApprove(true)}
               className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
             >
               Approve
@@ -189,17 +241,47 @@ export function PaymentRequestWorkflowPanel({ request, permissions }: { request:
         labelForContext={(c) => PAYMENT_REQUEST_STATUS_LABELS[c] ?? c}
       />
 
-      <ConfirmModal
-        open={confirm === "approve"}
-        title="Approve request?"
-        message={`Approve ${request.requestNumber} for ₹${formatCurrency(request.amount)} to ${request.payToName}? It will go to the accountant to pay.`}
-        confirmLabel="Approve"
-        isBusy={isBusy}
-        onCancel={() => setConfirm(null)}
-        onConfirm={async () => {
-          if (await runAction("approve")) setConfirm(null);
-        }}
-      />
+      <Modal open={showApprove} onClose={() => setShowApprove(false)} title="Approve request">
+        <form
+          className="space-y-4"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            if (await runAction("approve", { remark: approveRemark })) setShowApprove(false);
+          }}
+        >
+          <p className="text-sm text-zinc-700 dark:text-zinc-300">
+            Approve {request.requestNumber} for ₹{formatCurrency(request.amount)} to {request.payToName}
+            {isLastLevel ? "? It will go to the accountant to pay." : ` at level ${request.currentApprovalLevel}? It then goes to the level ${request.currentApprovalLevel + 1} approvers.`}
+          </p>
+          <FormField label="Remark (optional)" htmlFor="approveRemark">
+            <textarea
+              id="approveRemark"
+              rows={2}
+              maxLength={1000}
+              value={approveRemark}
+              onChange={(e) => setApproveRemark(e.target.value)}
+              className={textInputClass()}
+            />
+          </FormField>
+          {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setShowApprove(false)}
+              className="rounded-md border border-zinc-300 px-4 py-2 text-sm text-zinc-700 dark:border-zinc-700 dark:text-zinc-200"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={isBusy}
+              className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
+            >
+              Approve
+            </button>
+          </div>
+        </form>
+      </Modal>
       <ConfirmModal
         open={confirm === "cancel"}
         title="Cancel request?"
@@ -268,6 +350,11 @@ export function PaymentRequestWorkflowPanel({ request, permissions }: { request:
       </Modal>
     </div>
   );
+}
+
+/** Fixed locale + zone so server and browser render the same text (no hydration mismatch). */
+function formatIstDateTime(iso: string) {
+  return new Date(iso).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" });
 }
 
 function Item({ label, value }: { label: string; value: string }) {

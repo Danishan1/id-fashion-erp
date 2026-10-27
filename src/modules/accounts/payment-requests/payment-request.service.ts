@@ -7,7 +7,18 @@ import { todayIsoDate } from "@/lib/date";
 import { round2 } from "@/lib/money";
 import type { ListQuery } from "@/lib/list-query";
 import { PaymentRequestStatus, type Prisma } from "@prisma/client";
+import { createNotification } from "@/core/notifications/NotificationService";
+import { logger } from "@/core/logging/logger";
 import { PaymentRequestRepository } from "./payment-request.repository";
+import { ApprovalMatrixRepository } from "./approval-matrix.repository";
+import {
+  currentLevelColumns,
+  getApproverIdentity,
+  isListedApprover,
+  planColumns,
+  resolveApprovalPlan,
+  type ApprovalPlan,
+} from "./approval-matrix.service";
 import type {
   CreatePaymentRequestInput,
   PaymentRequestListFilters,
@@ -107,7 +118,25 @@ export async function listPaymentRequests(actor: ActorContext, query: ListQuery,
       : {}),
   };
   if (filters.view === "mine") where.createdByUserId = actor.userId;
-  if (filters.view === "approve") where.status = "PENDING_APPROVAL";
+  if (filters.view === "approve") {
+    // Waiting for me: pending, not raised by me, I'm an approver of its current
+    // level and I haven't approved an earlier level of it.
+    const identity = await getApproverIdentity(actor.userId);
+    where.status = "PENDING_APPROVAL";
+    where.createdByUserId = { not: actor.userId };
+    where.approvals = { none: { userId: actor.userId, decision: "APPROVED" } };
+    if (!identity.isSuperAdmin) {
+      where.AND = [
+        {
+          OR: [
+            { currentLevelAnyApprover: true },
+            { currentApproverUserIds: { has: actor.userId } },
+            ...(identity.roleIds.length ? [{ currentApproverRoleIds: { hasSome: identity.roleIds } }] : []),
+          ],
+        },
+      ];
+    }
+  }
   if (filters.view === "pay") where.status = { in: ["APPROVED", "PARTIALLY_PAID"] };
 
   const sortable = new Set(["requestNumber", "amount", "paymentDueDate", "createdAt", "status", "payToName"]);
@@ -156,7 +185,8 @@ export async function createPaymentRequest(actor: ActorContext, input: CreatePay
   const company = await PaymentRequestRepository.findBaseCurrencyCode(actor.companyId);
   if (!company) throw new BusinessRuleError("NOT_FOUND", "Company not found.", { id: actor.companyId });
 
-  const direct = def.routing === "DIRECT_TO_ACCOUNTANT";
+  const common = buildCommonData(def, input);
+  const plan = await resolveApprovalPlan(actor.companyId, def.type, actor.branchId ?? null, common.amount);
   // Company-wide series (branchId null): request numbers are unique per company.
   const requestNumber = await generateDocumentNumber({ companyId: actor.companyId, branchId: null, documentType: "PAYMENT_REQUEST" });
 
@@ -168,11 +198,10 @@ export async function createPaymentRequest(actor: ActorContext, input: CreatePay
       requestNumber,
       requestType: def.type,
       requestGroup: def.group,
-      routing: def.routing,
-      status: direct ? "APPROVED" : "PENDING_APPROVAL",
+      ...planColumns(plan),
       currencyCode: company.baseCurrencyCode,
       ...payTo,
-      ...buildCommonData(def, input),
+      ...common,
       createdByUserId: actor.userId,
       idempotencyKey: input.idempotencyKey ?? null,
     });
@@ -190,20 +219,40 @@ export async function createPaymentRequest(actor: ActorContext, input: CreatePay
     tableName: "payment_requests",
     recordId: created.id,
     action: "CREATE",
-    newValues: { requestNumber, requestType: def.type, amount: created.amount, payToName: created.payToName, status: created.status },
+    newValues: {
+      requestNumber,
+      requestType: def.type,
+      amount: created.amount,
+      payToName: created.payToName,
+      status: created.status,
+      approvalRuleId: plan.ruleId,
+    },
   });
 
+  await notifyCurrentApprovers(actor.companyId, created.id, requestNumber, plan, 1, actor.userId);
   return getPaymentRequestById(actor, created.id);
 }
 
-/** Only while PENDING_APPROVAL. The raiser can edit their own; anyone else needs payment_requests.edit. */
+/**
+ * Only while PENDING_APPROVAL and before anyone has approved a level (an
+ * approver must never have approved a different amount). The raiser can edit
+ * their own; anyone else needs payment_requests.edit. The approval plan is
+ * worked out again, since a new amount can fall in another slab.
+ */
 export async function updatePaymentRequest(actor: ActorContext, id: string, input: UpdatePaymentRequestInput) {
   const request = await getPaymentRequestById(actor, id);
   if (request.createdByUserId !== actor.userId) await PermissionService.assert(actor.userId, "payment_requests", "edit");
+  if (request.approvals.length > 0) {
+    throw new BusinessRuleError("INVALID_STATE_TRANSITION", "This request already has an approval; it can no longer be edited.", {
+      currentStatus: request.status,
+    });
+  }
 
   const def = PAYMENT_REQUEST_TYPE_DEFS[request.requestType];
   const payTo = await resolvePayTo(actor.companyId, def, input);
-  const data = { ...payTo, ...buildCommonData(def, input, request.paymentDueDate) };
+  const common = buildCommonData(def, input, request.paymentDueDate);
+  const plan = await resolveApprovalPlan(actor.companyId, request.requestType, request.branchId, common.amount);
+  const data = { ...payTo, ...common, ...planColumns(plan) };
 
   const { count } = await PaymentRequestRepository.updateIfStatus(id, EDITABLE_STATUSES, data);
   if (count === 0) {
@@ -225,18 +274,55 @@ export async function updatePaymentRequest(actor: ActorContext, id: string, inpu
   return getPaymentRequestById(actor, id);
 }
 
-/** PENDING_APPROVAL -> APPROVED. The raiser can never approve their own request (self-approval guard). */
-export async function approvePaymentRequest(actor: ActorContext, id: string) {
+/**
+ * The actor may decide the request's current level: it is pending, the actor
+ * is one of that level's approvers in the Approval Matrix (or the level has no
+ * rule and they hold the permission), and they haven't approved an earlier
+ * level already. Throws a clear error otherwise.
+ */
+async function assertCanDecideCurrentLevel(actor: ActorContext, request: Awaited<ReturnType<typeof getPaymentRequestById>>) {
+  if (request.status !== "PENDING_APPROVAL") {
+    throw new BusinessRuleError("INVALID_STATE_TRANSITION", `Cannot decide a request in "${request.status}" status.`, {
+      currentStatus: request.status,
+    });
+  }
+  const identity = await getApproverIdentity(actor.userId);
+  if (!isListedApprover(request, actor.userId, identity)) {
+    throw new BusinessRuleError(
+      "PERMISSION_DENIED",
+      `You are not an approver for level ${request.currentApprovalLevel} of this request in the Approval Matrix.`
+    );
+  }
+  if (await PaymentRequestRepository.hasApproved(request.id, actor.userId)) {
+    throw new BusinessRuleError("PERMISSION_DENIED", "You already approved an earlier level of this request; another approver must decide this level.");
+  }
+}
+
+/**
+ * Approves the current level. The last level makes the request APPROVED (ready
+ * to pay); an earlier level moves it to the next level's approvers. The raiser
+ * can never approve their own request (self-approval guard).
+ */
+export async function approvePaymentRequest(actor: ActorContext, id: string, remark?: string) {
   const request = await getPaymentRequestById(actor, id);
   await PermissionService.assert(actor.userId, "payment_requests", "approve", { createdBy: request.createdByUserId });
+  await assertCanDecideCurrentLevel(actor, request);
 
-  const { count } = await PaymentRequestRepository.updateIfStatus(id, ["PENDING_APPROVAL"], {
-    status: "APPROVED",
-    approvedAt: new Date(),
-    approvedByUserId: actor.userId,
-  });
-  if (count === 0) {
-    throw new BusinessRuleError("INVALID_STATE_TRANSITION", `Cannot approve a request in "${request.status}" status.`, {
+  const level = request.currentApprovalLevel;
+  const plan = request.approvalPlanJson as unknown as ApprovalPlan | null;
+  const isLast = !plan || level >= request.requiredApprovalLevels;
+  const data = isLast
+    ? { status: "APPROVED" as const, approvedAt: new Date(), approvedByUserId: actor.userId }
+    : currentLevelColumns(plan, level + 1);
+
+  const ok = await PaymentRequestRepository.recordDecision(
+    id,
+    level,
+    { decision: "APPROVED", userId: actor.userId, remark: remark?.trim() || null },
+    data
+  );
+  if (!ok) {
+    throw new BusinessRuleError("INVALID_STATE_TRANSITION", "This level was already decided by someone else. Reload the request.", {
       currentStatus: request.status,
     });
   }
@@ -247,25 +333,32 @@ export async function approvePaymentRequest(actor: ActorContext, id: string) {
     tableName: "payment_requests",
     recordId: id,
     action: "APPROVE",
-    oldValues: { status: request.status },
-    newValues: { status: "APPROVED" },
+    oldValues: { status: request.status, level },
+    newValues: isLast ? { status: "APPROVED", level } : { status: "PENDING_APPROVAL", level: level + 1 },
   });
+
+  if (isLast) {
+    await notifyUsers(actor.companyId, [request.createdByUserId], id, `${request.requestNumber} approved`, `Your payment request for ₹${request.amount} to ${request.payToName} is approved and waiting to be paid.`);
+  } else {
+    await notifyCurrentApprovers(actor.companyId, id, request.requestNumber, plan, level + 1, request.createdByUserId);
+  }
 
   return getPaymentRequestById(actor, id);
 }
 
-/** PENDING_APPROVAL -> REJECTED (terminal). A reason is required. */
+/** Any level can reject: PENDING_APPROVAL -> REJECTED (terminal). A reason is required. */
 export async function rejectPaymentRequest(actor: ActorContext, id: string, rejectionReason: string) {
   const request = await getPaymentRequestById(actor, id);
   await PermissionService.assert(actor.userId, "payment_requests", "reject");
+  await assertCanDecideCurrentLevel(actor, request);
 
-  const { count } = await PaymentRequestRepository.updateIfStatus(id, ["PENDING_APPROVAL"], {
-    status: "REJECTED",
-    rejectedAt: new Date(),
-    rejectedByUserId: actor.userId,
-    rejectionReason,
-  });
-  if (count === 0) {
+  const ok = await PaymentRequestRepository.recordDecision(
+    id,
+    request.currentApprovalLevel,
+    { decision: "REJECTED", userId: actor.userId, remark: rejectionReason },
+    { status: "REJECTED", rejectedAt: new Date(), rejectedByUserId: actor.userId, rejectionReason }
+  );
+  if (!ok) {
     throw new BusinessRuleError("INVALID_STATE_TRANSITION", `Cannot reject a request in "${request.status}" status.`, {
       currentStatus: request.status,
     });
@@ -278,10 +371,48 @@ export async function rejectPaymentRequest(actor: ActorContext, id: string, reje
     recordId: id,
     action: "REJECT",
     oldValues: { status: request.status },
-    newValues: { status: "REJECTED", rejectionReason },
+    newValues: { status: "REJECTED", rejectionReason, level: request.currentApprovalLevel },
   });
 
+  await notifyUsers(actor.companyId, [request.createdByUserId], id, `${request.requestNumber} rejected`, `Your payment request to ${request.payToName} was rejected: ${rejectionReason}`);
   return getPaymentRequestById(actor, id);
+}
+
+// ─── Notifications (in-app, best effort — never block the decision) ─────
+
+async function notifyUsers(companyId: string, userIds: string[], requestId: string, title: string, body: string) {
+  try {
+    for (const userId of userIds.slice(0, 50)) {
+      await createNotification({ companyId, userId, title, body, relatedModule: "PAYMENT_REQUEST", relatedRecordId: requestId });
+    }
+  } catch (err) {
+    logger.warn("Payment request notification failed", { requestId, error: err });
+  }
+}
+
+/** Tells the named approvers of `level` (users + holders of the roles) that a request waits for them. */
+async function notifyCurrentApprovers(
+  companyId: string,
+  requestId: string,
+  requestNumber: string,
+  plan: ApprovalPlan | null,
+  level: number,
+  excludeUserId: string
+) {
+  const at = plan?.levels.find((l) => l.level === level);
+  if (!at || at.anyApprover) return;
+  const userIds = await ApprovalMatrixRepository.findApproverUserIds(
+    companyId,
+    at.users.map((u) => u.id),
+    at.roles.map((r) => r.id)
+  );
+  await notifyUsers(
+    companyId,
+    userIds.filter((u) => u !== excludeUserId),
+    requestId,
+    `${requestNumber} needs your approval`,
+    `Payment request ${requestNumber} is waiting for level ${level} approval.`
+  );
 }
 
 /** Before any money is paid. The raiser can cancel their own; anyone else needs payment_requests.cancel. */
