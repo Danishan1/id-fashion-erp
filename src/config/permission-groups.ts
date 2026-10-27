@@ -26,8 +26,25 @@ export const PERMISSION_GROUPS: PermissionGroup[] = (() => {
   return groups;
 })();
 
-/** Readable module name, e.g. "hrms_leave" -> "Hrms leave". */
+/** Screen names for modules whose key does not read well on its own. */
+const MODULE_LABELS: Record<string, string> = {
+  hrms_attendance: "My Attendance (punch)",
+  hrms_attendance_team: "Team Attendance",
+  hrms_attendance_records: "Monthly Records",
+  hrms_attendance_regularization: "Regularization",
+  hrms_attendance_outdoor: "Outdoor Punches",
+  hrms_attendance_overtime: "Overtime",
+  hrms_attendance_photos: "Punch Photos",
+  hrms_attendance_salary: "Salary Sheet",
+  hrms_attendance_settings: "Attendance Settings",
+  hrms_leave: "Leave Requests",
+  hrms_leave_balances: "Leave Balances",
+  hrms_leave_types: "Leave Types",
+};
+
+/** Readable module name, e.g. "masters_core" -> "Masters core". */
 export function moduleLabel(module: string): string {
+  if (MODULE_LABELS[module]) return MODULE_LABELS[module];
   const text = module.replace(/_/g, " ");
   return text.charAt(0).toUpperCase() + text.slice(1);
 }

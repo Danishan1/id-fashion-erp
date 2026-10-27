@@ -61,7 +61,7 @@ export async function addManualSession(actor: HrmsActor, input: ManualSessionInp
   if (input.checkOut && !isValidHhmm(input.checkOut)) throw new BusinessRuleError("VALIDATION_ERROR", "Check-out time is not valid (HH:mm).");
   const employee = await prisma.employee.findFirst({ where: { id: input.employeeId, companyId: actor.companyId, deletedAt: null }, select: { id: true } });
   if (!employee) throw new BusinessRuleError("NOT_FOUND", "Employee not found.", { id: input.employeeId });
-  await assertHrmsEmployeeInScope(actor.userId, "hrms_attendance", input.employeeId, { label: "Employee", id: input.employeeId });
+  await assertHrmsEmployeeInScope(actor.userId, "hrms_attendance_team", input.employeeId, { label: "Employee", id: input.employeeId });
 
   const checkInAt = istTimeOnDate(input.attendanceDate, input.checkIn);
   let checkOutAt = input.checkOut ? istTimeOnDate(input.attendanceDate, input.checkOut) : null;
@@ -110,7 +110,7 @@ export interface SessionCorrection {
 export async function correctSession(actor: HrmsActor, input: SessionCorrection) {
   const session = await prisma.attendanceSession.findFirst({ where: { id: input.sessionId, companyId: actor.companyId }, include: { attendanceRecord: { select: { attendanceDate: true } } } });
   if (!session) throw new BusinessRuleError("NOT_FOUND", "Attendance session not found.", { id: input.sessionId });
-  await assertHrmsEmployeeInScope(actor.userId, "hrms_attendance", session.employeeId, { label: "Attendance session", id: input.sessionId });
+  await assertHrmsEmployeeInScope(actor.userId, ["hrms_attendance_team", "hrms_attendance_photos"], session.employeeId, { label: "Attendance session", id: input.sessionId });
   const checkInAt = new Date(input.checkInAt);
   const checkOutAt = input.checkOutAt ? new Date(input.checkOutAt) : null;
   if (Number.isNaN(checkInAt.getTime())) throw new BusinessRuleError("VALIDATION_ERROR", "Check-in time is not valid.");
@@ -159,7 +159,7 @@ const SESSION_AUDIT_INCLUDE = {
 
 /** Punch photo audit: sessions with selfies, place and distance from the office. */
 export async function listSessions(actor: HrmsActor, filters: { employeeId?: string; month?: string; date?: string; outsideOnly?: boolean }) {
-  const scope = await getHrmsEmployeeScope(actor.userId, "hrms_attendance");
+  const scope = await getHrmsEmployeeScope(actor.userId, ["hrms_attendance_team", "hrms_attendance_photos", "hrms_attendance_regularization"]);
   let range: { gte: Date; lt: Date } | undefined;
   if (filters.date && isValidDateKey(filters.date)) {
     range = { gte: dateKeyToDbDate(filters.date), lt: dateKeyToDbDate(addDays(filters.date, 1)) };

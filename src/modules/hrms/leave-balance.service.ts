@@ -192,7 +192,7 @@ export async function listLeaveBalances(actor: HrmsActor, filters: { year: numbe
     const user = await prisma.user.findUnique({ where: { id: actor.userId }, select: { employeeId: true } });
     employeeIds = user?.employeeId ? [user.employeeId] : [];
   } else {
-    employeeIds = await getHrmsEmployeeScope(actor.userId, "hrms_leave");
+    employeeIds = await getHrmsEmployeeScope(actor.userId, ["hrms_leave_balances", "hrms_leave"]);
     if (filters.employeeId) employeeIds = (employeeIds ?? [filters.employeeId]).filter((id) => id === filters.employeeId);
   }
   // Lazily credit the month for the employees shown, so balances are never missing.
@@ -230,7 +230,7 @@ export async function listLeaveBalances(actor: HrmsActor, filters: { year: numbe
 export async function adjustLeaveBalance(actor: HrmsActor, id: string, input: { allocated: number; remaining: number; carryForward: number }) {
   const row = await prisma.leaveBalance.findFirst({ where: { id, companyId: actor.companyId } });
   if (!row) throw new BusinessRuleError("NOT_FOUND", "Leave balance not found.", { id });
-  await assertHrmsEmployeeInScope(actor.userId, "hrms_leave", row.employeeId, { label: "Leave balance", id });
+  await assertHrmsEmployeeInScope(actor.userId, "hrms_leave_balances", row.employeeId, { label: "Leave balance", id });
   for (const [k, v] of Object.entries(input)) if (!Number.isFinite(v) || v < 0) throw new BusinessRuleError("VALIDATION_ERROR", `${k} must be 0 or more.`);
   const oldAvailable = Number(row.remaining) + Number(row.carryForward);
   const delta = round2(input.remaining + input.carryForward - oldAvailable);

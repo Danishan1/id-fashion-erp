@@ -5,7 +5,7 @@ import { PunchPhotosClient } from "./PunchPhotosClient";
 
 export default async function PunchPhotosPage() {
   const session = await auth();
-  await PermissionService.assert(session!.user.id, "hrms_attendance", "view").catch(() => notFound());
-  const canOverride = await PermissionService.can(session!.user.id, "hrms_attendance", "override");
+  await PermissionService.assert(session!.user.id, "hrms_attendance_photos", "view").catch(() => notFound());
+  const canOverride = await PermissionService.can(session!.user.id, "hrms_attendance_photos", "override");
   return <PunchPhotosClient canOverride={canOverride} />;
 }

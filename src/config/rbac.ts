@@ -16,8 +16,21 @@ export const MODULES = [
   // also redefine the pipeline vocabulary everyone else uses (2026-10-01).
   "crm_settings",
   "marketing",
+  // HRMS is split into one module per screen (2026-10-27) so a role can be
+  // given each attendance/leave screen separately. "hrms_attendance" is My
+  // Attendance (punch + own records); "hrms_leave" is Leave Requests.
   "hrms_attendance",
+  "hrms_attendance_team",
+  "hrms_attendance_records",
+  "hrms_attendance_regularization",
+  "hrms_attendance_outdoor",
+  "hrms_attendance_overtime",
+  "hrms_attendance_photos",
+  "hrms_attendance_salary",
+  "hrms_attendance_settings",
   "hrms_leave",
+  "hrms_leave_balances",
+  "hrms_leave_types",
   "sampling",
   "buyer_enquiries",
   "sales_orders",
@@ -160,11 +173,20 @@ export function permissionKey(module: Module, action: Action): string {
  */
 const HRMS_SELF_SERVICE: Partial<Record<Module, Action[]>> = {
   hrms_attendance: ["view", "create"],
+  hrms_attendance_regularization: ["view", "create"],
   hrms_leave: ["view", "create"],
+  hrms_leave_balances: ["view"],
 };
 const HRMS_TEAM_APPROVER: Partial<Record<Module, Action[]>> = {
-  hrms_attendance: ["view", "create", "approve", "reject"],
+  hrms_attendance: ["view", "create"],
+  hrms_attendance_team: ["view"],
+  hrms_attendance_records: ["view"],
+  hrms_attendance_regularization: ["view", "create", "approve", "reject"],
+  hrms_attendance_outdoor: ["view", "approve", "reject"],
+  hrms_attendance_overtime: ["view", "approve", "reject"],
+  hrms_attendance_photos: ["view"],
   hrms_leave: ["view", "create", "approve", "reject"],
+  hrms_leave_balances: ["view"],
 };
 
 export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>>> = {
@@ -187,8 +209,18 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     // Approve/reject added for the Attendance Correction Request workflow —
     // same "MANAGEMENT is the checkpoint" shape as hrms_leave just below.
     // "override" = admin time corrections (attendance module port, 2026-10-23).
-    hrms_attendance: ["view", "view_all", "create", "edit", "approve", "reject", "export", "override"],
+    hrms_attendance: ["view", "view_all", "create"],
+    hrms_attendance_team: ["view", "view_all", "create", "edit", "export", "override"],
+    hrms_attendance_records: ["view", "view_all", "export"],
+    hrms_attendance_regularization: ["view", "view_all", "create", "edit", "approve", "reject", "export"],
+    hrms_attendance_outdoor: ["view", "view_all", "approve", "reject"],
+    hrms_attendance_overtime: ["view", "view_all", "approve", "reject", "export"],
+    hrms_attendance_photos: ["view", "view_all", "override"],
+    hrms_attendance_salary: ["view", "view_all", "edit", "export"],
+    hrms_attendance_settings: ["view", "create", "edit"],
     hrms_leave: ["view", "view_all", "create", "edit", "approve", "reject", "export"],
+    hrms_leave_balances: ["view", "view_all", "edit", "export"],
+    hrms_leave_types: ["view", "create", "edit"],
     sampling: ["view", "approve", "reject"],
     buyer_enquiries: ["view", "reject"],
     sales_orders: ["view", "approve", "export"],

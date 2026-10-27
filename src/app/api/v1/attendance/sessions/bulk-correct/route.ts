@@ -8,5 +8,5 @@ const schema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  return hrmsRoute("hrms_attendance", "override", async (actor) => bulkCorrectSessions(actor, schema.parse(await req.json()).corrections));
+  return hrmsRoute("hrms_attendance_team", "override", async (actor) => bulkCorrectSessions(actor, schema.parse(await req.json()).corrections));
 }

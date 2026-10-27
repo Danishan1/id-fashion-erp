@@ -74,7 +74,7 @@ export async function listOvertime(actor: HrmsActor, filters: OvertimeListFilter
     const user = await prisma.user.findUnique({ where: { id: actor.userId }, select: { employeeId: true } });
     employeeFilter = { employeeId: user?.employeeId ?? "00000000-0000-0000-0000-000000000000" };
   } else {
-    const scope = await getHrmsEmployeeScope(actor.userId, "hrms_attendance");
+    const scope = await getHrmsEmployeeScope(actor.userId, "hrms_attendance_overtime");
     employeeFilter = hrmsEmployeeWhere(scope);
     if (filters.employeeId) employeeFilter = { AND: [employeeFilter, { employeeId: filters.employeeId }] };
   }
@@ -93,14 +93,14 @@ export async function listOvertime(actor: HrmsActor, filters: OvertimeListFilter
 export async function decideOvertime(actor: HrmsActor, id: string, decision: "APPROVED" | "REJECTED", reason?: string | null) {
   const record = await prisma.overtimeRecord.findFirst({ where: { id, companyId: actor.companyId }, include: { employee: { select: { fullName: true, user: { select: { id: true } } } } } });
   if (!record) throw new BusinessRuleError("NOT_FOUND", "Overtime record not found.", { id });
-  await assertHrmsEmployeeInScope(actor.userId, "hrms_attendance", record.employeeId, { label: "Overtime record", id });
+  await assertHrmsEmployeeInScope(actor.userId, "hrms_attendance_overtime", record.employeeId, { label: "Overtime record", id });
   if (record.status === decision) return record; // idempotent repeat
   if (record.status !== "PENDING") throw new BusinessRuleError("INVALID_STATE_TRANSITION", `This overtime is already ${record.status.toLowerCase()}.`);
   // The employee's own linked user can never approve their own overtime.
   if (decision === "APPROVED") {
-    await PermissionService.assert(actor.userId, "hrms_attendance", "approve", { createdBy: record.employee.user?.id ?? undefined });
+    await PermissionService.assert(actor.userId, "hrms_attendance_overtime", "approve", { createdBy: record.employee.user?.id ?? undefined });
   } else {
-    await PermissionService.assert(actor.userId, "hrms_attendance", "reject");
+    await PermissionService.assert(actor.userId, "hrms_attendance_overtime", "reject");
     if (!reason?.trim()) throw new BusinessRuleError("VALIDATION_ERROR", "A reason is required to reject overtime.");
   }
   const updated = await prisma.overtimeRecord.updateMany({

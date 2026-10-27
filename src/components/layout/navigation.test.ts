@@ -46,7 +46,7 @@ describe("filterNavSections", () => {
     // HRMS has no top-level href/module of its own significance beyond its children's modules.
     const result = filterNavSections(NAV_SECTIONS, ["hrms_leave"]);
     const hrms = result.find((s) => s.label === "HRMS");
-    expect(hrms?.children?.map((c) => c.label)).toEqual(["Leave Requests", "Leave Balances"]);
+    expect(hrms?.children?.map((c) => c.label)).toEqual(["Leave Requests"]);
   });
 
   it("drops a section with children entirely when none of its children (or its own modules) are granted", () => {

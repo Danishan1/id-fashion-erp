@@ -5,7 +5,7 @@ import { MonthlyRecordsClient } from "./MonthlyRecordsClient";
 
 export default async function MonthlyRecordsPage() {
   const session = await auth();
-  await PermissionService.assert(session!.user.id, "hrms_attendance", "view").catch(() => notFound());
-  const canExport = await PermissionService.can(session!.user.id, "hrms_attendance", "export");
+  await PermissionService.assert(session!.user.id, "hrms_attendance_records", "view").catch(() => notFound());
+  const canExport = await PermissionService.can(session!.user.id, "hrms_attendance_records", "export");
   return <MonthlyRecordsClient canExport={canExport} />;
 }

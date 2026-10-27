@@ -12,5 +12,5 @@ const schema = z.object({
 /** Admin quota override for one employee-month. */
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  return hrmsRoute("hrms_leave", "edit", async (actor) => adjustLeaveBalance(actor, id, schema.parse(await req.json())));
+  return hrmsRoute("hrms_leave_balances", "edit", async (actor) => adjustLeaveBalance(actor, id, schema.parse(await req.json())));
 }

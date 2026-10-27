@@ -9,10 +9,45 @@ import { getTeamScope } from "@/core/hierarchy/team-scope";
  *                           them in the HRMS reporting hierarchy
  * A user with no linked employee and no view_all sees nobody.
  */
-export type HrmsModule = "hrms_leave" | "hrms_attendance";
+export type HrmsModule =
+  | "hrms_attendance"
+  | "hrms_attendance_team"
+  | "hrms_attendance_records"
+  | "hrms_attendance_regularization"
+  | "hrms_attendance_outdoor"
+  | "hrms_attendance_overtime"
+  | "hrms_attendance_photos"
+  | "hrms_attendance_salary"
+  | "hrms_attendance_settings"
+  | "hrms_leave"
+  | "hrms_leave_balances"
+  | "hrms_leave_types";
 
-export async function getHrmsEmployeeScope(userId: string, module: HrmsModule): Promise<string[] | null> {
-  if (await PermissionService.can(userId, module, "view_all")) return null;
+/** One screen module, or several when an API is shared by more than one screen. */
+export type HrmsModules = HrmsModule | readonly HrmsModule[];
+
+export function hrmsModuleList(modules: HrmsModules): readonly HrmsModule[] {
+  return typeof modules === "string" ? [modules] : modules;
+}
+
+/** Every attendance screen module (for APIs every attendance screen uses). */
+export const ALL_ATTENDANCE_MODULES: readonly HrmsModule[] = [
+  "hrms_attendance",
+  "hrms_attendance_team",
+  "hrms_attendance_records",
+  "hrms_attendance_regularization",
+  "hrms_attendance_outdoor",
+  "hrms_attendance_overtime",
+  "hrms_attendance_photos",
+  "hrms_attendance_salary",
+  "hrms_attendance_settings",
+];
+
+/** `view_all` on any of the given modules → everyone. */
+export async function getHrmsEmployeeScope(userId: string, modules: HrmsModules): Promise<string[] | null> {
+  for (const mod of hrmsModuleList(modules)) {
+    if (await PermissionService.can(userId, mod, "view_all")) return null;
+  }
   const team = await getTeamScope(userId, "HRMS");
   return team.employeeId ? [team.employeeId, ...team.teamEmployeeIds] : [];
 }
@@ -25,7 +60,7 @@ export function hrmsEmployeeWhere(scope: string[] | null): { employeeId?: { in: 
 /** Deny-as-not-found when the employee is outside the caller's HRMS scope. */
 export async function assertHrmsEmployeeInScope(
   userId: string,
-  module: HrmsModule,
+  module: HrmsModules,
   employeeId: string,
   notFound: { label: string; id: string }
 ) {

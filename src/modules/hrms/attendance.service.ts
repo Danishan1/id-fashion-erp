@@ -29,7 +29,7 @@ function decorateAttendance<T extends { punchIn: Date | string | null; employee:
 }
 
 export async function listAttendance(actor: ActorContext, query: ListQuery, attendanceDate?: string) {
-  const scope = await getHrmsEmployeeScope(actor.userId, "hrms_attendance");
+  const scope = await getHrmsEmployeeScope(actor.userId, "hrms_attendance_team");
   const where: Prisma.AttendanceRecordWhereInput = {
     companyId: actor.companyId,
     ...hrmsEmployeeWhere(scope),
@@ -74,7 +74,7 @@ export async function recordAttendance(actor: ActorContext, input: RecordAttenda
 
 /** Present / late / missing counts for one date (older summary endpoint). */
 export async function getAttendanceSummaryForDate(actor: ActorContext, attendanceDate: string) {
-  const scope = await getHrmsEmployeeScope(actor.userId, "hrms_attendance");
+  const scope = await getHrmsEmployeeScope(actor.userId, "hrms_attendance_team");
   const records = await AttendanceRepository.findByDate(actor.companyId, new Date(attendanceDate));
   const decorated = records.filter((r) => scope === null || scope.includes(r.employeeId)).map(decorateAttendance);
 

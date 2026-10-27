@@ -7,5 +7,5 @@ const schema = z.object({ checkInAt: z.string().min(1), checkOutAt: z.string().n
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  return hrmsRoute("hrms_attendance", "override", async (actor) => correctSession(actor, { sessionId: id, ...schema.parse(await req.json()) }));
+  return hrmsRoute(["hrms_attendance_team", "hrms_attendance_photos"], "override", async (actor) => correctSession(actor, { sessionId: id, ...schema.parse(await req.json()) }));
 }

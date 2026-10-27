@@ -5,7 +5,7 @@ import { addManualSession, listSessions } from "@/modules/hrms/attendance-sessio
 
 export async function GET(req: NextRequest) {
   const p = req.nextUrl.searchParams;
-  return hrmsRoute("hrms_attendance", "view", (actor) =>
+  return hrmsRoute(["hrms_attendance_team", "hrms_attendance_photos", "hrms_attendance_regularization"], "view", (actor) =>
     listSessions(actor, {
       employeeId: p.get("employeeId") || undefined,
       month: p.get("month") || undefined,
@@ -25,5 +25,5 @@ const manualSchema = z.object({
 
 /** Admin manual entry ("override"; HR "edit" also allowed). */
 export async function POST(req: NextRequest) {
-  return hrmsRoute("hrms_attendance", ["override", "edit"], async (actor) => addManualSession(actor, manualSchema.parse(await req.json())), 201);
+  return hrmsRoute("hrms_attendance_team", ["override", "edit"], async (actor) => addManualSession(actor, manualSchema.parse(await req.json())), 201);
 }

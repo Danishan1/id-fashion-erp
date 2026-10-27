@@ -6,9 +6,11 @@ import { listOutdoorRejections } from "@/modules/hrms/outdoor-attendance.service
 export async function GET(req: NextRequest) {
   const p = req.nextUrl.searchParams;
   const status = p.get("status");
-  return hrmsRoute("hrms_attendance", "view", (actor) =>
+  // Own rejections (My Attendance) need only My Attendance; the review list needs Outdoor Punches.
+  const mine = p.get("mine") === "true";
+  return hrmsRoute(mine ? "hrms_attendance" : "hrms_attendance_outdoor", "view", (actor) =>
     listOutdoorRejections(actor, {
-      mine: p.get("mine") === "true",
+      mine,
       month: p.get("month") || undefined,
       status: status && ["PENDING", "IN_PROCESS", "APPROVED", "REJECTED"].includes(status) ? (status as OutdoorRejectionStatus) : undefined,
     })

@@ -171,7 +171,7 @@ describe("face-enrolment.service (Unit Tests)", () => {
       expect(mockReadStoredFile).toHaveBeenCalledWith("key-1");
     });
 
-    it("forbids another user without hrms_attendance:edit permission", async () => {
+    it("forbids another user without hrms_attendance_settings:edit permission", async () => {
       mockPrisma.employeeFacePhoto.findFirst.mockResolvedValue({
         id: "p-1",
         employeeId,
@@ -195,7 +195,7 @@ describe("face-enrolment.service (Unit Tests)", () => {
       });
 
       const selfie = await readSessionSelfie(actor, "s-1", "in");
-      expect(mockAssertScope).toHaveBeenCalledWith(actor.userId, "hrms_attendance", employeeId, expect.any(Object));
+      expect(mockAssertScope).toHaveBeenCalledWith(actor.userId, ["hrms_attendance_team", "hrms_attendance_photos", "hrms_attendance_outdoor"], employeeId, expect.any(Object));
       expect(selfie.mimeType).toBe("image/png");
       expect(mockReadStoredFile).toHaveBeenCalledWith("selfie-in-key");
     });

@@ -4,13 +4,13 @@ import { addFacePhotos, listFacePhotos } from "@/modules/hrms/face-enrolment.ser
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ employeeId: string }> }) {
   const { employeeId } = await params;
-  return hrmsRoute("hrms_attendance", "edit", (actor) => listFacePhotos(actor.companyId, employeeId));
+  return hrmsRoute("hrms_attendance_settings", "edit", (actor) => listFacePhotos(actor.companyId, employeeId));
 }
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ employeeId: string }> }) {
   const { employeeId } = await params;
   return hrmsRoute(
-    "hrms_attendance",
+    "hrms_attendance_settings",
     "edit",
     async (actor) => {
       const form = await req.formData();

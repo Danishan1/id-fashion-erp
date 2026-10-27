@@ -11,7 +11,7 @@ interface RouteContext {
 export async function PATCH(req: NextRequest, { params }: RouteContext) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "hrms_leave", "edit");
+    await PermissionService.assert(session.user.id, "hrms_leave_types", "edit");
 
     const { id } = await params;
     const input = updateLeaveTypeSchema.parse(await req.json());

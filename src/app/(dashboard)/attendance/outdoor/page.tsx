@@ -7,8 +7,8 @@ export default async function OutdoorPunchesPage() {
   const session = await auth();
   const userId = session!.user.id;
   const [canApprove, canReject] = await Promise.all([
-    PermissionService.can(userId, "hrms_attendance", "approve"),
-    PermissionService.can(userId, "hrms_attendance", "reject"),
+    PermissionService.can(userId, "hrms_attendance_outdoor", "approve"),
+    PermissionService.can(userId, "hrms_attendance_outdoor", "reject"),
   ]);
   if (!canApprove && !canReject) notFound();
   return <OutdoorPunchesClient canApprove={canApprove} canReject={canReject} />;

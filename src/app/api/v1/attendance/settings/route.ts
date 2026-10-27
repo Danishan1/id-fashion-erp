@@ -4,9 +4,9 @@ import { updateAttendanceSettingsSchema } from "@/modules/hrms/attendance-settin
 import { getAttendanceSettings, updateAttendanceSettings } from "@/modules/hrms/attendance-settings.service";
 
 export async function GET() {
-  return hrmsRoute("hrms_attendance", "view", (actor) => getAttendanceSettings(actor.companyId));
+  return hrmsRoute("hrms_attendance_settings", "view", (actor) => getAttendanceSettings(actor.companyId));
 }
 
 export async function PUT(req: NextRequest) {
-  return hrmsRoute("hrms_attendance", "edit", async (actor) => updateAttendanceSettings(actor, updateAttendanceSettingsSchema.parse(await req.json())));
+  return hrmsRoute("hrms_attendance_settings", "edit", async (actor) => updateAttendanceSettings(actor, updateAttendanceSettingsSchema.parse(await req.json())));
 }

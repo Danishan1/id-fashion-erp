@@ -7,8 +7,8 @@ export default async function OvertimePage() {
   const session = await auth();
   const userId = session!.user.id;
   const [canApprove, canReject] = await Promise.all([
-    PermissionService.can(userId, "hrms_attendance", "approve"),
-    PermissionService.can(userId, "hrms_attendance", "reject"),
+    PermissionService.can(userId, "hrms_attendance_overtime", "approve"),
+    PermissionService.can(userId, "hrms_attendance_overtime", "reject"),
   ]);
   if (!canApprove && !canReject) notFound();
   return <OvertimeClient canApprove={canApprove} canReject={canReject} />;

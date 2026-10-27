@@ -6,7 +6,7 @@ import { listLeaveBalances } from "@/modules/hrms/leave-balance.service";
 /** Monthly leave balances: ?month=YYYY-MM&employeeId=…&mine=true */
 export async function GET(req: NextRequest) {
   const p = req.nextUrl.searchParams;
-  return hrmsRoute("hrms_leave", "view", (actor) => {
+  return hrmsRoute(["hrms_leave_balances", "hrms_leave"], "view", (actor) => {
     const { year, month } = parseMonth(p.get("month"));
     return listLeaveBalances(actor, { year, month, employeeId: p.get("employeeId") || undefined, mine: p.get("mine") === "true" });
   });

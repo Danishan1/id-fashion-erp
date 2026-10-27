@@ -5,9 +5,9 @@ import { createAttendanceLocation, listAttendanceLocations } from "@/modules/hrm
 
 export async function GET(req: NextRequest) {
   const activeOnly = req.nextUrl.searchParams.get("activeOnly") === "true";
-  return hrmsRoute("hrms_attendance", "view", (actor) => listAttendanceLocations(actor.companyId, { activeOnly }));
+  return hrmsRoute("hrms_attendance_settings", "view", (actor) => listAttendanceLocations(actor.companyId, { activeOnly }));
 }
 
 export async function POST(req: NextRequest) {
-  return hrmsRoute("hrms_attendance", "edit", async (actor) => createAttendanceLocation(actor, attendanceLocationSchema.parse(await req.json())), 201);
+  return hrmsRoute("hrms_attendance_settings", "edit", async (actor) => createAttendanceLocation(actor, attendanceLocationSchema.parse(await req.json())), 201);
 }

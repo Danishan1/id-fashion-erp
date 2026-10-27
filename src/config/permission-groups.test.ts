@@ -17,6 +17,7 @@ describe("permission groups (P6)", () => {
   });
 
   it("labels modules readably", () => {
-    expect(moduleLabel("hrms_leave")).toBe("Hrms leave");
+    expect(moduleLabel("masters_core")).toBe("Masters core");
+    expect(moduleLabel("hrms_leave")).toBe("Leave Requests");
   });
 });

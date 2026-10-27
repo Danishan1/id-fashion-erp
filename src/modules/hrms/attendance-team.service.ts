@@ -8,10 +8,10 @@ import { computeEmployeesMonth, type EmployeeMonth } from "./attendance-month.se
 import type { HrmsActor } from "./attendance-settings.service";
 import { cascadeAvailability, ensureBalance } from "./leave-balance.service";
 import { countPendingRegularizations } from "./attendance-correction.service";
-import { getHrmsEmployeeScope } from "./hrms-scope";
+import { getHrmsEmployeeScope, type HrmsModule } from "./hrms-scope";
 
-async function scopedEmployeeIds(actor: HrmsActor, search?: string) {
-  const scope = await getHrmsEmployeeScope(actor.userId, "hrms_attendance");
+async function scopedEmployeeIds(actor: HrmsActor, module: HrmsModule, search?: string) {
+  const scope = await getHrmsEmployeeScope(actor.userId, module);
   const where: Prisma.EmployeeWhereInput = {
     companyId: actor.companyId,
     isActive: true,
@@ -27,7 +27,7 @@ export type TeamDayStatus = "PRESENT" | "OUTSIDE" | "HALF_DAY" | "ON_LEAVE" | "A
 
 /** Today's (or any day's) team cards + table — old getAttendanceDashboardRecord, with the cards it never filled in. */
 export async function getTeamDay(actor: HrmsActor, dateKey: string, now: Date = new Date()) {
-  const ids = await scopedEmployeeIds(actor);
+  const ids = await scopedEmployeeIds(actor, "hrms_attendance_team");
   const year = Number(dateKey.slice(0, 4));
   const month = Number(dateKey.slice(5, 7));
   const months = await computeEmployeesMonth(actor.companyId, ids, year, month, now);
@@ -66,7 +66,7 @@ export async function getTeamDay(actor: HrmsActor, dateKey: string, now: Date = 
 
 /** Month grid for the team (old getAllUserAttendanceForOneMonth). */
 export async function getTeamMonth(actor: HrmsActor, year: number, month: number, search?: string) {
-  const ids = await scopedEmployeeIds(actor, search);
+  const ids = await scopedEmployeeIds(actor, "hrms_attendance_records", search);
   const months = await computeEmployeesMonth(actor.companyId, ids, year, month);
   return {
     year,
@@ -204,14 +204,14 @@ async function availableLeaveByEmployee(companyId: string, employeeIds: string[]
 
 export async function getSalarySheet(actor: HrmsActor, year: number, month: number) {
   const closed = await prisma.attendanceMonthClose.findUnique({ where: { companyId_year_month: { companyId: actor.companyId, year, month } }, include: { company: { select: { id: true } } } });
-  const scope = await getHrmsEmployeeScope(actor.userId, "hrms_attendance");
+  const scope = await getHrmsEmployeeScope(actor.userId, "hrms_attendance_salary");
   if (closed) {
     const snapshot = closed.snapshotJson as unknown as { rows: SalaryRow[] };
     const rows = scope === null ? snapshot.rows : snapshot.rows.filter((r) => scope.includes(r.employeeId));
     const closedBy = await prisma.user.findUnique({ where: { id: closed.closedByUserId }, select: { fullName: true } });
     return { year, month, isClosed: true, closedAt: closed.closedAt, closedBy: closedBy?.fullName ?? null, pendingRegularizations: 0, monthEnded: true, rows };
   }
-  const ids = await scopedEmployeeIds(actor);
+  const ids = await scopedEmployeeIds(actor, "hrms_attendance_salary");
   const months = await computeEmployeesMonth(actor.companyId, ids, year, month);
   const available = await availableLeaveByEmployee(actor.companyId, ids, year, month);
   const keys = monthDateKeys(year, month);
@@ -234,7 +234,7 @@ export async function getSalarySheet(actor: HrmsActor, year: number, month: numb
  * sheet. Company-wide only (needs view_all), done once per month.
  */
 export async function finaliseSalaryMonth(actor: HrmsActor, year: number, month: number) {
-  const scope = await getHrmsEmployeeScope(actor.userId, "hrms_attendance");
+  const scope = await getHrmsEmployeeScope(actor.userId, "hrms_attendance_salary");
   if (scope !== null) throw new BusinessRuleError("PERMISSION_DENIED", "Finalising a month needs company-wide attendance access.");
   const keys = monthDateKeys(year, month);
   if (keys[keys.length - 1] >= istDateKey(new Date())) throw new BusinessRuleError("VALIDATION_ERROR", "A month can be finalised only after it has ended.");

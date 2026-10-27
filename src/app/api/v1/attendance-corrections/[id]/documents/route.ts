@@ -5,14 +5,14 @@ import { addCorrectionDocument, listCorrectionDocuments } from "@/modules/hrms/a
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  return hrmsRoute("hrms_attendance", "view", (actor) => listCorrectionDocuments(actor, id));
+  return hrmsRoute("hrms_attendance_regularization", "view", (actor) => listCorrectionDocuments(actor, id));
 }
 
 /** Multipart `file` — proof for a regularization (medical slip, visit pass…). */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   return hrmsRoute(
-    "hrms_attendance",
+    "hrms_attendance_regularization",
     "create",
     async (actor) => {
       const file = (await req.formData()).get("file");

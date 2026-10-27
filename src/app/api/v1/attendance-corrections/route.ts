@@ -8,7 +8,7 @@ import { listAttendanceCorrections, createAttendanceCorrectionRequest } from "@/
 export async function GET(req: NextRequest) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "hrms_attendance", "view");
+    await PermissionService.assert(session.user.id, "hrms_attendance_regularization", "view");
 
     const query = parseListQuery(req.nextUrl.searchParams, "createdAt");
     const status = req.nextUrl.searchParams.get("status") ?? undefined;
@@ -26,7 +26,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "hrms_attendance", "create");
+    await PermissionService.assert(session.user.id, "hrms_attendance_regularization", "create");
 
     const input = createAttendanceCorrectionSchema.parse(await req.json());
     const request = await createAttendanceCorrectionRequest(

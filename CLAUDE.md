@@ -8005,3 +8005,10 @@ Ported complete HRMS Attendance & Leave module from the legacy system into Next.
 - Pre-existing drift rule: Never include `ALTER TABLE "sample_requests" DROP COLUMN "color"` in any database migration.
 - Face model files: Face recognition models live in `public/models/face-api/` using `.bin` weight shards (`tiny_face_detector_model.bin`, `face_landmark_68_model.bin`, `face_recognition_model.bin`).
 
+
+## HRMS permissions split per screen (2026-10-27)
+
+The role permission matrix now has one row per HRMS screen instead of two (`hrms_attendance`, `hrms_leave`).
+- Modules: `hrms_attendance` (My Attendance / punch), `hrms_attendance_team`, `_records`, `_regularization`, `_outdoor`, `_overtime`, `_photos`, `_salary`, `_settings`, `hrms_leave` (Leave Requests), `hrms_leave_balances`, `hrms_leave_types`. Display names: `MODULE_LABELS` in `src/config/permission-groups.ts`.
+- Each API/page checks its screen's module; scope (`view_all`) uses the same module. APIs shared by several screens pass a module list to `hrmsRoute()` / `getHrmsEmployeeScope()` (any-of), e.g. the employee picker uses `ALL_ATTENDANCE_MODULES`. Own data (`?mine=true` overtime/outdoor rejections, `me/*`, punch) stays on `hrms_attendance`.
+- Migration `20261027100000_hrms_permission_submodules` copied every existing role grant and user override on the old module to each new sibling module, so nobody lost or gained access on deploy; admins trim per role. Rollback script in `prisma/rollback/`.

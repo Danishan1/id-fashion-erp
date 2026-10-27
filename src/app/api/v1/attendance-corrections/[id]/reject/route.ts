@@ -11,7 +11,7 @@ interface RouteContext {
 export async function POST(req: NextRequest, { params }: RouteContext) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "hrms_attendance", "reject");
+    await PermissionService.assert(session.user.id, "hrms_attendance_regularization", "reject");
 
     const { id } = await params;
     const input = rejectAttendanceCorrectionSchema.parse(await req.json());

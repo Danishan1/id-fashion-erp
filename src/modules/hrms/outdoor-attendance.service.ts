@@ -51,7 +51,7 @@ function dayKeyOf(session: { attendanceRecord: { attendanceDate: Date } }) {
 
 /** Outside punches still waiting for an admin decision. */
 export async function listUnverifiedSessions(actor: HrmsActor, filters: { month?: string; employeeId?: string }) {
-  const scope = await getHrmsEmployeeScope(actor.userId, "hrms_attendance");
+  const scope = await getHrmsEmployeeScope(actor.userId, "hrms_attendance_outdoor");
   const range = monthRange(filters.month);
   return prisma.attendanceSession.findMany({
     where: {
@@ -79,7 +79,7 @@ export async function approveOutdoorSessions(actor: HrmsActor, sessionIds: strin
   for (const id of sessionIds) {
     const session = await prisma.attendanceSession.findFirst({ where: { id, companyId: actor.companyId }, select: { id: true, employeeId: true, status: true } });
     if (!session || session.status !== "PRESENT_FROM_OUTSIDE") continue;
-    await assertHrmsEmployeeInScope(actor.userId, "hrms_attendance", session.employeeId, { label: "Attendance session", id });
+    await assertHrmsEmployeeInScope(actor.userId, "hrms_attendance_outdoor", session.employeeId, { label: "Attendance session", id });
     if ((await linkedEmployeeId(actor.userId)) === session.employeeId) {
       throw new BusinessRuleError("SELF_APPROVAL_NOT_ALLOWED", "You can't approve your own outside punch.");
     }
@@ -101,7 +101,7 @@ export interface RejectOutdoorInput {
 export async function rejectOutdoorSession(actor: HrmsActor, sessionId: string, input: RejectOutdoorInput) {
   const session = await prisma.attendanceSession.findFirst({ where: { id: sessionId, companyId: actor.companyId }, include: { attendanceRecord: { select: { attendanceDate: true } } } });
   if (!session) throw new BusinessRuleError("NOT_FOUND", "Attendance session not found.", { id: sessionId });
-  await assertHrmsEmployeeInScope(actor.userId, "hrms_attendance", session.employeeId, { label: "Attendance session", id: sessionId });
+  await assertHrmsEmployeeInScope(actor.userId, "hrms_attendance_outdoor", session.employeeId, { label: "Attendance session", id: sessionId });
   if (session.status !== "PRESENT_FROM_OUTSIDE" && session.status !== "REMOTE") throw new BusinessRuleError("INVALID_STATE_TRANSITION", "Only an outside punch can be rejected.");
   if (!session.checkOutAt) throw new BusinessRuleError("INVALID_STATE_TRANSITION", "The employee hasn't punched out yet — reject after the session is closed.");
   if ((await linkedEmployeeId(actor.userId)) === session.employeeId) throw new BusinessRuleError("SELF_APPROVAL_NOT_ALLOWED", "You can't reject your own punch.");
@@ -158,7 +158,7 @@ export async function listOutdoorRejections(actor: HrmsActor, filters: { mine?: 
   if (filters.mine) {
     employeeWhere = { employeeId: (await linkedEmployeeId(actor.userId)) ?? "00000000-0000-0000-0000-000000000000" };
   } else {
-    employeeWhere = hrmsEmployeeWhere(await getHrmsEmployeeScope(actor.userId, "hrms_attendance"));
+    employeeWhere = hrmsEmployeeWhere(await getHrmsEmployeeScope(actor.userId, "hrms_attendance_outdoor"));
   }
   const range = monthRange(filters.month);
   const rows = await prisma.outdoorRejection.findMany({
@@ -221,12 +221,12 @@ async function restoreOriginalTimes(tx: Prisma.TransactionClient, actor: HrmsAct
 /** Admin decision on a clarification: APPROVED restores the original times. */
 export async function decideOutdoorClarification(actor: HrmsActor, id: string, decision: "APPROVED" | "REJECTED") {
   const r = await loadRejection(actor, id);
-  await assertHrmsEmployeeInScope(actor.userId, "hrms_attendance", r.employeeId, { label: "Outdoor rejection", id });
+  await assertHrmsEmployeeInScope(actor.userId, "hrms_attendance_outdoor", r.employeeId, { label: "Outdoor rejection", id });
   if (r.status === decision) return r;
   if (r.status !== "IN_PROCESS") throw new BusinessRuleError("INVALID_STATE_TRANSITION", "Only a clarification that is in process can be decided.");
   const ownUserId = await employeeUserId(r.employeeId);
-  if (decision === "APPROVED") await PermissionService.assert(actor.userId, "hrms_attendance", "approve", { createdBy: ownUserId ?? undefined });
-  else await PermissionService.assert(actor.userId, "hrms_attendance", "reject");
+  if (decision === "APPROVED") await PermissionService.assert(actor.userId, "hrms_attendance_outdoor", "approve", { createdBy: ownUserId ?? undefined });
+  else await PermissionService.assert(actor.userId, "hrms_attendance_outdoor", "reject");
 
   await prisma.$transaction(async (tx) => {
     const res = await tx.outdoorRejection.updateMany({ where: { id, status: "IN_PROCESS" }, data: { status: decision, decidedByUserId: actor.userId, decidedAt: new Date() } });
@@ -242,7 +242,7 @@ export async function decideOutdoorClarification(actor: HrmsActor, id: string, d
 /** Admin cancels the rejection: original times restored. */
 export async function cancelOutdoorRejection(actor: HrmsActor, id: string) {
   const r = await loadRejection(actor, id);
-  await assertHrmsEmployeeInScope(actor.userId, "hrms_attendance", r.employeeId, { label: "Outdoor rejection", id });
+  await assertHrmsEmployeeInScope(actor.userId, "hrms_attendance_outdoor", r.employeeId, { label: "Outdoor rejection", id });
   if (!ACTIVE.includes(r.status)) throw new BusinessRuleError("INVALID_STATE_TRANSITION", "Only an open rejection can be cancelled.");
   await prisma.$transaction(async (tx) => {
     const res = await tx.outdoorRejection.updateMany({
@@ -262,7 +262,7 @@ export async function cancelOutdoorRejection(actor: HrmsActor, id: string) {
 export async function readOutdoorProof(actor: HrmsActor, id: string) {
   const r = await loadRejection(actor, id);
   if ((await linkedEmployeeId(actor.userId)) !== r.employeeId) {
-    await assertHrmsEmployeeInScope(actor.userId, "hrms_attendance", r.employeeId, { label: "Proof", id });
+    await assertHrmsEmployeeInScope(actor.userId, "hrms_attendance_outdoor", r.employeeId, { label: "Proof", id });
   }
   if (!r.clarificationProofKey) throw new BusinessRuleError("NOT_FOUND", "No proof uploaded.", { id });
   return { buffer: await readStoredFile(r.clarificationProofKey), mimeType: r.clarificationProofMime ?? "application/octet-stream", fileName: r.clarificationProofName ?? "proof" };

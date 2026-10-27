@@ -228,7 +228,7 @@ describe("approveAttendanceCorrectionRequest", () => {
 
     await expect(approveAttendanceCorrectionRequest(actor, "req-1")).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
 
-    expect(PermissionService.assert).toHaveBeenCalledWith(actor.userId, "hrms_attendance", "approve", { createdBy: "user-1" });
+    expect(PermissionService.assert).toHaveBeenCalledWith(actor.userId, "hrms_attendance_regularization", "approve", { createdBy: "user-1" });
     expect(prisma.attendanceCorrectionRequest.updateMany).not.toHaveBeenCalled();
   });
 

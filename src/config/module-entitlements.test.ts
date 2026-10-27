@@ -24,6 +24,21 @@ describe("module entitlement catalog", () => {
 
   it("expands packages to their modules", () => {
     const mods = modulesOfPackages(new Set(["CRM", "HRMS"] as const));
-    expect([...mods].sort()).toEqual(["crm", "crm_settings", "hrms_attendance", "hrms_leave"]);
+    expect([...mods].sort()).toEqual([
+      "crm",
+      "crm_settings",
+      "hrms_attendance",
+      "hrms_attendance_outdoor",
+      "hrms_attendance_overtime",
+      "hrms_attendance_photos",
+      "hrms_attendance_records",
+      "hrms_attendance_regularization",
+      "hrms_attendance_salary",
+      "hrms_attendance_settings",
+      "hrms_attendance_team",
+      "hrms_leave",
+      "hrms_leave_balances",
+      "hrms_leave_types",
+    ]);
   });
 });

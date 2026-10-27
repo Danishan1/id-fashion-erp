@@ -8,7 +8,7 @@ import { listAttendance, recordAttendance } from "@/modules/hrms/attendance.serv
 export async function GET(req: NextRequest) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "hrms_attendance", "view");
+    await PermissionService.assert(session.user.id, "hrms_attendance_team", "view");
 
     const query = parseListQuery(req.nextUrl.searchParams, "attendanceDate");
     const attendanceDate = req.nextUrl.searchParams.get("date") ?? undefined;
@@ -23,7 +23,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "hrms_attendance", "create");
+    await PermissionService.assert(session.user.id, "hrms_attendance_team", "create");
 
     const input = recordAttendanceSchema.parse(await req.json());
     const record = await recordAttendance(

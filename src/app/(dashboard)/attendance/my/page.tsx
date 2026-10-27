@@ -7,6 +7,6 @@ export default async function MyAttendancePage() {
   const session = await auth();
   await PermissionService.assert(session!.user.id, "hrms_attendance", "view").catch(() => notFound());
   // HR / Admin / Super Admin (attendance "edit") can enrol face photos, including their own.
-  const canEnrolFaces = await PermissionService.can(session!.user.id, "hrms_attendance", "edit");
+  const canEnrolFaces = await PermissionService.can(session!.user.id, "hrms_attendance_settings", "edit");
   return <MyAttendanceClient canEnrolFaces={canEnrolFaces} />;
 }

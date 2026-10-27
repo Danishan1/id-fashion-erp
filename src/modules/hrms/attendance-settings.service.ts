@@ -272,8 +272,8 @@ export async function upsertEmployeeAttendanceProfile(actor: HrmsActor, employee
 
 /** Employees the caller can see in HRMS (self + team, or everyone with view_all) — for pickers. */
 export async function listScopedEmployees(actor: HrmsActor) {
-  const { getHrmsEmployeeScope } = await import("./hrms-scope");
-  const scope = await getHrmsEmployeeScope(actor.userId, "hrms_attendance");
+  const { getHrmsEmployeeScope, ALL_ATTENDANCE_MODULES } = await import("./hrms-scope");
+  const scope = await getHrmsEmployeeScope(actor.userId, ALL_ATTENDANCE_MODULES);
   return prisma.employee.findMany({
     where: { companyId: actor.companyId, deletedAt: null, isActive: true, ...(scope === null ? {} : { id: { in: scope } }) },
     orderBy: { fullName: "asc" },

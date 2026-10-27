@@ -146,7 +146,7 @@ describe("overtime.service", () => {
       vi.mocked(PermissionService.assert).mockRejectedValue(Object.assign(new Error("denied"), { code: "PERMISSION_DENIED" }));
 
       await expect(decideOvertime(actor, "ot-1", "APPROVED")).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
-      expect(PermissionService.assert).toHaveBeenCalledWith("user-1", "hrms_attendance", "approve", { createdBy: "user-asha" });
+      expect(PermissionService.assert).toHaveBeenCalledWith("user-1", "hrms_attendance_overtime", "approve", { createdBy: "user-asha" });
       expect(prisma.overtimeRecord.updateMany).not.toHaveBeenCalled();
     });
 

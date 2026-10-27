@@ -11,5 +11,5 @@ const schema = z.object({
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ sessionId: string }> }) {
   const { sessionId } = await params;
-  return hrmsRoute("hrms_attendance", "reject", async (actor) => rejectOutdoorSession(actor, sessionId, schema.parse(await req.json())));
+  return hrmsRoute("hrms_attendance_outdoor", "reject", async (actor) => rejectOutdoorSession(actor, sessionId, schema.parse(await req.json())));
 }

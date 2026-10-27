@@ -72,7 +72,7 @@ export async function readFacePhoto(actor: HrmsActor, photoId: string) {
   if (!photo) throw new BusinessRuleError("NOT_FOUND", "Face photo not found.", { id: photoId });
   const user = await prisma.user.findUnique({ where: { id: actor.userId }, select: { employeeId: true } });
   const isSelf = user?.employeeId === photo.employeeId;
-  if (!isSelf && !(await PermissionService.can(actor.userId, "hrms_attendance", "edit"))) {
+  if (!isSelf && !(await PermissionService.can(actor.userId, "hrms_attendance_settings", "edit"))) {
     throw new BusinessRuleError("NOT_FOUND", "Face photo not found.", { id: photoId });
   }
   return { buffer: await readStoredFile(photo.storageKey), mimeType: photo.mimeType };
@@ -82,7 +82,7 @@ export async function readFacePhoto(actor: HrmsActor, photoId: string) {
 export async function readSessionSelfie(actor: HrmsActor, sessionId: string, side: "in" | "out") {
   const session = await prisma.attendanceSession.findFirst({ where: { id: sessionId, companyId: actor.companyId } });
   if (!session) throw new BusinessRuleError("NOT_FOUND", "Selfie not found.", { id: sessionId });
-  await assertHrmsEmployeeInScope(actor.userId, "hrms_attendance", session.employeeId, { label: "Selfie", id: sessionId });
+  await assertHrmsEmployeeInScope(actor.userId, ["hrms_attendance_team", "hrms_attendance_photos", "hrms_attendance_outdoor"], session.employeeId, { label: "Selfie", id: sessionId });
   const key = side === "in" ? session.inSelfieKey : session.outSelfieKey;
   const mime = side === "in" ? session.inSelfieMime : session.outSelfieMime;
   if (!key) throw new BusinessRuleError("NOT_FOUND", "No selfie for this punch.", { id: sessionId });

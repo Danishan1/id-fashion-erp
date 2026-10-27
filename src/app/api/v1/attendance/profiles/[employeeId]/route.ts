@@ -5,5 +5,5 @@ import { upsertEmployeeAttendanceProfile } from "@/modules/hrms/attendance-setti
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ employeeId: string }> }) {
   const { employeeId } = await params;
-  return hrmsRoute("hrms_attendance", "edit", async (actor) => upsertEmployeeAttendanceProfile(actor, employeeId, employeeAttendanceProfileSchema.parse(await req.json())));
+  return hrmsRoute("hrms_attendance_settings", "edit", async (actor) => upsertEmployeeAttendanceProfile(actor, employeeId, employeeAttendanceProfileSchema.parse(await req.json())));
 }

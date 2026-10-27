@@ -4,5 +4,5 @@ import { listEmployeeAttendanceProfiles } from "@/modules/hrms/attendance-settin
 
 export async function GET(req: NextRequest) {
   const search = req.nextUrl.searchParams.get("search") ?? undefined;
-  return hrmsRoute("hrms_attendance", "edit", (actor) => listEmployeeAttendanceProfiles(actor.companyId, search));
+  return hrmsRoute("hrms_attendance_settings", "edit", (actor) => listEmployeeAttendanceProfiles(actor.companyId, search));
 }

@@ -53,7 +53,7 @@ export async function listAttendanceCorrections(actor: ActorContext, query: List
     const user = await prisma.user.findUnique({ where: { id: actor.userId }, select: { employeeId: true } });
     employeeWhere = { employeeId: user?.employeeId ?? "00000000-0000-0000-0000-000000000000" };
   } else {
-    employeeWhere = hrmsEmployeeWhere(await getHrmsEmployeeScope(actor.userId, "hrms_attendance"));
+    employeeWhere = hrmsEmployeeWhere(await getHrmsEmployeeScope(actor.userId, "hrms_attendance_regularization"));
   }
   const where: Prisma.AttendanceCorrectionRequestWhereInput = {
     companyId: actor.companyId,
@@ -83,7 +83,7 @@ async function resolveEmployee(actor: ActorContext, employeeId?: string | null) 
     select: { id: true, fullName: true, reportsToId: true, attendanceProfile: { select: { useCompanyWeekends: true, weekends: true } } },
   });
   if (!employee) throw new BusinessRuleError("NOT_FOUND", "Employee not found.", { id });
-  await assertHrmsEmployeeInScope(actor.userId, "hrms_attendance", employee.id, { label: "Employee", id: employee.id });
+  await assertHrmsEmployeeInScope(actor.userId, "hrms_attendance_regularization", employee.id, { label: "Employee", id: employee.id });
   return employee;
 }
 
@@ -323,10 +323,10 @@ export async function approveAttendanceCorrectionRequest(actor: ActorContext, id
   if (existing.status !== "PENDING") {
     throw new BusinessRuleError("INVALID_STATE_TRANSITION", `This request is already "${existing.status}".`, { currentStatus: existing.status });
   }
-  await PermissionService.assert(actor.userId, "hrms_attendance", "approve", { createdBy: existing.createdByUserId });
-  await assertHrmsEmployeeInScope(actor.userId, "hrms_attendance", existing.employeeId, { label: "Attendance correction request", id });
+  await PermissionService.assert(actor.userId, "hrms_attendance_regularization", "approve", { createdBy: existing.createdByUserId });
+  await assertHrmsEmployeeInScope(actor.userId, "hrms_attendance_regularization", existing.employeeId, { label: "Attendance correction request", id });
   const ownUser = await findLinkedUserId(actor.companyId, existing.employeeId);
-  if (ownUser?.id === actor.userId) await PermissionService.assert(actor.userId, "hrms_attendance", "approve", { createdBy: actor.userId });
+  if (ownUser?.id === actor.userId) await PermissionService.assert(actor.userId, "hrms_attendance_regularization", "approve", { createdBy: actor.userId });
 
   let changedDays: string[] = [];
   await prisma.$transaction(async (tx) => {
@@ -369,7 +369,7 @@ export async function rejectAttendanceCorrectionRequest(actor: ActorContext, id:
   if (existing.status !== "PENDING") {
     throw new BusinessRuleError("INVALID_STATE_TRANSITION", `This request is already "${existing.status}".`, { currentStatus: existing.status });
   }
-  await assertHrmsEmployeeInScope(actor.userId, "hrms_attendance", existing.employeeId, { label: "Attendance correction request", id });
+  await assertHrmsEmployeeInScope(actor.userId, "hrms_attendance_regularization", existing.employeeId, { label: "Attendance correction request", id });
 
   const res = await prisma.attendanceCorrectionRequest.updateMany({
     where: { id, status: "PENDING" },
@@ -411,7 +411,7 @@ export async function countPendingRegularizations(companyId: string, employeeIds
 async function assertCorrectionVisible(actor: ActorContext, id: string) {
   const req = await AttendanceCorrectionRepository.findAnyById(actor.companyId, id);
   if (!req) throw new BusinessRuleError("NOT_FOUND", "Attendance correction request not found.", { id });
-  await assertHrmsEmployeeInScope(actor.userId, "hrms_attendance", req.employeeId, { label: "Attendance correction request", id });
+  await assertHrmsEmployeeInScope(actor.userId, "hrms_attendance_regularization", req.employeeId, { label: "Attendance correction request", id });
   return req;
 }
 

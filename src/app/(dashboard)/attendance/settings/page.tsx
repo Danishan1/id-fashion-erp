@@ -5,6 +5,6 @@ import { AttendanceSettingsClient } from "./AttendanceSettingsClient";
 
 export default async function AttendanceSettingsPage() {
   const session = await auth();
-  await PermissionService.assert(session!.user.id, "hrms_attendance", "edit").catch(() => notFound());
+  await PermissionService.assert(session!.user.id, "hrms_attendance_settings", "edit").catch(() => notFound());
   return <AttendanceSettingsClient />;
 }

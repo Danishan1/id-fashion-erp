@@ -7,7 +7,7 @@ import { getAttendanceSummaryForDate } from "@/modules/hrms/attendance.service";
 export async function GET(req: NextRequest) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "hrms_attendance", "view");
+    await PermissionService.assert(session.user.id, "hrms_attendance_team", "view");
 
     const date = req.nextUrl.searchParams.get("date");
     if (!date) throw new BusinessRuleError("VALIDATION_ERROR", "date is required.", {});
