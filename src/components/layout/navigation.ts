@@ -219,6 +219,9 @@ export const NAV_SECTIONS: NavSection[] = [
     ],
   },
   { label: "Accounts", href: "/accounts", modules: ["accounts", "invoices", "payments", "expenses", "financial_reports"] },
+  // Own link (not only an Accounts card) so departments that can raise a
+  // request but hold no Accounts permission still find it.
+  { label: "Payment Requests", href: "/accounts/payment-requests", modules: ["payment_requests"] },
   { label: "Dispatch", href: "/dispatch", modules: ["dispatch"] },
   {
     label: "Barcodes",

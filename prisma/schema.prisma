@@ -192,6 +192,7 @@ model Company {
   payments                            Payment[]
   expenses                            Expense[]
   expensePayments                     ExpensePayment[]
+  paymentRequests                     PaymentRequest[]
   dispatches                          Dispatch[]
   jobWorkOrders                       JobWorkOrder[]
   jobWorkReceipts                     JobWorkReceipt[]
@@ -322,6 +323,7 @@ model Branch {
   expenses                   Expense[]
   expensePayments            ExpensePayment[]
   dispatches                 Dispatch[]
+  paymentRequests            PaymentRequest[]
   jobWorkOrders              JobWorkOrder[]
   customInvoices             CustomInvoice[]
   internalTransfers          InternalTransfer[]
@@ -981,6 +983,10 @@ model User {
   paymentsPosted                             Payment[]                            @relation("PaymentPostedBy")
   expensesCreated                            Expense[]                            @relation("ExpenseCreatedBy")
   expensePaymentsCreated                     ExpensePayment[]                     @relation("ExpensePaymentCreatedBy")
+  paymentRequestsCreated                     PaymentRequest[]                     @relation("PaymentRequestCreatedBy")
+  paymentRequestsApproved                    PaymentRequest[]                     @relation("PaymentRequestApprovedBy")
+  paymentRequestsRejected                    PaymentRequest[]                     @relation("PaymentRequestRejectedBy")
+  paymentRequestsCancelled                   PaymentRequest[]                     @relation("PaymentRequestCancelledBy")
   expensesPosted                             Expense[]                            @relation("ExpensePostedBy")
   expensesApproved                           Expense[]                            @relation("ExpenseApprovedBy")
   expensesRejected                           Expense[]                            @relation("ExpenseRejectedBy")
@@ -1382,6 +1388,7 @@ model Supplier {
   purchaseInvoices        PurchaseInvoice[]
   payments                Payment[]
   expenses                Expense[]
+  paymentRequests         PaymentRequest[]
   aiGarmentFabricDetails  AiGarmentFabricDetail[]
   aiDesignerProjects      AiDesignerProject[]
   replicateDesignProjects ReplicateDesignProject[]
@@ -1652,6 +1659,7 @@ model Employee {
   leaveDays                    LeaveDay[]
   autoLeaveHistories           AutoLeaveHistory[]
   employeeAdvances             EmployeeAdvance[]
+  paymentRequests              PaymentRequest[]
 
   @@unique([companyId, employeeCode])
   @@map("employees")
@@ -7840,6 +7848,125 @@ model ExpensePayment {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Payments Request hub (2026-10-27) — Accounts → Expenses → Payments Request.
+// One place to raise a money-out request (salary, expenditure, supplier,
+// internal transfer), get it approved (or skip approval, e.g. Salary) and
+// have the accountant pay it. The request is a wrapper: paying it will use
+// the existing Expense / Payment / PurchaseInvoice / InternalTransfer /
+// EmployeeAdvance posting engines (payout skill) — no journal lives here.
+// Plan: docs/accounts/PAYMENT_REQUESTS_PLAN.md + .claude/skills/payment-request-*.
+// ─────────────────────────────────────────────────────────────
+
+enum PaymentRequestGroup {
+  SALARY
+  EXPENDITURE
+  SUPPLIER
+  INTERNAL_TRANSFER
+}
+
+enum PaymentRequestType {
+  SALARY
+  ADVANCE_REMINDER
+  INVESTMENT
+  TAX_INVOICE
+  VOUCHER_SINGLE
+  VOUCHER_MULTIPLE
+  SUPPLIER_ON_ACCOUNT
+  SUPPLIER_BILL
+  SUPPLIER_ADJUSTMENT
+  LOAN
+  IMPREST
+  FIXED_DEPOSIT
+  CASH_WITHDRAWAL
+  RECURRING_DEPOSIT
+  BANK_TRANSFER
+  CREDIT_CARD
+}
+
+enum PaymentRequestStatus {
+  PENDING_APPROVAL
+  APPROVED
+  PARTIALLY_PAID
+  PAID
+  REJECTED
+  CANCELLED
+}
+
+enum PaymentRequestRouting {
+  APPROVAL_THEN_PAY
+  DIRECT_TO_ACCOUNTANT
+}
+
+enum PaymentModeOfTransfer {
+  NEFT
+  RTGS
+  IMPS
+  UPI
+  CHEQUE
+  CASH
+  CARD
+  OTHER
+}
+
+model PaymentRequest {
+  id                String                 @id @default(uuid()) @db.Uuid
+  companyId         String                 @map("company_id") @db.Uuid
+  branchId          String?                @map("branch_id") @db.Uuid
+  requestNumber     String                 @map("request_number")
+  requestType       PaymentRequestType     @map("request_type")
+  // Derived from requestType when created (registry) — stored so lists filter by group cheaply.
+  requestGroup      PaymentRequestGroup    @map("request_group")
+  status            PaymentRequestStatus   @default(PENDING_APPROVAL)
+  // Snapshot of how this request was routed when it was raised.
+  routing           PaymentRequestRouting  @default(APPROVAL_THEN_PAY)
+  amount            Decimal                @db.Decimal(18, 2)
+  paidAmount        Decimal                @default(0) @map("paid_amount") @db.Decimal(18, 2)
+  currencyCode      String                 @map("currency_code") @db.Char(3)
+  // Who the money goes to. Always filled (copied from the picked supplier /
+  // employee so lists never need a join); the typed links are set when the
+  // request type picks a real record.
+  payToName         String                 @map("pay_to_name")
+  supplierId        String?                @map("supplier_id") @db.Uuid
+  employeeId        String?                @map("employee_id") @db.Uuid
+  paymentDueDate    DateTime               @map("payment_due_date") @db.Date
+  modeOfTransfer    PaymentModeOfTransfer? @map("mode_of_transfer")
+  remark            String?
+  // Small type-only fields (e.g. salary month) until a type needs real columns.
+  typeDataJson      Json?                  @map("type_data_json")
+  // Where an auto-created request came from (e.g. a finalised salary month).
+  sourceModule      String?                @map("source_module")
+  sourceRecordId    String?                @map("source_record_id") @db.Uuid
+  approvedAt        DateTime?              @map("approved_at")
+  approvedByUserId  String?                @map("approved_by_user_id") @db.Uuid
+  rejectedAt        DateTime?              @map("rejected_at")
+  rejectedByUserId  String?                @map("rejected_by_user_id") @db.Uuid
+  rejectionReason   String?                @map("rejection_reason")
+  cancelledAt       DateTime?              @map("cancelled_at")
+  cancelledByUserId String?                @map("cancelled_by_user_id") @db.Uuid
+  createdByUserId   String                 @map("created_by_user_id") @db.Uuid
+  idempotencyKey    String?                @map("idempotency_key")
+  createdAt         DateTime               @default(now()) @map("created_at")
+  updatedAt         DateTime               @updatedAt @map("updated_at")
+
+  company     Company   @relation(fields: [companyId], references: [id])
+  branch      Branch?   @relation(fields: [branchId], references: [id])
+  supplier    Supplier? @relation(fields: [supplierId], references: [id])
+  employee    Employee? @relation(fields: [employeeId], references: [id])
+  createdBy   User      @relation("PaymentRequestCreatedBy", fields: [createdByUserId], references: [id])
+  approvedBy  User?     @relation("PaymentRequestApprovedBy", fields: [approvedByUserId], references: [id])
+  rejectedBy  User?     @relation("PaymentRequestRejectedBy", fields: [rejectedByUserId], references: [id])
+  cancelledBy User?     @relation("PaymentRequestCancelledBy", fields: [cancelledByUserId], references: [id])
+
+  @@unique([companyId, requestNumber])
+  @@unique([companyId, idempotencyKey])
+  @@index([companyId, status])
+  @@index([companyId, requestGroup, requestType])
+  @@index([companyId, createdByUserId])
+  @@index([companyId, paymentDueDate])
+  @@map("payment_requests")
+}
+
+// ─────────────────────────────────────────────────────────────
 // Internal Transfer — moving money between two of the company's own
 // Cash/Bank accounts (e.g. cash deposited into the bank). Zero P&L impact,
 // deliberately NOT an Expense (an Expense always debits an income-statement
@@ -9965,6 +10092,8 @@ enum RelatedModule {
   // Product Unit Garment Barcode & Traceability System -- audit-log
   // polymorphism for a CustomerReturn header (relatedRecordId = CustomerReturn.id).
   CUSTOMER_RETURN
+  // Payments Request hub (2026-10-27) -- files and voice remarks on a payment request.
+  PAYMENT_REQUEST
 }
 
 model Attachment {
@@ -11865,6 +11994,8 @@ enum DocumentType {
   // Product Unit Garment Barcode & Traceability System
   PRODUCT_UNIT
   CUSTOMER_RETURN
+  // Payments Request hub (2026-10-27) — PRQ-YYYY-#####.
+  PAYMENT_REQUEST
 }
 
 model DocumentSequence {

@@ -75,6 +75,10 @@ export const MODULES = [
   "invoices",
   "payments",
   "expenses",
+  // Payments Request hub (2026-10-27): raise / approve / pay money-out requests
+  // (salary, expenditure, supplier, internal transfer). Its own module so any
+  // department can raise a request without getting the expenses ledger.
+  "payment_requests",
   "financial_reports",
   "dispatch",
   "reports",
@@ -252,6 +256,8 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     // "approve"/"reject" here is the Admin decision step (no cash movement)
     // — Management does not itself pay an expense, that's Accountant's "post".
     expenses: ["view", "approve", "reject"],
+    // The approver of payment requests; never pays (no "post").
+    payment_requests: ["view", "view_all", "approve", "reject", "export"],
     financial_reports: ["view", "export", "print"],
     // "approve" added for Extra Dispatch Quantity (2026-09-30) — the
     // checkpoint gate confirmDispatch() asserts when a dispatch's own extra
@@ -278,6 +284,8 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
   MERCHANDISER: {
     ...HRMS_SELF_SERVICE,
     dashboard: ["view"],
+    // Can raise their own payment requests (Payments Request hub, 2026-10-27).
+    payment_requests: ["view", "create"],
     masters_core: ["view", "create", "edit"],
     crm: ["view", "create", "edit", "export", "print"],
     marketing: ["view", "create", "edit", "export", "print"],
@@ -316,6 +324,8 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
   PRODUCTION_MANAGER: {
     ...HRMS_TEAM_APPROVER,
     dashboard: ["view"],
+    // Can raise their own payment requests (Payments Request hub, 2026-10-27).
+    payment_requests: ["view", "create"],
     masters_core: ["view"],
     sampling: ["view"],
     buyer_enquiries: ["view"],
@@ -430,6 +440,8 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
   STORE_MANAGER: {
     ...HRMS_TEAM_APPROVER,
     dashboard: ["view"],
+    // Can raise their own payment requests (Payments Request hub, 2026-10-27).
+    payment_requests: ["view", "create"],
     masters_core: ["view", "create", "edit"],
     bom_mrp: ["view"],
     production: ["view", "view_all"],
@@ -461,6 +473,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     // pays step) both granted here — a senior Accounts Manager can act as
     // either, unlike ACCOUNTS_EXECUTIVE below which gets neither.
     expenses: ["view", "create", "edit", "approve", "reject", "post", "cancel", "export", "print"],
+    payment_requests: ["view", "view_all", "create", "edit", "approve", "reject", "post", "cancel", "export", "print"],
     financial_reports: ["view", "export", "print"],
     // Limited administrative visibility (company/AI-provider settings) only
     // — deliberately NOT administration_users/administration_roles, per the
@@ -485,12 +498,16 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     invoices: ["view", "create", "edit"],
     payments: ["view", "create"],
     expenses: ["view", "create", "edit"],
+    // The accountant who pays approved requests ("post"); cannot approve.
+    payment_requests: ["view", "view_all", "create", "edit", "post"],
     financial_reports: ["view", "export"],
     reports: ["view", "export", "print"],
   },
   DISPATCH_MANAGER: {
     ...HRMS_TEAM_APPROVER,
     dashboard: ["view"],
+    // Can raise their own payment requests (Payments Request hub, 2026-10-27).
+    payment_requests: ["view", "create"],
     masters_core: ["view"],
     sales_orders: ["view"],
     production: ["view", "view_all"],

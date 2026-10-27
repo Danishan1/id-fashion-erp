@@ -46,6 +46,7 @@ const PREFIX_BY_DOCUMENT_TYPE: Record<DocumentType, string> = {
   // Product Unit Garment Barcode & Traceability System
   PRODUCT_UNIT: "FG",
   CUSTOMER_RETURN: "RET",
+  PAYMENT_REQUEST: "PRQ",
 };
 
 /** DocumentTypes that represent master-data codes, not transactional documents. */

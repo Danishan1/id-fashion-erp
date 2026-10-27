@@ -9,6 +9,7 @@ const ACCOUNTS_SECTIONS = [
   { href: "/accounts/purchase-invoices", label: "Purchase Invoices", description: "Supplier invoices raised against received purchase orders — partial and repeatable per order" },
   { href: "/accounts/custom-invoices", label: "Custom Invoices", description: "Standalone, ad-hoc bills — not linked to a Sales Order. Quick/direct billing outside the normal order-to-invoice flow" },
   { href: "/accounts/payments", label: "Payments", description: "Money received from customers or paid to suppliers, allocated against invoices" },
+  { href: "/accounts/payment-requests", label: "Payment Requests", description: "Raise, approve and pay money-out requests — salary, expenditure, supplier and internal transfer" },
   { href: "/accounts/expenses", label: "Expenses", description: "Direct day-to-day costs (rent, utilities, salaries) paid immediately, not vendor bills with terms" },
   { href: "/accounts/internal-transfers", label: "Internal Transfers", description: "Move money between the company's own Cash/Bank accounts — zero P&L impact" },
   { href: "/accounts/employee-advances", label: "Employee Advances", description: "Advance money to an employee, settle it later against real expense receipts" },

@@ -50,6 +50,7 @@ reuse, tests and a done-checklist. Build one skill at a time, tick its checklist
 Steps 2 and 3 can run in parallel with 1's UI work; 7–9, 13 and 17–22 are independent once 1/2/5 exist.
 
 ## Spec coverage checklist (tick when its skill is done)
+- [x] Foundation hub built (2026-10-27)
 - [ ] a Salary (bulk auto + single, no approver)
 - [ ] b1 Advance reminder · [ ] b2 Investment · [ ] b3 Tax invoice non-supplier · [ ] b4 Voucher single
 - [ ] b5 Voucher multiple · [ ] b6 Excel upload

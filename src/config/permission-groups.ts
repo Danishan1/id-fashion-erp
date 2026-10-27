@@ -40,6 +40,7 @@ const MODULE_LABELS: Record<string, string> = {
   hrms_leave: "Leave Requests",
   hrms_leave_balances: "Leave Balances",
   hrms_leave_types: "Leave Types",
+  payment_requests: "Payment Requests",
 };
 
 /** Readable module name, e.g. "masters_core" -> "Masters core". */

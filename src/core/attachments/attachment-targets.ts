@@ -3,6 +3,7 @@ import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { PermissionService } from "@/core/rbac/PermissionService";
 import type { Module } from "@/config/rbac";
 import type { RelatedModule } from "@prisma/client";
+import { assertPaymentRequestVisible } from "@/modules/accounts/payment-requests/payment-request.service";
 
 /**
  * Which records the shared "record attachments" API (files + voice notes)
@@ -20,6 +21,8 @@ interface AttachmentTarget {
   /** Returns the record's current status (stored as the attachment's context
    * label) or null when the record isn't visible to this company. */
   load: (companyId: string, recordId: string) => Promise<{ branchId: string | null; status: string } | null>;
+  /** Extra per-user visibility rule (e.g. "own records only"); throws NOT_FOUND when hidden. */
+  assertVisible?: (actor: { companyId: string; userId: string }, recordId: string) => Promise<void>;
 }
 
 const TARGETS: Partial<Record<RelatedModule, AttachmentTarget>> = {
@@ -57,6 +60,13 @@ const TARGETS: Partial<Record<RelatedModule, AttachmentTarget>> = {
     rbacModule: "accounts",
     load: (companyId, id) =>
       prisma.internalTransfer.findFirst({ where: { id, companyId }, select: { branchId: true, status: true } }),
+  },
+  PAYMENT_REQUEST: {
+    rbacModule: "payment_requests",
+    load: (companyId, id) =>
+      prisma.paymentRequest.findFirst({ where: { id, companyId }, select: { branchId: true, status: true } }),
+    // Without view_all a user sees only the requests they raised.
+    assertVisible: assertPaymentRequestVisible,
   },
   PAYMENT: {
     rbacModule: "payments",
@@ -96,6 +106,7 @@ export async function assertAttachmentAccess(
   if (allowedBranchIds !== null && (!record.branchId || !allowedBranchIds.has(record.branchId))) {
     throw new BusinessRuleError("NOT_FOUND", "Record not found.", { id: recordId });
   }
+  if (target.assertVisible) await target.assertVisible(actor, recordId);
 
   return { status: record.status };
 }

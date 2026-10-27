@@ -85,10 +85,18 @@ service tests: routing (direct type starts APPROVED), self-approval refused, rej
 blocked after approval, cancel blocked after payout, decimal validation, idempotency replay, branch scope
 deny-as-NOT_FOUND, own-only visibility without `view_all`.
 
-## Done checklist
-- [ ] schema + migration + rollback note, verified by direct SQL
-- [ ] registry + type settings with defaults
-- [ ] service, routes, RBAC + catalog sync
-- [ ] hub page with 4 groups, list, detail, approve/reject/cancel
-- [ ] voice remark + remark + files on the common form
-- [ ] tsc / eslint / vitest green; live browser check
+## Done checklist (built 2026-10-27, branch plan/accounts-payment-requests)
+- [x] schema + migration `20261027120000_payment_requests_foundation` + `prisma/rollback/…down.sql`, verified by SQL
+- [x] registry `src/modules/accounts/payment-requests/request-type-registry.ts` (16 types; `available` flag —
+      INVESTMENT, SUPPLIER_ON_ACCOUNT, CASH_WITHDRAWAL can be raised now, the rest show "Coming soon")
+- [x] service/repository/schema + 16 unit tests; routes `/api/v1/payment-requests` (list, create, get, PATCH,
+      approve, reject, cancel, summary); RBAC `payment_requests` + module package + label; catalog synced
+- [x] hub `/accounts/payment-requests` (4 groups, All / My / To Approve / To Pay), detail page + panel, sidebar link,
+      Accounts hub card
+- [x] remark + voice remark + files (attachment target PAYMENT_REQUEST, own-records rule enforced for files too)
+- [x] tsc / eslint / full vitest (3618) green; live API + page check on the dev DB (PRQ-2026-00001/00002 left as test data)
+
+Moved out of this skill (done where they are used):
+- `PaymentRequestTypeSetting` / routing per company → `payment-request-approval-matrix` (registry default routing used until then)
+- linked document ids (`expenseId`, `paymentId`, …) and `PaymentRequestPayout` → `payment-request-accountant-payout`
+- Pay action/button → `payment-request-accountant-payout` (detail page shows "waiting for the accountant")
