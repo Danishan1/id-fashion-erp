@@ -49,8 +49,21 @@ add/remove rows, live totals, MRP column hidden by default, discount % ↔ amoun
 intra vs inter state split; RCM payable excludes GST; ITC=N folds GST into cost; discount % vs amount;
 rounding sums; invalid decimals rejected; place of supply missing → company state.
 
-## Done checklist
-- [ ] calc helper + tests
-- [ ] editor component
-- [ ] Zod schema shared by 3 request types
-- [ ] journal builder helper `buildGstInvoiceJournalLines()` + tests
+## Done checklist (built 2026-10-28)
+- [x] calc helper + tests — `src/lib/payables-gst.ts` (own calculator, not calculateLineGst: that one zeroes
+      tax under RCM, right for sales but wrong for bills we pay)
+- [x] schema — migration `20261028130000_payment_request_invoice_lines` (+ rollback): invoice header columns on
+      payment_requests + `payment_request_invoice_lines` (each line has its own expenseAccountId, filled from the purpose)
+- [x] Zod schema shared by 3 request types — `payment-requests/gst-invoice.schema.ts`
+- [x] `computeGstInvoice()` (server recompute) + `buildGstInvoiceJournalLines()` + tests — `payment-requests/gst-invoice.ts`
+- [x] editor component — `src/components/accounts/GstInvoiceLinesEditor.tsx` (+ `toGstInvoicePayload`)
+
+As built:
+- Place of supply empty = our state, read from the company GSTIN (Company has no state column). No GSTIN =
+  intra-state (CGST + SGST).
+- GST rate is picked from the common slabs (0, 0.25, 3, 5, 12, 18, 28): /api/v1/tax-rates needs accounts.view,
+  which request raisers do not have.
+- Journal builder takes resolved account ids; GST-RCM-PAY is created lazily by the paying skill
+  (`GST_CONTROL_ACCOUNTS`, same as SUP-ADV). Single GST-ITC account (no CGST/SGST split in the GL yet).
+- Not wired into any form yet: Tax Invoice / Supplier Bill / Adjustment do that. isForStock lines do not raise
+  a Goods Receipt (v1, as planned).

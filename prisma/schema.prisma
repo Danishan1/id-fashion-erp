@@ -1837,6 +1837,8 @@ model Product {
   productionOrderColorFabricChosen ProductionOrderColorFabric[] @relation("ProductionOrderColorFabricMaterial")
   stockColorBalances               StockColorBalance[]
 
+  paymentRequestInvoiceLines PaymentRequestInvoiceLine[] @relation("PaymentRequestInvoiceLineProduct")
+
   @@unique([companyId, styleCode])
   @@map("products")
 }
@@ -6946,6 +6948,8 @@ model ChartOfAccount {
   financialAccount              BankAccount?                @relation("BankAccountLedger")
   expensePurposes               ExpensePurpose[]
 
+  paymentRequestInvoiceLines PaymentRequestInvoiceLine[] @relation("PaymentRequestInvoiceLineAccount")
+
   @@unique([companyId, code])
   @@map("chart_of_accounts")
 }
@@ -7953,73 +7957,88 @@ enum PaymentModeOfTransfer {
 }
 
 model PaymentRequest {
-  id                      String                 @id @default(uuid()) @db.Uuid
-  companyId               String                 @map("company_id") @db.Uuid
-  branchId                String?                @map("branch_id") @db.Uuid
-  requestNumber           String                 @map("request_number")
-  requestType             PaymentRequestType     @map("request_type")
+  id                         String                 @id @default(uuid()) @db.Uuid
+  companyId                  String                 @map("company_id") @db.Uuid
+  branchId                   String?                @map("branch_id") @db.Uuid
+  requestNumber              String                 @map("request_number")
+  requestType                PaymentRequestType     @map("request_type")
   // Derived from requestType when created (registry) — stored so lists filter by group cheaply.
-  requestGroup            PaymentRequestGroup    @map("request_group")
-  status                  PaymentRequestStatus   @default(PENDING_APPROVAL)
+  requestGroup               PaymentRequestGroup    @map("request_group")
+  status                     PaymentRequestStatus   @default(PENDING_APPROVAL)
   // Snapshot of how this request was routed when it was raised.
-  routing                 PaymentRequestRouting  @default(APPROVAL_THEN_PAY)
-  amount                  Decimal                @db.Decimal(18, 2)
-  paidAmount              Decimal                @default(0) @map("paid_amount") @db.Decimal(18, 2)
-  currencyCode            String                 @map("currency_code") @db.Char(3)
+  routing                    PaymentRequestRouting  @default(APPROVAL_THEN_PAY)
+  amount                     Decimal                @db.Decimal(18, 2)
+  paidAmount                 Decimal                @default(0) @map("paid_amount") @db.Decimal(18, 2)
+  currencyCode               String                 @map("currency_code") @db.Char(3)
   // Who the money goes to. Always filled (copied from the picked supplier /
   // employee so lists never need a join); the typed links are set when the
   // request type picks a real record.
-  payToName               String                 @map("pay_to_name")
-  supplierId              String?                @map("supplier_id") @db.Uuid
-  employeeId              String?                @map("employee_id") @db.Uuid
+  payToName                  String                 @map("pay_to_name")
+  supplierId                 String?                @map("supplier_id") @db.Uuid
+  employeeId                 String?                @map("employee_id") @db.Uuid
   // A non-supplier pay-to from the Payee master (2026-10-28).
-  payeeId                 String?                @map("payee_id") @db.Uuid
-  paymentDueDate          DateTime               @map("payment_due_date") @db.Date
-  modeOfTransfer          PaymentModeOfTransfer? @map("mode_of_transfer")
-  remark                  String?
+  payeeId                    String?                @map("payee_id") @db.Uuid
+  paymentDueDate             DateTime               @map("payment_due_date") @db.Date
+  modeOfTransfer             PaymentModeOfTransfer? @map("mode_of_transfer")
+  remark                     String?
   // Small type-only fields (e.g. salary month) until a type needs real columns.
-  typeDataJson            Json?                  @map("type_data_json")
+  typeDataJson               Json?                  @map("type_data_json")
   // Where an auto-created request came from (e.g. a finalised salary month).
-  sourceModule            String?                @map("source_module")
-  sourceRecordId          String?                @map("source_record_id") @db.Uuid
-  approvedAt              DateTime?              @map("approved_at")
-  approvedByUserId        String?                @map("approved_by_user_id") @db.Uuid
-  rejectedAt              DateTime?              @map("rejected_at")
-  rejectedByUserId        String?                @map("rejected_by_user_id") @db.Uuid
-  rejectionReason         String?                @map("rejection_reason")
-  cancelledAt             DateTime?              @map("cancelled_at")
-  cancelledByUserId       String?                @map("cancelled_by_user_id") @db.Uuid
+  sourceModule               String?                @map("source_module")
+  sourceRecordId             String?                @map("source_record_id") @db.Uuid
+  approvedAt                 DateTime?              @map("approved_at")
+  approvedByUserId           String?                @map("approved_by_user_id") @db.Uuid
+  rejectedAt                 DateTime?              @map("rejected_at")
+  rejectedByUserId           String?                @map("rejected_by_user_id") @db.Uuid
+  rejectionReason            String?                @map("rejection_reason")
+  cancelledAt                DateTime?              @map("cancelled_at")
+  cancelledByUserId          String?                @map("cancelled_by_user_id") @db.Uuid
   // Approval Matrix (2026-10-27): the rule used and a frozen copy of its
   // levels (approvalPlanJson), so editing the matrix never changes a request
   // already raised. The current level's approvers are copied into the arrays
   // below so "To Approve" can be filtered in SQL.
-  approvalRuleId          String?                @map("approval_rule_id") @db.Uuid
-  approvalPlanJson        Json?                  @map("approval_plan_json")
-  requiredApprovalLevels  Int                    @default(1) @map("required_approval_levels")
-  currentApprovalLevel    Int                    @default(1) @map("current_approval_level")
+  approvalRuleId             String?                @map("approval_rule_id") @db.Uuid
+  approvalPlanJson           Json?                  @map("approval_plan_json")
+  requiredApprovalLevels     Int                    @default(1) @map("required_approval_levels")
+  currentApprovalLevel       Int                    @default(1) @map("current_approval_level")
   // true = anyone holding payment_requests.approve may decide this level (no matrix rule).
-  currentLevelAnyApprover Boolean                @default(true) @map("current_level_any_approver")
-  currentApproverUserIds  String[]               @default([]) @map("current_approver_user_ids") @db.Uuid
-  currentApproverRoleIds  String[]               @default([]) @map("current_approver_role_ids") @db.Uuid
+  currentLevelAnyApprover    Boolean                @default(true) @map("current_level_any_approver")
+  currentApproverUserIds     String[]               @default([]) @map("current_approver_user_ids") @db.Uuid
+  currentApproverRoleIds     String[]               @default([]) @map("current_approver_role_ids") @db.Uuid
   // May a user who approved this request also pay it? From the rule (default no).
-  approverMayPay          Boolean                @default(false) @map("approver_may_pay")
-  createdByUserId         String                 @map("created_by_user_id") @db.Uuid
-  idempotencyKey          String?                @map("idempotency_key")
-  createdAt               DateTime               @default(now()) @map("created_at")
-  updatedAt               DateTime               @updatedAt @map("updated_at")
+  approverMayPay             Boolean                @default(false) @map("approver_may_pay")
+  // GST invoice (2026-10-28) — tax invoice / supplier bill / adjustment types.
+  // One invoice per request; lines in payment_request_invoice_lines. Totals are
+  // recomputed on the server from the lines (src/lib/payables-gst.ts).
+  invoiceNumber              String?                @map("invoice_number")
+  invoiceDate                DateTime?              @map("invoice_date") @db.Date
+  isItcApplicable            Boolean                @default(true) @map("is_itc_applicable")
+  isReverseCharge            Boolean                @default(false) @map("is_reverse_charge")
+  placeOfSupplyStateCode     String?                @map("place_of_supply_state_code") @db.Char(2)
+  payToGstin                 String?                @map("pay_to_gstin")
+  isRawMaterialForProduction Boolean                @default(false) @map("is_raw_material_for_production")
+  invoiceTaxableTotal        Decimal?               @map("invoice_taxable_total") @db.Decimal(18, 2)
+  invoiceGstTotal            Decimal?               @map("invoice_gst_total") @db.Decimal(18, 2)
+  invoiceDiscountTotal       Decimal?               @map("invoice_discount_total") @db.Decimal(18, 2)
+  invoiceGrandTotal          Decimal?               @map("invoice_grand_total") @db.Decimal(18, 2)
+  createdByUserId            String                 @map("created_by_user_id") @db.Uuid
+  idempotencyKey             String?                @map("idempotency_key")
+  createdAt                  DateTime               @default(now()) @map("created_at")
+  updatedAt                  DateTime               @updatedAt @map("updated_at")
 
-  company      Company                  @relation(fields: [companyId], references: [id])
-  branch       Branch?                  @relation(fields: [branchId], references: [id])
-  supplier     Supplier?                @relation(fields: [supplierId], references: [id])
-  employee     Employee?                @relation(fields: [employeeId], references: [id])
-  createdBy    User                     @relation("PaymentRequestCreatedBy", fields: [createdByUserId], references: [id])
-  approvedBy   User?                    @relation("PaymentRequestApprovedBy", fields: [approvedByUserId], references: [id])
-  rejectedBy   User?                    @relation("PaymentRequestRejectedBy", fields: [rejectedByUserId], references: [id])
-  cancelledBy  User?                    @relation("PaymentRequestCancelledBy", fields: [cancelledByUserId], references: [id])
-  approvalRule PaymentApprovalRule?     @relation(fields: [approvalRuleId], references: [id])
+  company      Company                     @relation(fields: [companyId], references: [id])
+  branch       Branch?                     @relation(fields: [branchId], references: [id])
+  supplier     Supplier?                   @relation(fields: [supplierId], references: [id])
+  employee     Employee?                   @relation(fields: [employeeId], references: [id])
+  createdBy    User                        @relation("PaymentRequestCreatedBy", fields: [createdByUserId], references: [id])
+  approvedBy   User?                       @relation("PaymentRequestApprovedBy", fields: [approvedByUserId], references: [id])
+  rejectedBy   User?                       @relation("PaymentRequestRejectedBy", fields: [rejectedByUserId], references: [id])
+  cancelledBy  User?                       @relation("PaymentRequestCancelledBy", fields: [cancelledByUserId], references: [id])
+  approvalRule PaymentApprovalRule?        @relation(fields: [approvalRuleId], references: [id])
   approvals    PaymentRequestApproval[]
   payouts      PaymentRequestPayout[]
-  payee        Payee?                   @relation(fields: [payeeId], references: [id])
+  payee        Payee?                      @relation(fields: [payeeId], references: [id])
+  invoiceLines PaymentRequestInvoiceLine[]
 
   @@unique([companyId, requestNumber])
   @@unique([companyId, idempotencyKey])
@@ -8104,6 +8123,44 @@ model PaymentRequestApproval {
 // InternalTransfer (cash withdrawal) or a plain journal (investment). Every
 // payout has exactly one journal; its sourceModule is PAYMENT or
 // PAYMENT_REQUEST, both of which reverseJournal() refuses.
+/// One line of a payment request's GST invoice (2026-10-28). Amounts are
+/// recomputed on the server; the purpose gives the GL account to debit.
+model PaymentRequestInvoiceLine {
+  id                 String   @id @default(uuid()) @db.Uuid
+  paymentRequestId   String   @map("payment_request_id") @db.Uuid
+  lineNumber         Int      @map("line_number")
+  description        String
+  isForStock         Boolean  @default(false) @map("is_for_stock")
+  purposeId          String?  @map("purpose_id") @db.Uuid
+  // Debit account for this line (from the purpose; accountant may change it).
+  expenseAccountId   String?  @map("expense_account_id") @db.Uuid
+  productId          String?  @map("product_id") @db.Uuid
+  hsnCode            String?  @map("hsn_code")
+  mrp                Decimal? @db.Decimal(18, 2)
+  rate               Decimal  @db.Decimal(18, 2)
+  quantity           Decimal  @db.Decimal(18, 4)
+  discountPercentage Decimal? @map("discount_percentage") @db.Decimal(5, 2)
+  discountAmount     Decimal  @default(0) @map("discount_amount") @db.Decimal(18, 2)
+  taxableAmount      Decimal  @map("taxable_amount") @db.Decimal(18, 2)
+  gstRate            Decimal  @default(0) @map("gst_rate") @db.Decimal(5, 2)
+  cgstRate           Decimal  @default(0) @map("cgst_rate") @db.Decimal(5, 2)
+  cgstAmount         Decimal  @default(0) @map("cgst_amount") @db.Decimal(18, 2)
+  sgstRate           Decimal  @default(0) @map("sgst_rate") @db.Decimal(5, 2)
+  sgstAmount         Decimal  @default(0) @map("sgst_amount") @db.Decimal(18, 2)
+  igstRate           Decimal  @default(0) @map("igst_rate") @db.Decimal(5, 2)
+  igstAmount         Decimal  @default(0) @map("igst_amount") @db.Decimal(18, 2)
+  lineAmount         Decimal  @map("line_amount") @db.Decimal(18, 2)
+
+  paymentRequest PaymentRequest  @relation(fields: [paymentRequestId], references: [id], onDelete: Cascade)
+  purpose        ExpensePurpose? @relation(fields: [purposeId], references: [id])
+  expenseAccount ChartOfAccount? @relation("PaymentRequestInvoiceLineAccount", fields: [expenseAccountId], references: [id])
+  product        Product?        @relation("PaymentRequestInvoiceLineProduct", fields: [productId], references: [id])
+
+  @@unique([paymentRequestId, lineNumber])
+  @@index([purposeId])
+  @@map("payment_request_invoice_lines")
+}
+
 model PaymentRequestPayout {
   id                 String   @id @default(uuid()) @db.Uuid
   companyId          String   @map("company_id") @db.Uuid
@@ -8200,6 +8257,8 @@ model ExpensePurpose {
   parent         ExpensePurpose?  @relation("ExpensePurposeParent", fields: [parentId], references: [id])
   children       ExpensePurpose[] @relation("ExpensePurposeParent")
   expenseAccount ChartOfAccount?  @relation(fields: [expenseAccountId], references: [id])
+
+  invoiceLines PaymentRequestInvoiceLine[]
 
   @@unique([companyId, code])
   @@index([companyId, purposeGroup])
