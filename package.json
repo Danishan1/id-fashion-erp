@@ -21,7 +21,7 @@
     "@react-pdf/renderer": "^4.8.1",
     "@vladmandic/face-api": "1.7.15",
     "bcryptjs": "^3.0.3",
-    "bullmq": "^6.3.4",
+    "bullmq": "^6.4.2",
     "dotenv": "^17.4.2",
     "exceljs": "^4.4.0",
     "file-type": "^22.0.2",
