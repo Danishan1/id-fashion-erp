@@ -12,6 +12,7 @@ const db = vi.hoisted(() => ({
 const month = vi.hoisted(() => ({ computeEmployeesMonth: vi.fn() }));
 vi.mock("@/core/db/client", () => ({ prisma: db }));
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
+vi.mock("./salary-month-lock", () => ({ assertSalaryMonthOpen: vi.fn(), monthKeysBetween: vi.fn(() => []) }));
 vi.mock("./attendance-month.service", () => month);
 vi.mock("./hrms-scope", () => ({ assertHrmsEmployeeInScope: vi.fn(), getHrmsEmployeeScope: vi.fn().mockResolvedValue(null) }));
 

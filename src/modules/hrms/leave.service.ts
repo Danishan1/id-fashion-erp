@@ -11,6 +11,7 @@ import { LeaveBalanceCarryForwardRepository, LeaveRequestRepository, LeaveTypeRe
 import { addDays, dateKeyToDbDate, dateKeysBetween, isValidDateKey, leaveFraction, weekdayOf, type LeaveDuration } from "./attendance-calculator";
 import { effectiveWeekends, getAttendanceSettings } from "./attendance-settings.service";
 import { deductLeaveDay } from "./leave-balance.service";
+import { assertSalaryMonthOpen, monthKeysBetween } from "./salary-month-lock";
 import type { CreateLeaveRequestInput, CreateLeaveTypeInput, RejectLeaveRequestInput, UpdateLeaveTypeInput } from "./leave.schema";
 
 export interface ActorContext {
@@ -322,6 +323,7 @@ export async function approveLeaveRequest(actor: ActorContext, id: string) {
   // Re-asserted with the request's creator so the self-approval guard applies.
   await PermissionService.assert(actor.userId, "hrms_leave", "approve", { createdBy: existing.createdByUserId });
   await assertHrmsEmployeeInScope(actor.userId, "hrms_leave", existing.employeeId, { label: "Leave request", id });
+  await assertSalaryMonthOpen(actor.companyId, monthKeysBetween(existing.startDate, existing.endDate));
 
   let paid = 0;
   let unpaid = 0;

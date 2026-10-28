@@ -187,6 +187,7 @@ model Company {
   employeeSalarySettings              EmployeeSalarySetting[]
   salaryAttendanceAdjustments         SalaryAttendanceAdjustment[]
   leavePaymentChanges                 LeavePaymentChange[]
+  salaryRuns                          SalaryRun[]
   chartOfAccounts                     ChartOfAccount[]
   taxTypes                            TaxType[]
   taxRates                            TaxRate[]
@@ -1667,6 +1668,7 @@ model Employee {
   attendanceProfile            EmployeeAttendanceProfile?
   salarySetting                EmployeeSalarySetting?
   salaryAttendanceAdjustments  SalaryAttendanceAdjustment[]
+  salaryRunLines               SalaryRunLine[]
   facePhotos                   EmployeeFacePhoto[]
   attendanceSessions           AttendanceSession[]
   overtimeRecords              OvertimeRecord[]
@@ -4241,6 +4243,120 @@ model LeavePaymentChange {
   @@index([leaveDayId])
   @@index([companyId, employeeId])
   @@map("hrms_leave_payment_changes")
+}
+
+// Salary Management — Slice 3: Generate Salary (2026-10-28). One run per
+// company-month, DRAFT -> APPROVED -> FINALISED (Reopen back to DRAFT).
+// Approved / finalised months lock attendance, leave and salary adjustments.
+enum SalaryRunStatus {
+  DRAFT
+  APPROVED
+  FINALISED
+}
+
+model SalaryRun {
+  id                String          @id @default(uuid()) @db.Uuid
+  companyId         String          @map("company_id") @db.Uuid
+  year              Int
+  month             Int
+  status            SalaryRunStatus @default(DRAFT)
+  generatedByUserId String          @map("generated_by_user_id") @db.Uuid
+  generatedAt       DateTime        @default(now()) @map("generated_at")
+  approvedByUserId  String?         @map("approved_by_user_id") @db.Uuid
+  approvedAt        DateTime?       @map("approved_at")
+  finalisedByUserId String?         @map("finalised_by_user_id") @db.Uuid
+  finalisedAt       DateTime?       @map("finalised_at")
+  sentBackReason    String?         @map("sent_back_reason")
+  reopenReason      String?         @map("reopen_reason")
+  totalGross        Decimal         @default(0) @map("total_gross") @db.Decimal(18, 2)
+  totalDeductions   Decimal         @default(0) @map("total_deductions") @db.Decimal(18, 2)
+  totalNet          Decimal         @default(0) @map("total_net") @db.Decimal(18, 2)
+  createdAt         DateTime        @default(now()) @map("created_at")
+  updatedAt         DateTime        @updatedAt @map("updated_at")
+
+  company Company          @relation(fields: [companyId], references: [id])
+  lines   SalaryRunLine[]
+  events  SalaryRunEvent[]
+
+  @@unique([companyId, year, month])
+  @@map("hrms_salary_runs")
+}
+
+/// One employee's salary for the run. system* = from attendance; edited
+/// values (null = use system) are what the employer changed before approval.
+model SalaryRunLine {
+  id                  String   @id @default(uuid()) @db.Uuid
+  runId               String   @map("run_id") @db.Uuid
+  employeeId          String   @map("employee_id") @db.Uuid
+  employeeCode        String   @map("employee_code")
+  employeeName        String   @map("employee_name")
+  /// Frozen copy of the salary setup used (base, components, PF/ESIC, tax, OT rate, bank).
+  setupJson           Json     @map("setup_json")
+  calendarDays        Int      @map("calendar_days")
+  systemPresentDays   Decimal  @map("system_present_days") @db.Decimal(6, 2)
+  systemPaidLeaveDays Decimal  @map("system_paid_leave_days") @db.Decimal(6, 2)
+  autoPaidLeaveDays   Decimal  @default(0) @map("auto_paid_leave_days") @db.Decimal(6, 2)
+  unpaidLeaveDays     Decimal  @map("unpaid_leave_days") @db.Decimal(6, 2)
+  absentDays          Decimal  @map("absent_days") @db.Decimal(6, 2)
+  weekendDays         Decimal  @map("weekend_days") @db.Decimal(6, 2)
+  holidayDays         Decimal  @map("holiday_days") @db.Decimal(6, 2)
+  systemExtraDays     Decimal  @map("system_extra_days") @db.Decimal(6, 2)
+  overtimeHours       Decimal  @default(0) @map("overtime_hours") @db.Decimal(8, 2)
+  attendancePercent   Decimal  @default(0) @map("attendance_percent") @db.Decimal(6, 2)
+  hasNoPunches        Boolean  @default(false) @map("has_no_punches")
+  presentDays         Decimal? @map("present_days") @db.Decimal(6, 2)
+  paidLeaveDays       Decimal? @map("paid_leave_days") @db.Decimal(6, 2)
+  extraDays           Decimal? @map("extra_days") @db.Decimal(6, 2)
+  arrearsAmount       Decimal  @default(0) @map("arrears_amount") @db.Decimal(18, 2)
+  arrearsReason       String?  @map("arrears_reason")
+  /// Worked-out amounts (see salary-calculator.ts).
+  amountsJson         Json     @map("amounts_json")
+  grossAmount         Decimal  @map("gross_amount") @db.Decimal(18, 2)
+  totalDeductions     Decimal  @map("total_deductions") @db.Decimal(18, 2)
+  netAmount           Decimal  @map("net_amount") @db.Decimal(18, 2)
+  /// Leave balance spent at finalise for auto paid leave, so Reopen can give it back.
+  leaveSpendJson      Json?    @map("leave_spend_json")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  run      SalaryRun           @relation(fields: [runId], references: [id], onDelete: Cascade)
+  employee Employee            @relation(fields: [employeeId], references: [id])
+  edits    SalaryRunLineEdit[]
+
+  @@unique([runId, employeeId])
+  @@map("hrms_salary_run_lines")
+}
+
+/// Every pre-approval change to a line (present / paid leave / extra / arrears).
+model SalaryRunLineEdit {
+  id             String   @id @default(uuid()) @db.Uuid
+  lineId         String   @map("line_id") @db.Uuid
+  field          String
+  oldValue       String?  @map("old_value")
+  newValue       String?  @map("new_value")
+  reason         String
+  editedByUserId String   @map("edited_by_user_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  line SalaryRunLine @relation(fields: [lineId], references: [id], onDelete: Cascade)
+
+  @@index([lineId])
+  @@map("hrms_salary_run_line_edits")
+}
+
+/// Run lifecycle log (generate / regenerate / approve / send back / finalise / reopen).
+model SalaryRunEvent {
+  id        String   @id @default(uuid()) @db.Uuid
+  runId     String   @map("run_id") @db.Uuid
+  action    String
+  reason    String?
+  userId    String   @map("user_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  run SalaryRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId])
+  @@map("hrms_salary_run_events")
 }
 
 // ─────────────────────────────────────────────────────────────

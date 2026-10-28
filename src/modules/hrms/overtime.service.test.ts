@@ -7,6 +7,7 @@ vi.mock("./hrms-scope", () => ({
 }));
 
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
+vi.mock("./salary-month-lock", () => ({ assertSalaryMonthOpen: vi.fn(), monthKeysBetween: vi.fn(() => []) }));
 vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { assert: vi.fn() } }));
 vi.mock("@/core/notifications/NotificationService", () => ({ createNotification: vi.fn().mockResolvedValue({}) }));
 

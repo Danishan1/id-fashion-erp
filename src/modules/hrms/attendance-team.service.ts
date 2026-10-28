@@ -240,6 +240,9 @@ export async function finaliseSalaryMonth(actor: HrmsActor, year: number, month:
   if (keys[keys.length - 1] >= istDateKey(new Date())) throw new BusinessRuleError("VALIDATION_ERROR", "A month can be finalised only after it has ended.");
   const existing = await prisma.attendanceMonthClose.findUnique({ where: { companyId_year_month: { companyId: actor.companyId, year, month } } });
   if (existing) throw new BusinessRuleError("INVALID_STATE_TRANSITION", "This month is already finalised.");
+  // Salary Management (2026-10-28) runs its own month; never finalise the same month twice.
+  const salaryRun = await prisma.salaryRun.findUnique({ where: { companyId_year_month: { companyId: actor.companyId, year, month } }, select: { id: true } });
+  if (salaryRun) throw new BusinessRuleError("INVALID_STATE_TRANSITION", "This month already has a salary run in Salary Management → Generate Salary.");
   const pending = await countPendingRegularizations(actor.companyId, null);
   if (pending > 0) throw new BusinessRuleError("INVALID_STATE_TRANSITION", `${pending} regularization request(s) are still pending — approve or reject them first.`);
 

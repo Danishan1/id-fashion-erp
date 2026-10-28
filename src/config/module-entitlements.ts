@@ -90,6 +90,7 @@ export const ENTITLEMENT_PACKAGES = [
       "hrms_leave_types",
       "hrms_salary_setup",
       "hrms_salary_attendance",
+      "hrms_salary_generate",
     ],
   },
   {

@@ -7,6 +7,7 @@ import { createNotification } from "@/core/notifications/NotificationService";
 import { computeDayHours, computeOvertimeHours, dateKeyToDbDate, monthDateKeys, shiftHoursFromTimes } from "./attendance-calculator";
 import { getAttendanceSettings, type HrmsActor } from "./attendance-settings.service";
 import { assertHrmsEmployeeInScope, getHrmsEmployeeScope, hrmsEmployeeWhere } from "./hrms-scope";
+import { assertSalaryMonthOpen } from "./salary-month-lock";
 
 /**
  * Old OvertimeWorker: OT = worked (interval union of closed sessions) −
@@ -96,6 +97,7 @@ export async function decideOvertime(actor: HrmsActor, id: string, decision: "AP
   await assertHrmsEmployeeInScope(actor.userId, "hrms_attendance_overtime", record.employeeId, { label: "Overtime record", id });
   if (record.status === decision) return record; // idempotent repeat
   if (record.status !== "PENDING") throw new BusinessRuleError("INVALID_STATE_TRANSITION", `This overtime is already ${record.status.toLowerCase()}.`);
+  await assertSalaryMonthOpen(actor.companyId, [record.attendanceDate]);
   // The employee's own linked user can never approve their own overtime.
   if (decision === "APPROVED") {
     await PermissionService.assert(actor.userId, "hrms_attendance_overtime", "approve", { createdBy: record.employee.user?.id ?? undefined });

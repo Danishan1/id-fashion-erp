@@ -35,6 +35,7 @@ export const MODULES = [
   // module per screen, same as attendance/leave above.
   "hrms_salary_setup",
   "hrms_salary_attendance",
+  "hrms_salary_generate",
   "sampling",
   "buyer_enquiries",
   "sales_orders",
@@ -234,6 +235,9 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     hrms_leave_types: ["view", "create", "edit"],
     hrms_salary_setup: ["view", "create", "edit", "export"],
     hrms_salary_attendance: ["view", "view_all", "edit"],
+    // create = generate, edit = edit lines, approve/reject = maker-checker,
+    // post = finalise, cancel = reopen a finalised month.
+    hrms_salary_generate: ["view", "view_all", "create", "edit", "approve", "reject", "post", "cancel", "export"],
     sampling: ["view", "approve", "reject"],
     buyer_enquiries: ["view", "reject"],
     sales_orders: ["view", "approve", "export"],
@@ -471,6 +475,8 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
   },
   ACCOUNTS_MANAGER: {
     ...HRMS_TEAM_APPROVER,
+    // The checker for salary runs that MANAGEMENT generates (2026-10-28).
+    hrms_salary_generate: ["view", "view_all", "approve", "reject", "post", "export"],
     dashboard: ["view"],
     masters_core: ["view", "create", "edit"],
     masters_finance: ["view", "create", "edit"],

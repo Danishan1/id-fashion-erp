@@ -26,6 +26,7 @@ vi.mock("@/core/db/client", () => {
     leaveBalance: { findMany: vi.fn(), update: vi.fn() },
     autoLeaveHistory: { create: vi.fn() },
     attendanceMonthClose: { findUnique: vi.fn(), create: vi.fn() },
+    salaryRun: { findUnique: vi.fn().mockResolvedValue(null) },
     user: { findUnique: vi.fn() },
   };
   return { prisma: p };

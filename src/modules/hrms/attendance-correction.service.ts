@@ -18,6 +18,7 @@ import {
   weekdayOf,
 } from "./attendance-calculator";
 import { effectiveWeekends, getAttendanceSettings } from "./attendance-settings.service";
+import { assertSalaryMonthOpen } from "./salary-month-lock";
 import { getOrCreateDayRecord, syncDayRecord } from "./attendance-session.core";
 import { assertSessionTimesAllowed } from "./attendance-session.service";
 import { onAttendanceDayChanged } from "./attendance-events";
@@ -327,6 +328,7 @@ export async function approveAttendanceCorrectionRequest(actor: ActorContext, id
   await assertHrmsEmployeeInScope(actor.userId, "hrms_attendance_regularization", existing.employeeId, { label: "Attendance correction request", id });
   const ownUser = await findLinkedUserId(actor.companyId, existing.employeeId);
   if (ownUser?.id === actor.userId) await PermissionService.assert(actor.userId, "hrms_attendance_regularization", "approve", { createdBy: actor.userId });
+  await assertSalaryMonthOpen(actor.companyId, [existing.attendanceDate, existing.dateFrom, existing.dateTo].filter((d): d is Date => d instanceof Date));
 
   let changedDays: string[] = [];
   await prisma.$transaction(async (tx) => {

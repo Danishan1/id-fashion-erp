@@ -18,6 +18,7 @@ import { getAttendanceSettings, type HrmsActor } from "./attendance-settings.ser
 import { getOrCreateDayRecord, syncDayRecord } from "./attendance-session.core";
 import { onAttendanceDayChanged } from "./attendance-events";
 import { assertHrmsEmployeeInScope, getHrmsEmployeeScope, hrmsEmployeeWhere } from "./hrms-scope";
+import { assertSalaryMonthOpen } from "./salary-month-lock";
 
 type Tx = Prisma.TransactionClient;
 
@@ -62,6 +63,7 @@ export async function addManualSession(actor: HrmsActor, input: ManualSessionInp
   const employee = await prisma.employee.findFirst({ where: { id: input.employeeId, companyId: actor.companyId, deletedAt: null }, select: { id: true } });
   if (!employee) throw new BusinessRuleError("NOT_FOUND", "Employee not found.", { id: input.employeeId });
   await assertHrmsEmployeeInScope(actor.userId, "hrms_attendance_team", input.employeeId, { label: "Employee", id: input.employeeId });
+  await assertSalaryMonthOpen(actor.companyId, [input.attendanceDate]);
 
   const checkInAt = istTimeOnDate(input.attendanceDate, input.checkIn);
   let checkOutAt = input.checkOut ? istTimeOnDate(input.attendanceDate, input.checkOut) : null;
@@ -111,6 +113,7 @@ export async function correctSession(actor: HrmsActor, input: SessionCorrection)
   const session = await prisma.attendanceSession.findFirst({ where: { id: input.sessionId, companyId: actor.companyId }, include: { attendanceRecord: { select: { attendanceDate: true } } } });
   if (!session) throw new BusinessRuleError("NOT_FOUND", "Attendance session not found.", { id: input.sessionId });
   await assertHrmsEmployeeInScope(actor.userId, ["hrms_attendance_team", "hrms_attendance_photos"], session.employeeId, { label: "Attendance session", id: input.sessionId });
+  await assertSalaryMonthOpen(actor.companyId, [session.attendanceRecord.attendanceDate]);
   const checkInAt = new Date(input.checkInAt);
   const checkOutAt = input.checkOutAt ? new Date(input.checkOutAt) : null;
   if (Number.isNaN(checkInAt.getTime())) throw new BusinessRuleError("VALIDATION_ERROR", "Check-in time is not valid.");

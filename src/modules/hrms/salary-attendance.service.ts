@@ -5,6 +5,7 @@ import { dateKeyToDbDate, round2 } from "./attendance-calculator";
 import { computeEmployeesMonth, type AttendanceDay, type EmployeeMonth } from "./attendance-month.service";
 import { assertHrmsEmployeeInScope, getHrmsEmployeeScope } from "./hrms-scope";
 import { switchLeaveDayPayment } from "./leave-balance.service";
+import { assertSalaryMonthOpen } from "./salary-month-lock";
 import type { BulkAdjustInput, LeavePaymentSwitchInput } from "./salary-attendance.schema";
 
 /**
@@ -149,6 +150,7 @@ async function assertNotOwnRecord(actor: SalaryAttendanceActor, employeeId: stri
 
 export async function adjustSalaryDays(actor: SalaryAttendanceActor, employeeId: string, input: BulkAdjustInput) {
   await assertNotOwnRecord(actor, employeeId);
+  await assertSalaryMonthOpen(actor.companyId, input.dates);
   const year = Number(input.dates[0].slice(0, 4));
   const month = Number(input.dates[0].slice(5, 7));
   const m = await loadMonth(actor, employeeId, year, month);
@@ -202,6 +204,7 @@ export async function removeSalaryAdjustment(actor: SalaryAttendanceActor, adjus
   if (!adj) throw new BusinessRuleError("NOT_FOUND", "Adjustment not found.", { id: adjustmentId });
   await assertHrmsEmployeeInScope(actor.userId, MODULE, adj.employeeId, { label: "Adjustment", id: adjustmentId });
   await assertNotOwnRecord(actor, adj.employeeId);
+  await assertSalaryMonthOpen(actor.companyId, [adj.attendanceDate]);
   const res = await prisma.salaryAttendanceAdjustment.updateMany({
     where: { id: adj.id, removedAt: null },
     data: { removedAt: new Date(), removedByUserId: actor.userId, removeReason: reason || null },
@@ -220,6 +223,7 @@ export async function switchLeavePayment(actor: SalaryAttendanceActor, leaveDayI
   if (!day) throw new BusinessRuleError("NOT_FOUND", "Leave day not found.", { id: leaveDayId });
   await assertHrmsEmployeeInScope(actor.userId, MODULE, day.employeeId, { label: "Leave day", id: leaveDayId });
   await assertNotOwnRecord(actor, day.employeeId);
+  await assertSalaryMonthOpen(actor.companyId, [day.leaveDate]);
 
   const from = day.paymentType ?? "PAID";
   const moved = await prisma.$transaction(async (tx) => {

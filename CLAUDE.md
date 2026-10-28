@@ -8026,3 +8026,10 @@ Plan and decisions: `docs/hrms/SALARY_MANAGEMENT_PLAN.md` (reference-project for
 - Paid ↔ Unpaid leave goes through `switchLeaveDayPayment()` (leave-balance.service): it moves the real balance and writes `hrms_leave_payment_changes`. `used` is not touched.
 - Nobody can adjust or re-pay their own attendance (`User.employeeId` check). The dev Super Admin login is linked to employee Ravikant.
 - Service `src/modules/hrms/salary-attendance.service.ts`; screens `/salary/attendance` and `/salary/attendance/[employeeId]?month=YYYY-MM`; RBAC `hrms_salary_attendance`. Slice 3 still has to add the month lock to these writes.
+
+## HRMS Salary Management — Slice 3 Generate Salary (2026-10-28)
+- `SalaryRun` (one per company-month): DRAFT → APPROVED → FINALISED, with Send back and Reopen going back to DRAFT (reason required). Lines keep system figures and the edited Present / Paid Leave / Extra Days / Arrears separately (null = not edited); every edit is in `hrms_salary_run_line_edits`.
+- The formula is the reference project's, verbatim, in `src/modules/hrms/salary-calculator.ts` — don't change it without the user. Overtime is inside gross and gets prorated; with no punches in the month PF/ESIC/fixed deductions/installment are 0.
+- Approved/finalised months are locked by `assertSalaryMonthOpen()` (`salary-month-lock.ts`). It is called from salary adjustments, leave Paid/Unpaid, manual/corrected sessions, leave approval, regularization approval and overtime decisions — add it to any new attendance/leave write path. Test files for those services mock `./salary-month-lock`.
+- Finalise spends auto paid leave and stores the spend per line (`leave_spend_json`) so Reopen can refund it. The old Salary Sheet finalise and a salary run refuse the same month.
+- Service `src/modules/hrms/salary-run.service.ts`; screen `/salary/generate?month=YYYY-MM`; RBAC `hrms_salary_generate` (MANAGEMENT maker, ACCOUNTS_MANAGER checker).

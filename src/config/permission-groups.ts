@@ -42,6 +42,7 @@ const MODULE_LABELS: Record<string, string> = {
   hrms_leave_types: "Leave Types",
   hrms_salary_setup: "Salary Setup",
   hrms_salary_attendance: "Manage Attendance (salary)",
+  hrms_salary_generate: "Generate Salary",
   payment_requests: "Payment Requests",
   payment_request_settings: "Payment Approval Matrix",
 };

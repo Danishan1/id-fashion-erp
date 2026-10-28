@@ -40,6 +40,7 @@ describe("module entitlement catalog", () => {
       "hrms_leave_balances",
       "hrms_leave_types",
       "hrms_salary_attendance",
+      "hrms_salary_generate",
       "hrms_salary_setup",
     ]);
   });

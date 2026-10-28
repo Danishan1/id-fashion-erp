@@ -70,7 +70,19 @@ re-generate; approved rows still editable; history page re-runs the calculation;
   the month it came from; Unpaid→Paid takes remaining then carry-forward, refused if short). Nobody can adjust or
   re-pay their own attendance. Only working days (not holiday / weekly off / future / pre-joining / full leave) can be
   adjusted. Screens `/salary/attendance` and `/salary/attendance/[employeeId]?month=`. RBAC `hrms_salary_attendance`
-  (MANAGEMENT: view/view_all/edit). **Slice 3 must add the month-lock check to adjust / remove / leave switch.**
+  (MANAGEMENT: view/view_all/edit).
+- [x] **Slice 3 — Generate Salary** (2026-10-28). Tables `hrms_salary_runs` (one per company-month, DRAFT →
+  APPROVED → FINALISED; Send back / Reopen → DRAFT with a reason), `hrms_salary_run_lines` (frozen setup snapshot,
+  system day counts, edited Present / Paid Leave / Extra Days / Arrears kept separately, amounts), `..._line_edits`,
+  `..._events`; migration `20261028190000_hrms_salary_runs` (+ rollback). Formula: `salary-calculator.ts` (reference,
+  verbatim; PF/ESIC wage ceiling applied only when set). Days come from `computeEmployeesMonth(..., { applySalaryAdjustments: true })`
+  plus auto paid leave for zero-hour workdays (balance). Generate needs the month ended, no pending regularizations,
+  and the month not finalised on the old Salary Sheet (which now also refuses a month that has a run). Regenerate
+  keeps edits. Approve = maker-checker (generator or an editor can't approve; Super Admin exempt). Finalise spends the
+  auto paid leave (stored per line, so Reopen gives it back). Lock: `assertSalaryMonthOpen()` (salary-month-lock.ts)
+  refuses salary adjustments, leave Paid/Unpaid, manual/corrected sessions, leave approval, regularization approval
+  and overtime decisions in an APPROVED or FINALISED month. RBAC `hrms_salary_generate` (MANAGEMENT all; ACCOUNTS_MANAGER
+  view/approve/reject/post/export as checker). Advance installment = 0 until slice 5.
 
 ## RBAC
 New sub-modules: `hrms_salary_setup`, `hrms_salary_attendance`, `hrms_salary_generate` (view/create/edit/approve
