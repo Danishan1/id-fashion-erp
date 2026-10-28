@@ -183,6 +183,8 @@ model Company {
   leaveDays                           LeaveDay[]
   autoLeaveHistories                  AutoLeaveHistory[]
   attendanceMonthCloses               AttendanceMonthClose[]
+  salaryStatutorySettings             SalaryStatutorySetting[]
+  employeeSalarySettings              EmployeeSalarySetting[]
   chartOfAccounts                     ChartOfAccount[]
   taxTypes                            TaxType[]
   taxRates                            TaxRate[]
@@ -1661,6 +1663,7 @@ model Employee {
   leaveRequests                LeaveRequest[]
   leaveBalanceCarryForwards    LeaveBalanceCarryForward[]
   attendanceProfile            EmployeeAttendanceProfile?
+  salarySetting                EmployeeSalarySetting?
   facePhotos                   EmployeeFacePhoto[]
   attendanceSessions           AttendanceSession[]
   overtimeRecords              OvertimeRecord[]
@@ -4086,6 +4089,95 @@ model AttendanceMonthClose {
 
   @@unique([companyId, year, month])
   @@map("hrms_attendance_month_closes")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Salary Management — Slice 1: employee salary setup (2026-10-28,
+// docs/hrms/SALARY_MANAGEMENT_PLAN.md). Reference-project formula: base +
+// fixed allowances, PF on base, ESIC on base + allowances, flat monthly TDS /
+// surcharge / education cess / late-fee interest. The overtime rate stays on
+// EmployeeAttendanceProfile (not copied here); base salary is kept in sync
+// with Employee.fixedMonthlySalary on save.
+// ─────────────────────────────────────────────────────────────
+
+enum SalaryStatutoryKind {
+  PF
+  ESIC
+}
+
+enum SalaryComponentKind {
+  ALLOWANCE
+  DEDUCTION
+}
+
+/// PF / ESIC rate master. maxLimit = wage ceiling the employee % is applied on (null = no ceiling).
+model SalaryStatutorySetting {
+  id           String              @id @default(uuid()) @db.Uuid
+  companyId    String              @map("company_id") @db.Uuid
+  kind         SalaryStatutoryKind
+  title        String
+  employerRate Decimal             @map("employer_rate") @db.Decimal(5, 2)
+  employeeRate Decimal             @map("employee_rate") @db.Decimal(5, 2)
+  maxLimit     Decimal?            @map("max_limit") @db.Decimal(18, 2)
+  isActive     Boolean             @default(true) @map("is_active")
+  createdAt    DateTime            @default(now()) @map("created_at")
+  updatedAt    DateTime            @updatedAt @map("updated_at")
+
+  company            Company                 @relation(fields: [companyId], references: [id])
+  pfEmployeeSetups   EmployeeSalarySetting[] @relation("SalaryPfSetting")
+  esicEmployeeSetups EmployeeSalarySetting[] @relation("SalaryEsicSetting")
+
+  @@unique([companyId, kind, title])
+  @@map("hrms_salary_statutory_settings")
+}
+
+/// One salary setup per employee.
+model EmployeeSalarySetting {
+  id                String   @id @default(uuid()) @db.Uuid
+  companyId         String   @map("company_id") @db.Uuid
+  employeeId        String   @unique @map("employee_id") @db.Uuid
+  baseMonthlySalary Decimal  @map("base_monthly_salary") @db.Decimal(18, 2)
+  pfSettingId       String?  @map("pf_setting_id") @db.Uuid
+  esicSettingId     String?  @map("esic_setting_id") @db.Uuid
+  panNumber         String?  @map("pan_number")
+  uanNumber         String?  @map("uan_number")
+  esicNumber        String?  @map("esic_number")
+  tdsAmount         Decimal  @default(0) @map("tds_amount") @db.Decimal(18, 2)
+  surchargeAmount   Decimal  @default(0) @map("surcharge_amount") @db.Decimal(18, 2)
+  educationCess     Decimal  @default(0) @map("education_cess") @db.Decimal(18, 2)
+  lateFeeInterest   Decimal  @default(0) @map("late_fee_interest") @db.Decimal(18, 2)
+  bankName          String?  @map("bank_name")
+  bankAccountNumber String?  @map("bank_account_number")
+  bankIfsc          String?  @map("bank_ifsc")
+  bankBranch        String?  @map("bank_branch")
+  createdByUserId   String   @map("created_by_user_id") @db.Uuid
+  updatedByUserId   String   @map("updated_by_user_id") @db.Uuid
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  company     Company                   @relation(fields: [companyId], references: [id])
+  employee    Employee                  @relation(fields: [employeeId], references: [id])
+  pfSetting   SalaryStatutorySetting?   @relation("SalaryPfSetting", fields: [pfSettingId], references: [id])
+  esicSetting SalaryStatutorySetting?   @relation("SalaryEsicSetting", fields: [esicSettingId], references: [id])
+  components  EmployeeSalaryComponent[]
+
+  @@index([companyId])
+  @@map("hrms_employee_salary_settings")
+}
+
+/// Fixed monthly allowance / deduction line (e.g. HRA, Conveyance, LIC, RDS).
+model EmployeeSalaryComponent {
+  id        String              @id @default(uuid()) @db.Uuid
+  settingId String              @map("setting_id") @db.Uuid
+  kind      SalaryComponentKind
+  title     String
+  amount    Decimal             @db.Decimal(18, 2)
+  sortOrder Int                 @default(0) @map("sort_order")
+
+  setting EmployeeSalarySetting @relation(fields: [settingId], references: [id], onDelete: Cascade)
+
+  @@index([settingId])
+  @@map("hrms_employee_salary_components")
 }
 
 // ─────────────────────────────────────────────────────────────

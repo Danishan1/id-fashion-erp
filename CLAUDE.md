@@ -8012,3 +8012,11 @@ The role permission matrix now has one row per HRMS screen instead of two (`hrms
 - Modules: `hrms_attendance` (My Attendance / punch), `hrms_attendance_team`, `_records`, `_regularization`, `_outdoor`, `_overtime`, `_photos`, `_salary`, `_settings`, `hrms_leave` (Leave Requests), `hrms_leave_balances`, `hrms_leave_types`. Display names: `MODULE_LABELS` in `src/config/permission-groups.ts`.
 - Each API/page checks its screen's module; scope (`view_all`) uses the same module. APIs shared by several screens pass a module list to `hrmsRoute()` / `getHrmsEmployeeScope()` (any-of), e.g. the employee picker uses `ALL_ATTENDANCE_MODULES`. Own data (`?mine=true` overtime/outdoor rejections, `me/*`, punch) stays on `hrms_attendance`.
 - Migration `20261027100000_hrms_permission_submodules` copied every existing role grant and user override on the old module to each new sibling module, so nobody lost or gained access on deploy; admins trim per role. Rollback script in `prisma/rollback/`.
+
+## HRMS Salary Management — Slice 1 Employee Salary Setup (2026-10-28)
+Plan and decisions: `docs/hrms/SALARY_MANAGEMENT_PLAN.md` (reference-project formula; slices 2–6 still to build).
+- PF and ESIC masters share one table, `hrms_salary_statutory_settings` (`kind` PF|ESIC). `maxLimit` is the wage ceiling the employee % is applied on.
+- One `EmployeeSalarySetting` per employee plus `EmployeeSalaryComponent` lines (ALLOWANCE/DEDUCTION, fixed monthly). TDS, surcharge, education cess and late-fee interest are flat monthly amounts.
+- No second source of truth: saving writes base salary to `Employee.fixedMonthlySalary`, and the OT rate lives only on `EmployeeAttendanceProfile.overtimeRatePerHour`.
+- An inactive PF/ESIC setting can stay on an employee who already has it, but can't be newly picked.
+- RBAC module `hrms_salary_setup` (sidebar HRMS → Salary). Service `src/modules/hrms/salary-setup.service.ts`; screens `/salary/setup` and `/salary/setup/[employeeId]`.

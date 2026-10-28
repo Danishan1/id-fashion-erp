@@ -21,7 +21,8 @@ export type HrmsModule =
   | "hrms_attendance_settings"
   | "hrms_leave"
   | "hrms_leave_balances"
-  | "hrms_leave_types";
+  | "hrms_leave_types"
+  | "hrms_salary_setup";
 
 /** One screen module, or several when an API is shared by more than one screen. */
 export type HrmsModules = HrmsModule | readonly HrmsModule[];

@@ -1,0 +1,68 @@
+# HRMS → Salary Management — agreed plan (2026-10-28)
+
+Reference: `D:\office-data\Project\indradhar\internal_project` (indradhar.in/company/salary-management).
+Builds on the existing ERP attendance engine (`attendance-month.service.ts`) and leave balances
+(`leave-balance.service.ts`). Replaces the current single-page Salary Sheet (`/attendance/salary-sheet`).
+
+## Decisions (user, 2026-10-28)
+
+| # | Question | Decision |
+|---|---|---|
+| Q1 | Salary formula | **Reference formula** (allowances, PF, ESIC, TDS, surcharge, edu cess, late-fee interest, advance installment, arrears, extra days). Day counting comes from the ERP attendance engine (same 1 / 0.75 / 0.5 bands, sandwich rule, auto paid leave). |
+| Q2 | Employee salary setup | Needed (follows from Q1). |
+| Q3 | Advance salary | Employee requests; recovered in **installments**; routed as an **Expenditure** payment request (approval matrix + accountant payout). |
+| Q4 | Paid ↔ Unpaid leave | Changes the **real leave balance** (current month first, then carry-forward; refund on Unpaid). Every change recorded. |
+| Q5 | "Full day" bulk adjust | Counts the day as Present = 1 for salary only; attendance pages keep showing real hours. (Assumed — confirm if wrong.) |
+| Q6 | Approval | **Maker-checker**: whoever generated/edited the run can't approve it (Super Admin exempt). |
+| Q7 | Month lock | **Lock** attendance / adjustments / leave for a finalised month; admin can **Reopen** with a reason (recorded). |
+
+## Reference formula (to keep exactly)
+
+```
+perDay        = (base + allowances) / daysInMonth
+overtimePay   = overtimeRatePerHour × Σ approved overtime hours
+pf            = employeePF% × base            (cap: apply PFSetting.maxLimit — reference stores but ignores it; ask before enabling)
+esic          = employeeESIC% × (base + allowances)
+gross         = base + allowances + overtimePay
+earnedGross   = round(gross / daysInMonth × (present + paidLeave + extra))
+totalDeduct   = otherDeductions + pf + esic
+net           = max(0, round(earnedGross + arrears − (totalDeduct + installment + tds + surcharge + eduCess + lateFeeInterest)))
+```
+If an employee has no punches at all in the month: pf, esic, deductions and installment are 0.
+HRA / Conveyance shown prorated by present days on the slip.
+
+Reference bugs NOT carried over: advance never completes (isInstallment always false); arrears double-added on
+re-generate; approved rows still editable; history page re-runs the calculation; projectId lost on create.
+
+## Slices (build order)
+
+1. **Employee Salary Setup** — `EmployeeSalarySetting` (base, PF/ESIC setting, PAN, TDS, surcharge, edu cess,
+   late-fee interest, OT rate, bank details) + allowance / deduction lines; PF and ESIC masters.
+2. **Manage Attendance** — month view per employee with cards (Working Days, Worked Hours "Xh Ym / Yh Monthly
+   Total", Paid Weekends, Company Holidays). Bulk adjust (tick days → 9h / fixed hours / office time / full day)
+   stored in a separate `SalaryAttendanceAdjustment` table (old/new value, reason, who, when) — real sessions
+   never touched; removable. Paid ↔ Unpaid leave conversion with balance deduct/refund + history row.
+3. **Generate Salary** — `SalaryRun` (company × month, DRAFT → APPROVED → FINALISED) + `SalaryRunLine` per
+   employee holding system values and edited values (Present, Paid Leave, Extra Days, Arrears + reason) with an
+   edit history table. Attendance Summary (Name / Present / Holiday / Weekend / Paid Leave / Unpaid Leave /
+   Absent / Total / Attendance %). Pending regularizations block generation. Maker-checker approve. Finalise
+   spends auto paid leave, records advance installments, locks the month. Reopen with reason.
+4. **Salary History** — finalised runs only, read-only; Salary Slip PDF (reference layout) and Excel.
+5. **Advance Salary** — employee self-request (amount, reason, installments) → `PaymentRequest` type
+   `SALARY_ADVANCE` (Expenditure group) → approval matrix → accountant payout (Dr Salary Advance / Cr bank).
+   Installments deducted by the salary run; completed when fully recovered.
+6. **Salary payout** — the on-hold `payment-request-salary` skill: one SALARY payment request per finalised line.
+
+## Progress
+
+- [x] **Slice 1 — Employee Salary Setup** (2026-10-28). Tables `hrms_salary_statutory_settings` (PF/ESIC, one
+  table with `kind`), `hrms_employee_salary_settings`, `hrms_employee_salary_components`; migration
+  `20261028150000_hrms_salary_setup` (+ rollback). Service `src/modules/hrms/salary-setup.service.ts`; APIs
+  `/api/v1/salary/{pf-settings,esic-settings,employee-setups}`; page `/salary/setup` (Employees / PF / ESIC tabs)
+  and `/salary/setup/[employeeId]` (form + full-month estimate). Base salary is written through to
+  `Employee.fixedMonthlySalary`; OT rate is saved on `EmployeeAttendanceProfile`. RBAC module `hrms_salary_setup`
+  (MANAGEMENT: view/create/edit/export). PAN / bank account are masked in the audit log.
+
+## RBAC
+New sub-modules: `hrms_salary_setup`, `hrms_salary_attendance`, `hrms_salary_generate` (view/create/edit/approve
+/export), `hrms_salary_history`, `hrms_salary_advance`. Employees get own-advance create/view.
