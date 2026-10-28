@@ -232,12 +232,32 @@ const paySalaryAdvance: Handler = async (ctx, numbers) => {
   return { journalId };
 };
 
+/**
+ * Salary (HRMS, 2026-10-28): Dr Salaries Payable / Cr Cash-Bank. The expense and
+ * deductions were booked by the salary run's accrual journal when it was sent to Accounts.
+ */
+const paySalary: Handler = async (ctx, numbers) => {
+  const salaryPay = await ensureControlAccount(ctx.tx, ctx.actor.companyId, "SALARY-PAY", "Salaries Payable", "LIABILITY");
+  const journalId = await postAutoJournalInTx(
+    ctx,
+    numbers.journalNumber,
+    `Salary paid ${ctx.request.requestNumber} — ${ctx.request.payToName}`,
+    { module: "PAYMENT_REQUEST", recordId: ctx.request.id },
+    [
+      { accountId: salaryPay.id, debitAmount: ctx.amount, creditAmount: 0, description: `Salary — ${ctx.request.payToName}` },
+      { accountId: ctx.moneyAccountId, debitAmount: 0, creditAmount: ctx.amount, description: `Payment ${ctx.request.requestNumber}` },
+    ]
+  );
+  return { journalId };
+};
+
 /** Which document number a type's payout needs besides the journal number. */
 const PAYOUT_HANDLERS: Partial<Record<PaymentRequestTypeKey, { handler: Handler; documentType?: "PAYMENT" | "INTERNAL_TRANSFER" }>> = {
   SUPPLIER_ON_ACCOUNT: { handler: payToSupplierOnAccount, documentType: "PAYMENT" },
   CASH_WITHDRAWAL: { handler: payCashWithdrawal, documentType: "INTERNAL_TRANSFER" },
   INVESTMENT: { handler: payInvestment },
   SALARY_ADVANCE: { handler: paySalaryAdvance },
+  SALARY: { handler: paySalary },
 };
 
 /**

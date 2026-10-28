@@ -9,7 +9,9 @@ import { computeEmployeesMonth, type EmployeeMonth } from "./attendance-month.se
 import { getHrmsEmployeeScope } from "./hrms-scope";
 import { cascadeAvailability, ensureBalance } from "./leave-balance.service";
 import { summarizeSalaryMonth } from "./salary-attendance.service";
+import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingService";
 import { advanceInstallmentsFor } from "./salary-advance.service";
+import { salaryRequestsForRun, undoSendToAccountsInTx } from "./salary-payout.service";
 import { computeSalary, type SalaryAmounts, type SalarySetupSnapshot } from "./salary-calculator";
 import type { EditSalaryLineInput } from "./salary-run.schema";
 
@@ -28,6 +30,8 @@ const MODULE = "hrms_salary_generate" as const;
 export interface SalaryRunActor {
   companyId: string;
   userId: string;
+  /** Journals use the actor's branch number series, like every other posting. */
+  branchId?: string | null;
 }
 
 const num = (v: Prisma.Decimal | number | null | undefined) => (v === null || v === undefined ? 0 : Number(v));
@@ -211,8 +215,11 @@ export async function getSalaryRunView(actor: SalaryRunActor, year: number, mont
     run.events.forEach((e) => userIds.add(e.userId));
     run.lines.forEach((l) => l.edits.forEach((e) => userIds.add(e.editedByUserId)));
   }
+  if (run?.sentToAccountsByUserId) userIds.add(run.sentToAccountsByUserId);
   const users = userIds.size ? await prisma.user.findMany({ where: { id: { in: [...userIds] } }, select: { id: true, fullName: true } }) : [];
   const name = (id: string | null | undefined) => (id ? users.find((u) => u.id === id)?.fullName ?? "—" : null);
+  const requests = run?.sentToAccountsAt ? await salaryRequestsForRun(actor.companyId, run.lines.map((l) => l.id)) : [];
+  const requestByLine = new Map(requests.map((r) => [r.sourceRecordId, r]));
 
   return {
     year,
@@ -231,6 +238,10 @@ export async function getSalaryRunView(actor: SalaryRunActor, year: number, mont
       approvedBy: name(run.approvedByUserId),
       finalisedAt: run.finalisedAt,
       finalisedBy: name(run.finalisedByUserId),
+      sentToAccountsAt: run.sentToAccountsAt,
+      sentToAccountsBy: name(run.sentToAccountsByUserId),
+      accrualJournalId: run.accrualJournalId,
+      paidCount: requests.filter((r) => r.status === "PAID").length,
       totals: { gross: num(run.totalGross), deductions: num(run.totalDeductions), net: num(run.totalNet) },
       events: run.events.map((e) => ({ action: e.action, reason: e.reason, at: e.createdAt, by: name(e.userId) })),
       lines: run.lines.map((l) => {
@@ -265,6 +276,10 @@ export async function getSalaryRunView(actor: SalaryRunActor, year: number, mont
           totalDeductions: num(l.totalDeductions),
           netAmount: num(l.netAmount),
           edits: l.edits.map((e) => ({ field: e.field, oldValue: e.oldValue, newValue: e.newValue, reason: e.reason, at: e.createdAt, by: name(e.editedByUserId) })),
+          paymentRequest: (() => {
+            const r = requestByLine.get(l.id);
+            return r ? { id: r.id, requestNumber: r.requestNumber, status: r.status, paidAmount: num(r.paidAmount) } : null;
+          })(),
         };
       }),
     },
@@ -540,8 +555,11 @@ export async function reopenSalaryRun(actor: SalaryRunActor, runId: string, reas
   const run = await findRun(actor, runId);
   if (run.status !== "FINALISED") throw new BusinessRuleError("INVALID_STATE_TRANSITION", "Only a finalised salary can be reopened.");
   const lines = await prisma.salaryRunLine.findMany({ where: { runId }, select: { id: true, employeeId: true, leaveSpendJson: true } });
+  // Sent to Accounts: the accrual is reversed (number drawn outside the transaction, like every journal).
+  const reversalNumber = run.accrualJournalId ? await generateDocumentNumber({ companyId: actor.companyId, branchId: actor.branchId ?? null, documentType: "JOURNAL" }) : null;
   await prisma.$transaction(
     async (tx) => {
+      if (run.sentToAccountsAt) await undoSendToAccountsInTx(tx, actor, run, lines.map((l) => l.id), reversalNumber);
       await transition(runId, "FINALISED", { status: "DRAFT", approvedByUserId: null, approvedAt: null, finalisedByUserId: null, finalisedAt: null, reopenReason: reason }, tx);
       for (const line of lines) {
         const spent = (line.leaveSpendJson as unknown as { leaveTypeId: string; balanceId: string; fromRemaining: number; fromCarry: number }[] | null) ?? [];

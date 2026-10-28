@@ -181,7 +181,11 @@ export async function getPaymentRequestById(actor: ActorContext, id: string) {
  * type (e.g. HRMS Advance Salary) — the generic API never passes it, so such
  * a request can't be raised without its source record.
  */
-export async function createPaymentRequest(actor: ActorContext, input: CreatePaymentRequestInput, options: { fromSource?: boolean } = {}) {
+export async function createPaymentRequest(
+  actor: ActorContext,
+  input: CreatePaymentRequestInput,
+  options: { fromSource?: boolean; source?: { module: string; recordId: string } } = {}
+) {
   if (input.idempotencyKey) {
     const existing = await PaymentRequestRepository.findByIdempotencyKey(actor.companyId, input.idempotencyKey);
     if (existing) return withOverdue(existing);
@@ -218,6 +222,8 @@ export async function createPaymentRequest(actor: ActorContext, input: CreatePay
       ...common,
       createdByUserId: actor.userId,
       idempotencyKey: input.idempotencyKey ?? null,
+      sourceModule: options.source?.module ?? null,
+      sourceRecordId: options.source?.recordId ?? null,
     });
   } catch (err) {
     if (input.idempotencyKey && err && typeof err === "object" && "code" in err && err.code === "P2002") {

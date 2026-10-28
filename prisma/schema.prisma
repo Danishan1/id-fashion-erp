@@ -4257,24 +4257,28 @@ enum SalaryRunStatus {
 }
 
 model SalaryRun {
-  id                String          @id @default(uuid()) @db.Uuid
-  companyId         String          @map("company_id") @db.Uuid
-  year              Int
-  month             Int
-  status            SalaryRunStatus @default(DRAFT)
-  generatedByUserId String          @map("generated_by_user_id") @db.Uuid
-  generatedAt       DateTime        @default(now()) @map("generated_at")
-  approvedByUserId  String?         @map("approved_by_user_id") @db.Uuid
-  approvedAt        DateTime?       @map("approved_at")
-  finalisedByUserId String?         @map("finalised_by_user_id") @db.Uuid
-  finalisedAt       DateTime?       @map("finalised_at")
-  sentBackReason    String?         @map("sent_back_reason")
-  reopenReason      String?         @map("reopen_reason")
-  totalGross        Decimal         @default(0) @map("total_gross") @db.Decimal(18, 2)
-  totalDeductions   Decimal         @default(0) @map("total_deductions") @db.Decimal(18, 2)
-  totalNet          Decimal         @default(0) @map("total_net") @db.Decimal(18, 2)
-  createdAt         DateTime        @default(now()) @map("created_at")
-  updatedAt         DateTime        @updatedAt @map("updated_at")
+  id                     String          @id @default(uuid()) @db.Uuid
+  companyId              String          @map("company_id") @db.Uuid
+  year                   Int
+  month                  Int
+  status                 SalaryRunStatus @default(DRAFT)
+  generatedByUserId      String          @map("generated_by_user_id") @db.Uuid
+  generatedAt            DateTime        @default(now()) @map("generated_at")
+  approvedByUserId       String?         @map("approved_by_user_id") @db.Uuid
+  approvedAt             DateTime?       @map("approved_at")
+  finalisedByUserId      String?         @map("finalised_by_user_id") @db.Uuid
+  finalisedAt            DateTime?       @map("finalised_at")
+  sentBackReason         String?         @map("sent_back_reason")
+  reopenReason           String?         @map("reopen_reason")
+  /// Slice 6: "Send to Accounts" — accrual journal posted and one SALARY payment request per employee raised.
+  sentToAccountsAt       DateTime?       @map("sent_to_accounts_at")
+  sentToAccountsByUserId String?         @map("sent_to_accounts_by_user_id") @db.Uuid
+  accrualJournalId       String?         @map("accrual_journal_id") @db.Uuid
+  totalGross             Decimal         @default(0) @map("total_gross") @db.Decimal(18, 2)
+  totalDeductions        Decimal         @default(0) @map("total_deductions") @db.Decimal(18, 2)
+  totalNet               Decimal         @default(0) @map("total_net") @db.Decimal(18, 2)
+  createdAt              DateTime        @default(now()) @map("created_at")
+  updatedAt              DateTime        @updatedAt @map("updated_at")
 
   company Company          @relation(fields: [companyId], references: [id])
   lines   SalaryRunLine[]
@@ -10666,6 +10670,7 @@ enum RelatedModule {
   JOB_WORK_ORDER
   LEAVE_REQUEST
   ATTENDANCE_CORRECTION
+  SALARY_RUN
   EMPLOYEE_ADVANCE_SETTLEMENT
   // Expense module Phase 1 (2026-10-23): attachments (files + voice notes) on
   // an expense payment, an employee advance (imprest) and an internal transfer.

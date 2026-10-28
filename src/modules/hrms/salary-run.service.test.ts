@@ -26,6 +26,8 @@ vi.mock("./hrms-scope", () => ({ getHrmsEmployeeScope: vi.fn().mockResolvedValue
 vi.mock("./leave-balance.service", () => ({ ensureBalance: vi.fn(), cascadeAvailability: vi.fn(), switchLeaveDayPayment: vi.fn() }));
 const advances = vi.hoisted(() => ({ advanceInstallmentsFor: vi.fn() }));
 vi.mock("./salary-advance.service", () => advances);
+vi.mock("./salary-payout.service", () => ({ salaryRequestsForRun: vi.fn().mockResolvedValue([]), undoSendToAccountsInTx: vi.fn() }));
+vi.mock("@/core/numbering/DocumentNumberingService", () => ({ generateDocumentNumber: vi.fn().mockResolvedValue("JRN-1") }));
 
 const svc = await import("./salary-run.service");
 const { assertSalaryMonthOpen, monthKeysBetween } = await import("./salary-month-lock");

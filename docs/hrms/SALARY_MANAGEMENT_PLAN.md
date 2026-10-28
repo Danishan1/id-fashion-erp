@@ -98,8 +98,17 @@ re-generate; approved rows still editable; history page re-runs the calculation;
   generic hub/API refuse to create or edit it. Advance status is derived (payment request status + recoveries).
   Generate puts min(installment, left) per paid advance on the line; the reference rule still applies (no punches →
   no installment). Finalise writes recoveries; Reopen deletes them. RBAC `hrms_salary_advance` (self-service view/create;
-  MANAGEMENT view/view_all/create). **Not yet: the journal for the recovery (Dr salary payable / Cr SAL-ADV) — it
-  belongs to the salary payout (slice 6).**
+  MANAGEMENT view/view_all/create). The recovery is booked by slice 6's accrual journal (Cr SAL-ADV).
+- [x] **Slice 6 — Salary payout** (2026-10-28). "Send to Accounts" on a FINALISED run (`salary-payout.service.ts`,
+  `hrms_salary_generate.post`): one accrual journal per month (Dr EXP-SALARY balancing + Dr EXP-PF-ESIC employer /
+  Cr SALARY-PAY net, PF-PAY, ESIC-PAY, TDS-PAY incl. surcharge/cess/late fee, SAL-ADV installments, SAL-DED-PAY other
+  deductions; source `SALARY_RUN`) and one SALARY payment request per employee with net > 0 (direct to accountant,
+  due 7th of next month, `sourceModule SALARY_RUN_LINE`). SALARY payout: Dr SALARY-PAY / Cr Cash-Bank. Sending again
+  raises only missing requests; the idempotency key carries the send time so a reopened-and-resent run gets fresh
+  ones. Reopen refuses once any salary is paid; otherwise it cancels the requests and posts a reversing journal.
+  Migration `20261028230000_hrms_salary_send_to_accounts` (+ rollback; adds `RelatedModule.SALARY_RUN`).
+  Not built: a manual single salary request from the hub (the type is `raisedFrom` HRMS), bulk "Pay all" / NEFT file,
+  and hiding salary requests from payment-request users who lack salary permissions.
 
 ## RBAC
 New sub-modules: `hrms_salary_setup`, `hrms_salary_attendance`, `hrms_salary_generate` (view/create/edit/approve

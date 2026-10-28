@@ -62,3 +62,12 @@ accrual journal balanced, payout journal Dr SALARY-PAY, salary rows hidden witho
 - [ ] salary sheet button
 - [ ] permission-scoped visibility
 - [ ] tests + live run on a finalised month
+
+## Built (2026-10-28) — as HRMS Salary Management slice 6
+Source of truth is now the HRMS salary run (`hrms_salary_run_lines`), not `AttendanceMonthClose`. See
+`docs/hrms/SALARY_MANAGEMENT_PLAN.md` (Slice 6) and `src/modules/hrms/salary-payout.service.ts`.
+- [x] SALARY-PAY account + accrual (with PF/ESIC/TDS/advance/other-deduction payables)
+- [x] bulk create ("Send to Accounts" on Generate Salary)
+- [ ] single manual create (type is `raisedFrom` HRMS for now)
+- [ ] permission-scoped visibility of salary requests
+- [x] tests + live run on a finalised month
