@@ -40,8 +40,20 @@ inline "+ New payee" from a request needs `masters_finance.create` else hidden.
 GSTIN format + state extraction; duplicate name rejected; cross-company id → NOT_FOUND; deactivated payee
 not selectable for new requests but still shown on old ones; purpose default account must be valid expense account.
 
-## Done checklist
-- [ ] schema + migration
-- [ ] services/routes/UI tabs
-- [ ] combined pay-to picker component `PayToPicker.tsx`
-- [ ] tests green
+## Done checklist (built 2026-10-28)
+- [x] schema + migration `20261028110000_payees_and_expense_purposes` (+ rollback; CHECK not-own-parent);
+      `payment_requests.payee_id`
+- [x] `src/modules/finance-config/payee-purpose.service.ts` + routes `/api/v1/payees`, `/api/v1/expense-purposes`,
+      `/api/v1/expense-purposes/expense-accounts`; Finance Config tabs "Payees" and "Purposes"
+- [x] pay-to on typed-name request types: pick a Payee (searchable) or type a name (inline in `PaymentRequestForm`,
+      not a separate `PayToPicker.tsx` — only one form uses it so far; extract when the second one needs it)
+- [x] tests: payee-purpose.service.test.ts + payee pick on a request; full suite 3672 green; live check
+
+As built:
+- Codes are typed (lookup-manager suggests one from the name) — no master-code counter.
+- GSTIN format checked; its first 2 digits become the state. Duplicate name (any case) refused.
+- Payee/Purpose lists readable with masters_finance.view OR payment_requests.view (raisers need the pickers);
+  create/edit stay masters_finance.
+- "+ New payee" inline from a request is not built yet (create it in Masters first).
+- Purpose: one level of sub-category, same group as parent; default expense account validated
+  (active, EXPENSE, not COGS).

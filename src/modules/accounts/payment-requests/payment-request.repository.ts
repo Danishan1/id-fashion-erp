@@ -4,6 +4,7 @@ import type { PaymentRequestStatus, Prisma } from "@prisma/client";
 const LIST_INCLUDE = {
   supplier: { select: { id: true, code: true, name: true } },
   employee: { select: { id: true, employeeCode: true, fullName: true } },
+  payee: { select: { id: true, code: true, name: true, gstin: true, stateCode: true } },
   createdBy: { select: { id: true, fullName: true } },
 } satisfies Prisma.PaymentRequestInclude;
 
@@ -79,6 +80,9 @@ export const PaymentRequestRepository = {
 
   findActiveSupplier: (companyId: string, id: string) =>
     prisma.supplier.findFirst({ where: { id, companyId, deletedAt: null, isActive: true }, select: { id: true, name: true } }),
+
+  findActivePayee: (companyId: string, id: string) =>
+    prisma.payee.findFirst({ where: { id, companyId, isActive: true }, select: { id: true, name: true } }),
 
   findActiveEmployee: (companyId: string, id: string) =>
     prisma.employee.findFirst({ where: { id, companyId, isActive: true, deletedAt: null }, select: { id: true, fullName: true } }),

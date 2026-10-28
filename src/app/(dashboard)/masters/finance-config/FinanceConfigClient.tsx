@@ -3,9 +3,16 @@
 import { useState } from "react";
 import { SimpleLookupManager } from "@/components/ui/SimpleLookupManager";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
-import { FINANCIAL_ACCOUNT_KINDS, FINANCIAL_ACCOUNT_KIND_LABELS } from "@/modules/finance-config/finance-config.schema";
+import {
+  EXPENSE_PURPOSE_GROUPS,
+  EXPENSE_PURPOSE_GROUP_LABELS,
+  FINANCIAL_ACCOUNT_KINDS,
+  FINANCIAL_ACCOUNT_KIND_LABELS,
+  PAYEE_TYPES,
+} from "@/modules/finance-config/finance-config.schema";
+import { GST_STATE_CODES } from "@/lib/gst";
 
-const TABS = ["Payment Types", "Bank Accounts", "Invoice Series"] as const;
+const TABS = ["Payment Types", "Bank Accounts", "Payees", "Purposes", "Invoice Series"] as const;
 type Tab = (typeof TABS)[number];
 
 export function FinanceConfigClient() {
@@ -93,6 +100,76 @@ export function FinanceConfigClient() {
             { key: "accountKind", header: "Kind" },
             { key: "bankName", header: "Bank" },
             { key: "accountNumber", header: "Account No." },
+          ]}
+        />
+      )}
+      {tab === "Payees" && (
+        <SimpleLookupManager
+          fetchUrl="/api/v1/payees"
+          entityLabel="Payee"
+          fields={[
+            { key: "code", label: "Code", required: true },
+            { key: "name", label: "Name", required: true, placeholder: "e.g. Sharma Electricals" },
+            {
+              key: "payeeType",
+              label: "Type",
+              type: "select",
+              required: true,
+              options: PAYEE_TYPES.map((t) => ({ value: t, label: t.charAt(0) + t.slice(1).toLowerCase() })),
+            },
+            { key: "gstin", label: "GSTIN (state is taken from it)" },
+            {
+              key: "stateCode",
+              label: "GST State (if no GSTIN)",
+              type: "select",
+              options: Object.entries(GST_STATE_CODES).map(([code, name]) => ({ value: code, label: `${code} — ${name}` })),
+            },
+            { key: "pan", label: "PAN" },
+            { key: "phone", label: "Phone", type: "tel" },
+            { key: "email", label: "Email" },
+            { key: "address", label: "Address" },
+            { key: "bankAccountName", label: "Bank A/C Name" },
+            { key: "bankAccountNo", label: "Bank A/C No." },
+            { key: "ifscCode", label: "IFSC" },
+            { key: "upiId", label: "UPI ID" },
+          ]}
+          displayColumns={[
+            { key: "code", header: "Code" },
+            { key: "name", header: "Name" },
+            { key: "payeeType", header: "Type" },
+            { key: "gstin", header: "GSTIN" },
+            { key: "phone", header: "Phone" },
+          ]}
+        />
+      )}
+      {tab === "Purposes" && (
+        <SimpleLookupManager
+          fetchUrl="/api/v1/expense-purposes"
+          entityLabel="Purpose"
+          fields={[
+            { key: "code", label: "Code", required: true },
+            { key: "name", label: "Purpose Name", required: true, placeholder: "e.g. Office Rent" },
+            {
+              key: "purposeGroup",
+              label: "Used for",
+              type: "select",
+              required: true,
+              options: EXPENSE_PURPOSE_GROUPS.map((g) => ({ value: g, label: EXPENSE_PURPOSE_GROUP_LABELS[g] })),
+            },
+            { key: "parentId", label: "Sub-category of (optional)", type: "select", optionsUrl: "/api/v1/expense-purposes" },
+            {
+              key: "expenseAccountId",
+              label: "Default expense account (expenditure / voucher)",
+              type: "select",
+              optionsUrl: "/api/v1/expense-purposes/expense-accounts",
+            },
+          ]}
+          displayColumns={[
+            { key: "code", header: "Code" },
+            { key: "name", header: "Purpose" },
+            { key: "purposeGroup", header: "Used for" },
+            { key: "parentId", header: "Sub-category of" },
+            { key: "expenseAccountId", header: "Expense account" },
           ]}
         />
       )}

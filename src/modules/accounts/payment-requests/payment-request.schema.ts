@@ -16,6 +16,8 @@ const commonFields = {
   payToName: z.string().trim().max(200).optional().or(z.literal("")),
   supplierId: optionalUuid,
   employeeId: optionalUuid,
+  // A Payee-master pay-to for types that take a typed name (optional; a typed name still works).
+  payeeId: optionalUuid,
   // Optional; defaults to today on the server.
   paymentDueDate: isoDate.optional().or(z.literal("")),
   modeOfTransfer: z.enum(PAYMENT_MODES_OF_TRANSFER).optional().or(z.literal("")),

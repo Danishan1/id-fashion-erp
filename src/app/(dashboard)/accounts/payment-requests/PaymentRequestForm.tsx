@@ -24,6 +24,7 @@ export interface EditablePaymentRequest {
   payToName: string;
   supplierId: string | null;
   employeeId: string | null;
+  payeeId?: string | null;
   paymentDueDate: string;
   modeOfTransfer: string | null;
   remark: string | null;
@@ -49,7 +50,8 @@ export function PaymentRequestForm({ requestType, initial, onSuccess, onCancel }
   const [options, setOptions] = useState<Option[]>([]);
   const [amount, setAmount] = useState(initial?.amount ?? "");
   const [payToName, setPayToName] = useState(initial?.payToName ?? "");
-  const [payToId, setPayToId] = useState(initial?.supplierId ?? initial?.employeeId ?? "");
+  // Supplier / employee id, or (typed-name types) an optional Payee-master id.
+  const [payToId, setPayToId] = useState(initial?.supplierId ?? initial?.employeeId ?? initial?.payeeId ?? "");
   const [paymentDueDate, setPaymentDueDate] = useState(initial?.paymentDueDate.slice(0, 10) ?? todayIsoDate());
   const [modeOfTransfer, setModeOfTransfer] = useState(initial?.modeOfTransfer ?? "");
   const [remark, setRemark] = useState(initial?.remark ?? "");
@@ -59,18 +61,22 @@ export function PaymentRequestForm({ requestType, initial, onSuccess, onCancel }
   const [idempotencyKey] = useState(() => crypto.randomUUID());
 
   useEffect(() => {
-    if (def.payTo === "TEXT") return;
-    const url = def.payTo === "SUPPLIER" ? "/api/v1/suppliers?pageSize=500" : "/api/v1/employees?pageSize=500";
+    const url =
+      def.payTo === "SUPPLIER"
+        ? "/api/v1/suppliers?pageSize=500"
+        : def.payTo === "EMPLOYEE"
+          ? "/api/v1/employees?pageSize=500"
+          : "/api/v1/payees";
     fetch(url)
       .then((res) => (res.ok ? res.json() : { data: [] }))
       .then((body) =>
         setOptions(
           (body.data ?? [])
             .filter((r: { isActive?: boolean }) => r.isActive !== false)
-            .map((r: { id: string; name?: string; fullName?: string; code?: string; employeeCode?: string }) => ({
+            .map((r: { id: string; name?: string; fullName?: string; code?: string; employeeCode?: string; gstin?: string | null }) => ({
               id: r.id,
               label: r.name ?? r.fullName ?? "",
-              sublabel: r.code ?? r.employeeCode,
+              sublabel: r.gstin ? `${r.code} · GSTIN ${r.gstin}` : (r.code ?? r.employeeCode),
             }))
         )
       )
@@ -86,9 +92,10 @@ export function PaymentRequestForm({ requestType, initial, onSuccess, onCancel }
     const payload = {
       ...(isEdit ? {} : { requestType, idempotencyKey }),
       amount: Number(amount),
-      payToName: def.payTo === "TEXT" ? payToName : undefined,
+      payToName: def.payTo === "TEXT" && !payToId ? payToName : undefined,
       supplierId: def.payTo === "SUPPLIER" ? payToId : undefined,
       employeeId: def.payTo === "EMPLOYEE" ? payToId : undefined,
+      payeeId: def.payTo === "TEXT" ? payToId : undefined,
       paymentDueDate,
       modeOfTransfer: def.showModeOfTransfer ? modeOfTransfer : undefined,
       remark,
@@ -143,14 +150,27 @@ export function PaymentRequestForm({ requestType, initial, onSuccess, onCancel }
 
         <FormField label={def.payToLabel} htmlFor="payTo" required>
           {def.payTo === "TEXT" ? (
-            <input
-              id="payTo"
-              required
-              maxLength={200}
-              value={payToName}
-              onChange={(e) => setPayToName(e.target.value)}
-              className={textInputClass()}
-            />
+            <div className="space-y-2">
+              <SearchableSelect
+                id="payToPayee"
+                options={options}
+                value={payToId}
+                onChange={setPayToId}
+                placeholder="Pick from Payees…"
+                emptyOptionLabel="— Not in Payees: type the name below —"
+              />
+              {!payToId && (
+                <input
+                  id="payTo"
+                  required
+                  maxLength={200}
+                  placeholder="Or type the name"
+                  value={payToName}
+                  onChange={(e) => setPayToName(e.target.value)}
+                  className={textInputClass()}
+                />
+              )}
+            </div>
           ) : (
             <SearchableSelect
               id="payTo"

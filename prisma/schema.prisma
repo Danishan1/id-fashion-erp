@@ -274,6 +274,8 @@ model Company {
   productionOrderColorFabrics ProductionOrderColorFabric[]
   stockColorBalances          StockColorBalance[]
   paymentRequestPayouts       PaymentRequestPayout[]
+  payees                      Payee[]
+  expensePurposes             ExpensePurpose[]
 
   @@map("companies")
 }
@@ -6942,6 +6944,7 @@ model ChartOfAccount {
   employeeAdvanceSettlements    EmployeeAdvanceSettlement[]
   purchaseInvoiceDirectLines    PurchaseInvoiceItem[]
   financialAccount              BankAccount?                @relation("BankAccountLedger")
+  expensePurposes               ExpensePurpose[]
 
   @@unique([companyId, code])
   @@map("chart_of_accounts")
@@ -7969,6 +7972,8 @@ model PaymentRequest {
   payToName               String                 @map("pay_to_name")
   supplierId              String?                @map("supplier_id") @db.Uuid
   employeeId              String?                @map("employee_id") @db.Uuid
+  // A non-supplier pay-to from the Payee master (2026-10-28).
+  payeeId                 String?                @map("payee_id") @db.Uuid
   paymentDueDate          DateTime               @map("payment_due_date") @db.Date
   modeOfTransfer          PaymentModeOfTransfer? @map("mode_of_transfer")
   remark                  String?
@@ -8014,6 +8019,7 @@ model PaymentRequest {
   approvalRule PaymentApprovalRule?     @relation(fields: [approvalRuleId], references: [id])
   approvals    PaymentRequestApproval[]
   payouts      PaymentRequestPayout[]
+  payee        Payee?                   @relation(fields: [payeeId], references: [id])
 
   @@unique([companyId, requestNumber])
   @@unique([companyId, idempotencyKey])
@@ -8127,6 +8133,77 @@ model PaymentRequestPayout {
   @@unique([companyId, idempotencyKey])
   @@index([paymentRequestId])
   @@map("payment_request_payouts")
+}
+
+// Payee master (2026-10-28) — people and businesses the company pays who are
+// not registered suppliers (landlord, consultant, investment party...). Holds
+// the GSTIN so a tax-invoice request can fetch it from the pay-to.
+enum PayeeType {
+  INDIVIDUAL
+  BUSINESS
+  GOVERNMENT
+  OTHER
+}
+
+model Payee {
+  id              String    @id @default(uuid()) @db.Uuid
+  companyId       String    @map("company_id") @db.Uuid
+  code            String
+  name            String
+  payeeType       PayeeType @default(INDIVIDUAL) @map("payee_type")
+  gstin           String?
+  // GST state code (2 digits): from the GSTIN when there is one, else entered.
+  stateCode       String?   @map("state_code") @db.VarChar(2)
+  pan             String?
+  phone           String?
+  email           String?
+  address         String?
+  bankAccountName String?   @map("bank_account_name")
+  bankAccountNo   String?   @map("bank_account_no")
+  ifscCode        String?   @map("ifsc_code")
+  upiId           String?   @map("upi_id")
+  isActive        Boolean   @default(true) @map("is_active")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  company         Company          @relation(fields: [companyId], references: [id])
+  paymentRequests PaymentRequest[]
+
+  @@unique([companyId, code])
+  @@map("payees")
+}
+
+// Purpose master (2026-10-28) — what money is paid for (vouchers, tax invoice
+// lines, loans, investments). An expenditure/voucher purpose carries a default
+// expense account, so a requester never has to know the Chart of Accounts.
+enum ExpensePurposeGroup {
+  EXPENDITURE
+  VOUCHER
+  LOAN
+  INVESTMENT
+}
+
+model ExpensePurpose {
+  id               String              @id @default(uuid()) @db.Uuid
+  companyId        String              @map("company_id") @db.Uuid
+  code             String
+  name             String
+  purposeGroup     ExpensePurposeGroup @map("purpose_group")
+  // Sub-category: a purpose may sit under another purpose of the same group.
+  parentId         String?             @map("parent_id") @db.Uuid
+  expenseAccountId String?             @map("expense_account_id") @db.Uuid
+  isActive         Boolean             @default(true) @map("is_active")
+  createdAt        DateTime            @default(now()) @map("created_at")
+  updatedAt        DateTime            @updatedAt @map("updated_at")
+
+  company        Company          @relation(fields: [companyId], references: [id])
+  parent         ExpensePurpose?  @relation("ExpensePurposeParent", fields: [parentId], references: [id])
+  children       ExpensePurpose[] @relation("ExpensePurposeParent")
+  expenseAccount ChartOfAccount?  @relation(fields: [expenseAccountId], references: [id])
+
+  @@unique([companyId, code])
+  @@index([companyId, purposeGroup])
+  @@map("expense_purposes")
 }
 
 // ─────────────────────────────────────────────────────────────

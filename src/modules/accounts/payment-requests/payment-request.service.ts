@@ -68,17 +68,23 @@ async function resolvePayTo(companyId: string, def: PaymentRequestTypeDef, input
     if (!input.supplierId) throw new BusinessRuleError("VALIDATION_ERROR", `${def.payToLabel} is required.`, { field: "supplierId" });
     const supplier = await PaymentRequestRepository.findActiveSupplier(companyId, input.supplierId);
     if (!supplier) throw new BusinessRuleError("NOT_FOUND", "Supplier not found or inactive.", { id: input.supplierId });
-    return { payToName: supplier.name, supplierId: supplier.id, employeeId: null };
+    return { payToName: supplier.name, supplierId: supplier.id, employeeId: null, payeeId: null };
   }
   if (def.payTo === "EMPLOYEE") {
     if (!input.employeeId) throw new BusinessRuleError("VALIDATION_ERROR", `${def.payToLabel} is required.`, { field: "employeeId" });
     const employee = await PaymentRequestRepository.findActiveEmployee(companyId, input.employeeId);
     if (!employee) throw new BusinessRuleError("NOT_FOUND", "Employee not found or inactive.", { id: input.employeeId });
-    return { payToName: employee.fullName, supplierId: null, employeeId: employee.id };
+    return { payToName: employee.fullName, supplierId: null, employeeId: employee.id, payeeId: null };
+  }
+  // A typed name, or a pick from the Payee master (then the payee's own name is used).
+  if (input.payeeId) {
+    const payee = await PaymentRequestRepository.findActivePayee(companyId, input.payeeId);
+    if (!payee) throw new BusinessRuleError("NOT_FOUND", "Payee not found or inactive.", { id: input.payeeId });
+    return { payToName: payee.name, supplierId: null, employeeId: null, payeeId: payee.id };
   }
   const name = input.payToName?.trim();
   if (!name) throw new BusinessRuleError("VALIDATION_ERROR", `${def.payToLabel} is required.`, { field: "payToName" });
-  return { payToName: name, supplierId: null, employeeId: null };
+  return { payToName: name, supplierId: null, employeeId: null, payeeId: null };
 }
 
 /** `currentDueDate`: on edit, an omitted due date keeps the existing one instead of resetting to today. */

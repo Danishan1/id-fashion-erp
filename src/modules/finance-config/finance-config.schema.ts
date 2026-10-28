@@ -69,3 +69,52 @@ export const bankAccountSchema = z
     }
   });
 export type BankAccountInput = z.infer<typeof bankAccountSchema>;
+
+// ── Payees and Purposes (Payments Request, 2026-10-28) ─────────────────────
+
+export const PAYEE_TYPES = ["INDIVIDUAL", "BUSINESS", "GOVERNMENT", "OTHER"] as const;
+export const EXPENSE_PURPOSE_GROUPS = ["EXPENDITURE", "VOUCHER", "LOAN", "INVESTMENT"] as const;
+export const EXPENSE_PURPOSE_GROUP_LABELS: Record<(typeof EXPENSE_PURPOSE_GROUPS)[number], string> = {
+  EXPENDITURE: "Expenditure / Tax invoice",
+  VOUCHER: "Voucher (other than bill)",
+  LOAN: "Loan",
+  INVESTMENT: "Investment",
+};
+
+const optionalText = (max: number) => z.string().trim().max(max).optional().or(z.literal(""));
+
+export const payeeSchema = z.object({
+  code: z.string().trim().min(1, "Code is required").max(30),
+  name: z.string().trim().min(1, "Name is required").max(200),
+  payeeType: z.enum(PAYEE_TYPES).default("INDIVIDUAL"),
+  // Format is checked in the service (it also derives the GST state from it).
+  gstin: optionalText(15),
+  stateCode: optionalText(2),
+  pan: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .regex(/^[A-Z]{5}[0-9]{4}[A-Z]$/, "PAN looks wrong (e.g. ABCDE1234F)")
+    .optional()
+    .or(z.literal("")),
+  phone: optionalText(30),
+  email: z.string().trim().email("Email looks wrong").optional().or(z.literal("")),
+  address: optionalText(500),
+  bankAccountName: optionalText(200),
+  bankAccountNo: optionalText(50),
+  ifscCode: optionalText(20),
+  upiId: optionalText(100),
+  // Sent only by the Active toggle — a plain edit keeps the current value.
+  isActive: z.boolean().optional(),
+});
+export type PayeeInput = z.infer<typeof payeeSchema>;
+
+export const expensePurposeSchema = z.object({
+  code: z.string().trim().min(1, "Code is required").max(30),
+  name: z.string().trim().min(1, "Name is required").max(200),
+  purposeGroup: z.enum(EXPENSE_PURPOSE_GROUPS),
+  parentId: z.string().uuid().optional().or(z.literal("")),
+  expenseAccountId: z.string().uuid().optional().or(z.literal("")),
+  isActive: z.boolean().optional(),
+});
+export type ExpensePurposeInput = z.infer<typeof expensePurposeSchema>;

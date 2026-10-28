@@ -28,6 +28,7 @@ vi.mock("./payment-request.repository", () => ({
     findBaseCurrencyCode: vi.fn(),
     findActiveSupplier: vi.fn(),
     findActiveEmployee: vi.fn(),
+    findActivePayee: vi.fn(),
   },
 }));
 
@@ -155,6 +156,17 @@ describe("createPaymentRequest", () => {
     const result = await createPaymentRequest(actor, { requestType: "CASH_WITHDRAWAL", amount: 1000, payToName: "x", idempotencyKey: "k1" });
     expect(result.id).toBe("pr-1");
     expect(PaymentRequestRepository.create).not.toHaveBeenCalled();
+  });
+
+  it("a typed-name type can pick a Payee: its name is used, an inactive/foreign payee is refused", async () => {
+    vi.mocked(PaymentRequestRepository.findActivePayee).mockResolvedValueOnce({ id: "py-1", name: "Mutual Fund House" } as never);
+    await createPaymentRequest(actor, { requestType: "INVESTMENT", amount: 100, payeeId: "py-1", payToName: "ignored" });
+    expect(vi.mocked(PaymentRequestRepository.create).mock.calls[0][0]).toMatchObject({ payeeId: "py-1", payToName: "Mutual Fund House" });
+
+    vi.mocked(PaymentRequestRepository.findActivePayee).mockResolvedValueOnce(null);
+    await expect(createPaymentRequest(actor, { requestType: "INVESTMENT", amount: 100, payeeId: "py-x" })).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
   });
 
   it("drops mode of transfer for a type that does not use it", async () => {
