@@ -89,6 +89,17 @@ re-generate; approved rows still editable; history page re-runs the calculation;
   Every self-service role gets `view` (own slips). Slip PDF `salary-slip-pdf.tsx` (reference layout; amount in words
   `src/lib/amount-in-words.ts`, Indian lakh/crore; bank account masked), Excel `salary-report-xlsx.ts` (company-wide
   only). Screen `/salary/history`; APIs `/api/v1/salary/history`, `.../slips/[lineId]/pdf`, `.../runs/[runId]/export`.
+- [x] **Slice 5 — Advance Salary** (2026-10-28). Tables `hrms_salary_advances` (one per request, linked 1:1 to a
+  payment request) and `hrms_salary_advance_recoveries` (one per advance per finalised run line); run lines gained
+  `installment_amount` / `installment_json`; new `PaymentRequestType.SALARY_ADVANCE`; migration
+  `20261028210000_hrms_salary_advances` (+ rollback). Only the employee raises it, for their own linked employee;
+  one open request at a time. It becomes a SALARY_ADVANCE payment request (group EXPENDITURE, approval matrix, paid in
+  full: Dr SAL-ADV "Salary Advance to Employees" / Cr Cash-Bank). The type has `raisedFrom` in the registry, so the
+  generic hub/API refuse to create or edit it. Advance status is derived (payment request status + recoveries).
+  Generate puts min(installment, left) per paid advance on the line; the reference rule still applies (no punches →
+  no installment). Finalise writes recoveries; Reopen deletes them. RBAC `hrms_salary_advance` (self-service view/create;
+  MANAGEMENT view/view_all/create). **Not yet: the journal for the recovery (Dr salary payable / Cr SAL-ADV) — it
+  belongs to the salary payout (slice 6).**
 
 ## RBAC
 New sub-modules: `hrms_salary_setup`, `hrms_salary_attendance`, `hrms_salary_generate` (view/create/edit/approve

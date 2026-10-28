@@ -129,6 +129,11 @@ describe("createPaymentRequest", () => {
     expect((data.paymentDueDate as Date).toISOString().slice(0, 10)).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
+  it("refuses a type that is raised only from its own screen (Advance Salary) unless that module raises it", async () => {
+    await expect(createPaymentRequest(actor, { requestType: "SALARY_ADVANCE", amount: 10, employeeId: "e-1" })).rejects.toThrow(/raised from HRMS/);
+    expect(PaymentRequestRepository.create).not.toHaveBeenCalled();
+  });
+
   it("refuses a request type that is not built yet", async () => {
     await expect(createPaymentRequest(actor, { requestType: "SALARY", amount: 10, employeeId: "e-1" })).rejects.toMatchObject({
       code: "VALIDATION_ERROR",

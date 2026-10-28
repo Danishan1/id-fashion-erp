@@ -188,6 +188,7 @@ model Company {
   salaryAttendanceAdjustments         SalaryAttendanceAdjustment[]
   leavePaymentChanges                 LeavePaymentChange[]
   salaryRuns                          SalaryRun[]
+  salaryAdvances                      SalaryAdvance[]
   chartOfAccounts                     ChartOfAccount[]
   taxTypes                            TaxType[]
   taxRates                            TaxRate[]
@@ -1669,6 +1670,7 @@ model Employee {
   salarySetting                EmployeeSalarySetting?
   salaryAttendanceAdjustments  SalaryAttendanceAdjustment[]
   salaryRunLines               SalaryRunLine[]
+  salaryAdvances               SalaryAdvance[]
   facePhotos                   EmployeeFacePhoto[]
   attendanceSessions           AttendanceSession[]
   overtimeRecords              OvertimeRecord[]
@@ -4316,12 +4318,16 @@ model SalaryRunLine {
   netAmount           Decimal  @map("net_amount") @db.Decimal(18, 2)
   /// Leave balance spent at finalise for auto paid leave, so Reopen can give it back.
   leaveSpendJson      Json?    @map("leave_spend_json")
+  /// Advance salary installments taken this month: [{ advanceId, amount }].
+  installmentAmount   Decimal  @default(0) @map("installment_amount") @db.Decimal(18, 2)
+  installmentJson     Json?    @map("installment_json")
   createdAt           DateTime @default(now()) @map("created_at")
   updatedAt           DateTime @updatedAt @map("updated_at")
 
-  run      SalaryRun           @relation(fields: [runId], references: [id], onDelete: Cascade)
-  employee Employee            @relation(fields: [employeeId], references: [id])
-  edits    SalaryRunLineEdit[]
+  run               SalaryRun               @relation(fields: [runId], references: [id], onDelete: Cascade)
+  employee          Employee                @relation(fields: [employeeId], references: [id])
+  edits             SalaryRunLineEdit[]
+  advanceRecoveries SalaryAdvanceRecovery[]
 
   @@unique([runId, employeeId])
   @@map("hrms_salary_run_lines")
@@ -4357,6 +4363,47 @@ model SalaryRunEvent {
 
   @@index([runId])
   @@map("hrms_salary_run_events")
+}
+
+// Salary Management — Slice 5: Advance Salary (2026-10-28). An employee asks
+// for an advance; it becomes a SALARY_ADVANCE payment request (approval
+// matrix + accountant payout). Status is derived from that request and the
+// recoveries, never stored. Installments are taken by the salary run and
+// recorded at finalise.
+model SalaryAdvance {
+  id                String   @id @default(uuid()) @db.Uuid
+  companyId         String   @map("company_id") @db.Uuid
+  employeeId        String   @map("employee_id") @db.Uuid
+  paymentRequestId  String   @unique @map("payment_request_id") @db.Uuid
+  amount            Decimal  @db.Decimal(18, 2)
+  installments      Int
+  installmentAmount Decimal  @map("installment_amount") @db.Decimal(18, 2)
+  reason            String
+  requestedByUserId String   @map("requested_by_user_id") @db.Uuid
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  company        Company                 @relation(fields: [companyId], references: [id])
+  employee       Employee                @relation(fields: [employeeId], references: [id])
+  paymentRequest PaymentRequest          @relation(fields: [paymentRequestId], references: [id])
+  recoveries     SalaryAdvanceRecovery[]
+
+  @@index([companyId, employeeId])
+  @@map("hrms_salary_advances")
+}
+
+/// One installment taken from a finalised salary run (removed if the run is reopened).
+model SalaryAdvanceRecovery {
+  id        String   @id @default(uuid()) @db.Uuid
+  advanceId String   @map("advance_id") @db.Uuid
+  runLineId String   @map("run_line_id") @db.Uuid
+  amount    Decimal  @db.Decimal(18, 2)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  advance SalaryAdvance @relation(fields: [advanceId], references: [id], onDelete: Cascade)
+  runLine SalaryRunLine @relation(fields: [runLineId], references: [id], onDelete: Cascade)
+
+  @@unique([advanceId, runLineId])
+  @@map("hrms_salary_advance_recoveries")
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -8200,6 +8247,8 @@ enum PaymentRequestType {
   RECURRING_DEPOSIT
   BANK_TRANSFER
   CREDIT_CARD
+  /// Salary Management slice 5: raised only from HRMS → Advance Salary.
+  SALARY_ADVANCE
 }
 
 enum PaymentRequestStatus {
@@ -8310,6 +8359,8 @@ model PaymentRequest {
   payouts      PaymentRequestPayout[]
   payee        Payee?                      @relation(fields: [payeeId], references: [id])
   invoiceLines PaymentRequestInvoiceLine[]
+
+  salaryAdvance SalaryAdvance?
 
   @@unique([companyId, requestNumber])
   @@unique([companyId, idempotencyKey])

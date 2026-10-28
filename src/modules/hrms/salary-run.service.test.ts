@@ -11,6 +11,7 @@ const db = vi.hoisted(() => ({
   leaveType: { findMany: vi.fn() },
   leaveBalance: { findMany: vi.fn(), update: vi.fn() },
   autoLeaveHistory: { upsert: vi.fn(), deleteMany: vi.fn() },
+  salaryAdvanceRecovery: { createMany: vi.fn(), deleteMany: vi.fn() },
   user: { findMany: vi.fn() },
   $transaction: vi.fn(),
 }));
@@ -23,6 +24,8 @@ vi.mock("./attendance-month.service", () => month);
 vi.mock("./attendance-correction.service", () => ({ countPendingRegularizations: vi.fn().mockResolvedValue(0) }));
 vi.mock("./hrms-scope", () => ({ getHrmsEmployeeScope: vi.fn().mockResolvedValue(null), assertHrmsEmployeeInScope: vi.fn() }));
 vi.mock("./leave-balance.service", () => ({ ensureBalance: vi.fn(), cascadeAvailability: vi.fn(), switchLeaveDayPayment: vi.fn() }));
+const advances = vi.hoisted(() => ({ advanceInstallmentsFor: vi.fn() }));
+vi.mock("./salary-advance.service", () => advances);
 
 const svc = await import("./salary-run.service");
 const { assertSalaryMonthOpen, monthKeysBetween } = await import("./salary-month-lock");
@@ -94,6 +97,39 @@ beforeEach(() => {
   db.user.findMany.mockResolvedValue([]);
   db.salaryRunLineEdit.count.mockResolvedValue(0);
   month.computeEmployeesMonth.mockResolvedValue([employeeMonth()]);
+  advances.advanceInstallmentsFor.mockResolvedValue(new Map());
+});
+
+describe("advance salary installments", () => {
+  it("generate deducts the month's installment and keeps which advances it came from", async () => {
+    advances.advanceInstallmentsFor.mockResolvedValue(new Map([["e1", { total: 3000, items: [{ advanceId: "a1", amount: 3000 }] }]]));
+    db.salaryRun.create.mockResolvedValue({ id: "r1" });
+    await svc.generateSalaryRun(actor, 2026, 9).catch(() => undefined);
+    const data = db.salaryRunLine.create.mock.calls[0][0].data;
+    expect(data).toMatchObject({ installmentAmount: 3000, installmentJson: [{ advanceId: "a1", amount: 3000 }] });
+    expect(data.netAmount).toBe(26000 - 3000);
+  });
+
+  it("finalise records the recoveries; reopen removes them", async () => {
+    db.salaryRun.findFirst.mockResolvedValue({ id: "r1", status: "APPROVED", year: 2026, month: 9 });
+    db.salaryRunLine.findMany.mockResolvedValue([{ id: "l1", employeeId: "e1", autoPaidLeaveDays: 0, installmentJson: [{ advanceId: "a1", amount: 3000 }], amountsJson: { installment: 3000 } }]);
+    db.leaveBalance.findMany.mockResolvedValue([]);
+    await svc.finaliseSalaryRun(actor, "r1").catch(() => undefined);
+    expect(db.salaryAdvanceRecovery.createMany.mock.calls[0][0]).toEqual({ data: [{ advanceId: "a1", runLineId: "l1", amount: 3000 }], skipDuplicates: true });
+
+    db.salaryRun.findFirst.mockResolvedValue({ id: "r1", status: "FINALISED", year: 2026, month: 9 });
+    db.salaryRunLine.findMany.mockResolvedValue([{ id: "l1", employeeId: "e1", leaveSpendJson: [] }]);
+    await svc.reopenSalaryRun(actor, "r1", "wrong").catch(() => undefined);
+    expect(db.salaryAdvanceRecovery.deleteMany).toHaveBeenCalledWith({ where: { runLine: { runId: "r1" } } });
+  });
+
+  it("a month with no punches deducts no installment, so finalise records none", async () => {
+    db.salaryRun.findFirst.mockResolvedValue({ id: "r1", status: "APPROVED", year: 2026, month: 9 });
+    db.salaryRunLine.findMany.mockResolvedValue([{ id: "l1", employeeId: "e1", autoPaidLeaveDays: 0, installmentJson: [{ advanceId: "a1", amount: 3000 }], amountsJson: { installment: 0 } }]);
+    db.leaveBalance.findMany.mockResolvedValue([]);
+    await svc.finaliseSalaryRun(actor, "r1").catch(() => undefined);
+    expect(db.salaryAdvanceRecovery.createMany).not.toHaveBeenCalled();
+  });
 });
 
 describe("systemFigures", () => {

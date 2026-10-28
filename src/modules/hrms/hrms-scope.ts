@@ -25,7 +25,8 @@ export type HrmsModule =
   | "hrms_salary_setup"
   | "hrms_salary_attendance"
   | "hrms_salary_generate"
-  | "hrms_salary_history";
+  | "hrms_salary_history"
+  | "hrms_salary_advance";
 
 /** One screen module, or several when an API is shared by more than one screen. */
 export type HrmsModules = HrmsModule | readonly HrmsModule[];

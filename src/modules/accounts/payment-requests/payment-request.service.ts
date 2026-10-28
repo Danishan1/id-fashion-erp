@@ -176,7 +176,12 @@ export async function getPaymentRequestById(actor: ActorContext, id: string) {
   return withOverdue(request);
 }
 
-export async function createPaymentRequest(actor: ActorContext, input: CreatePaymentRequestInput) {
+/**
+ * `options.fromSource` is set only by the module that owns a `raisedFrom`
+ * type (e.g. HRMS Advance Salary) — the generic API never passes it, so such
+ * a request can't be raised without its source record.
+ */
+export async function createPaymentRequest(actor: ActorContext, input: CreatePaymentRequestInput, options: { fromSource?: boolean } = {}) {
   if (input.idempotencyKey) {
     const existing = await PaymentRequestRepository.findByIdempotencyKey(actor.companyId, input.idempotencyKey);
     if (existing) return withOverdue(existing);
@@ -185,6 +190,9 @@ export async function createPaymentRequest(actor: ActorContext, input: CreatePay
   const def = PAYMENT_REQUEST_TYPE_DEFS[input.requestType];
   if (!def.available) {
     throw new BusinessRuleError("VALIDATION_ERROR", `"${def.label}" is not available yet.`, { requestType: input.requestType });
+  }
+  if (def.raisedFrom && !options.fromSource) {
+    throw new BusinessRuleError("VALIDATION_ERROR", `"${def.label}" is ${def.raisedFrom.label.charAt(0).toLowerCase()}${def.raisedFrom.label.slice(1)}.`, { requestType: input.requestType });
   }
 
   const payTo = await resolvePayTo(actor.companyId, def, input);
@@ -248,6 +256,10 @@ export async function createPaymentRequest(actor: ActorContext, input: CreatePay
 export async function updatePaymentRequest(actor: ActorContext, id: string, input: UpdatePaymentRequestInput) {
   const request = await getPaymentRequestById(actor, id);
   if (request.createdByUserId !== actor.userId) await PermissionService.assert(actor.userId, "payment_requests", "edit");
+  const typeDef = PAYMENT_REQUEST_TYPE_DEFS[request.requestType];
+  if (typeDef.raisedFrom) {
+    throw new BusinessRuleError("VALIDATION_ERROR", `A "${typeDef.label}" request can't be edited here — cancel it and raise a new one from its own screen.`);
+  }
   if (request.approvals.length > 0) {
     throw new BusinessRuleError("INVALID_STATE_TRANSITION", "This request already has an approval; it can no longer be edited.", {
       currentStatus: request.status,

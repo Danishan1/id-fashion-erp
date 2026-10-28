@@ -44,6 +44,7 @@ const MODULE_LABELS: Record<string, string> = {
   hrms_salary_attendance: "Manage Attendance (salary)",
   hrms_salary_generate: "Generate Salary",
   hrms_salary_history: "Salary History & Slips",
+  hrms_salary_advance: "Advance Salary",
   payment_requests: "Payment Requests",
   payment_request_settings: "Payment Approval Matrix",
 };

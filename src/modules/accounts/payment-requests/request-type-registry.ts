@@ -28,6 +28,7 @@ export const PAYMENT_REQUEST_TYPES = [
   "RECURRING_DEPOSIT",
   "BANK_TRANSFER",
   "CREDIT_CARD",
+  "SALARY_ADVANCE",
 ] as const;
 export type PaymentRequestTypeKey = (typeof PAYMENT_REQUEST_TYPES)[number];
 
@@ -51,6 +52,8 @@ export interface PaymentRequestTypeDef {
   available: boolean;
   /** The planning skill that finishes this type. */
   skill: string;
+  /** Raised only from another screen (never the hub's + New), e.g. HRMS → Advance Salary. */
+  raisedFrom?: { label: string; href: string };
 }
 
 export const PAYMENT_REQUEST_GROUP_LABELS: Record<PaymentRequestGroupKey, string> = {
@@ -180,6 +183,19 @@ export const PAYMENT_REQUEST_TYPE_DEFS: Record<PaymentRequestTypeKey, PaymentReq
     showModeOfTransfer: false,
     available: false,
     skill: "payment-request-loan",
+  },
+  SALARY_ADVANCE: {
+    type: "SALARY_ADVANCE",
+    group: "EXPENDITURE",
+    label: "Advance Salary",
+    description: "An employee's advance against salary, recovered in installments from later salaries.",
+    payTo: "EMPLOYEE",
+    payToLabel: "Employee",
+    routing: "APPROVAL_THEN_PAY",
+    showModeOfTransfer: false,
+    available: true,
+    skill: "hrms-salary-advance",
+    raisedFrom: { label: "Raised from HRMS → Advance Salary", href: "/salary/advances" },
   },
   IMPREST: {
     type: "IMPREST",

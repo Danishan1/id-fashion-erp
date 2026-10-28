@@ -9,6 +9,7 @@ import { computeEmployeesMonth, type EmployeeMonth } from "./attendance-month.se
 import { getHrmsEmployeeScope } from "./hrms-scope";
 import { cascadeAvailability, ensureBalance } from "./leave-balance.service";
 import { summarizeSalaryMonth } from "./salary-attendance.service";
+import { advanceInstallmentsFor } from "./salary-advance.service";
 import { computeSalary, type SalaryAmounts, type SalarySetupSnapshot } from "./salary-calculator";
 import type { EditSalaryLineInput } from "./salary-run.schema";
 
@@ -136,6 +137,8 @@ interface LineInputs {
   holidayDays: number;
   overtimeHours: number;
   arrears: number;
+  /** Advance salary installments due this month (slice 5). */
+  installment: number;
   hasNoPunches: boolean;
 }
 
@@ -147,6 +150,7 @@ function inputsOf(line: LineRow, arrears = num(line.arrearsAmount)): LineInputs 
     holidayDays: num(line.holidayDays),
     overtimeHours: num(line.overtimeHours),
     arrears,
+    installment: num(line.installmentAmount),
     hasNoPunches: line.hasNoPunches,
   };
 }
@@ -157,7 +161,7 @@ function amountsFor(i: LineInputs, eff: ReturnType<typeof effective>): SalaryAmo
     days: { calendarDays: i.calendarDays, presentDays: eff.presentDays, weekendDays: i.weekendDays, holidayDays: i.holidayDays, paidLeaveDays: eff.paidLeaveDays, extraDays: eff.extraDays },
     overtimeHours: i.overtimeHours,
     arrears: i.arrears,
-    installment: 0, // advance salary recovery arrives with slice 5
+    installment: i.installment,
     hasNoPunches: i.hasNoPunches,
   });
 }
@@ -250,6 +254,7 @@ export async function getSalaryRunView(actor: SalaryRunActor, year: number, mont
           weekendDays: num(l.weekendDays),
           holidayDays: num(l.holidayDays),
           overtimeHours: num(l.overtimeHours),
+          installmentAmount: num(l.installmentAmount),
           attendancePercent: num(l.attendancePercent),
           hasNoPunches: l.hasNoPunches,
           arrearsAmount: num(l.arrearsAmount),
@@ -297,9 +302,10 @@ export async function generateSalaryRun(actor: SalaryRunActor, year: number, mon
   const setups = await loadSetups(actor.companyId);
   if (setups.size === 0) throw new BusinessRuleError("VALIDATION_ERROR", "No employee has a salary setup yet — set them up under Salary Setup first.");
   const ids = [...setups.keys()];
-  const [months, leave] = await Promise.all([
+  const [months, leave, installments] = await Promise.all([
     computeEmployeesMonth(actor.companyId, ids, year, month, new Date(), { applySalaryAdjustments: true }),
     availableLeave(actor.companyId, ids, year, month),
+    advanceInstallmentsFor(actor.companyId, ids),
   ]);
   const previous = new Map((existing?.lines ?? []).map((l) => [l.employeeId, l]));
 
@@ -328,6 +334,8 @@ export async function generateSalaryRun(actor: SalaryRunActor, year: number, mon
         overtimeHours: f.overtimeHours,
         attendancePercent: f.attendancePercent,
         hasNoPunches: f.hasNoPunches,
+        installmentAmount: installments.get(m.employee.id)?.total ?? 0,
+        installmentJson: (installments.get(m.employee.id)?.items ?? []) as unknown as Prisma.InputJsonValue,
       };
       // Regenerating keeps what the employer already edited (present / paid leave / extra / arrears).
       const kept = {
@@ -343,7 +351,16 @@ export async function generateSalaryRun(actor: SalaryRunActor, year: number, mon
         extraDays: kept.extraDays === null ? f.extraDays : num(kept.extraDays),
       };
       const amounts = amountsFor(
-        { setup, calendarDays: f.calendarDays, weekendDays: f.weekendDays, holidayDays: f.holidayDays, overtimeHours: f.overtimeHours, arrears: num(kept.arrearsAmount), hasNoPunches: f.hasNoPunches },
+        {
+          setup,
+          calendarDays: f.calendarDays,
+          weekendDays: f.weekendDays,
+          holidayDays: f.holidayDays,
+          overtimeHours: f.overtimeHours,
+          arrears: num(kept.arrearsAmount),
+          installment: base.installmentAmount,
+          hasNoPunches: f.hasNoPunches,
+        },
         eff
       );
       const data = { ...base, ...kept, ...amountColumns(amounts) };
@@ -496,11 +513,19 @@ export async function finaliseSalaryRun(actor: SalaryRunActor, runId: string) {
   const run = await findRun(actor, runId);
   if (run.status !== "APPROVED") throw new BusinessRuleError("INVALID_STATE_TRANSITION", "Only an approved salary can be finalised.");
   await PermissionService.assert(actor.userId, MODULE, "post");
-  const lines = await prisma.salaryRunLine.findMany({ where: { runId }, select: { id: true, employeeId: true, autoPaidLeaveDays: true } });
+  const lines = await prisma.salaryRunLine.findMany({ where: { runId }, select: { id: true, employeeId: true, autoPaidLeaveDays: true, installmentJson: true, amountsJson: true } });
   await prisma.$transaction(
     async (tx) => {
       await transition(runId, "APPROVED", { status: "FINALISED", finalisedByUserId: actor.userId, finalisedAt: new Date() }, tx);
-      for (const line of lines) await spendAutoLeave(tx, actor.companyId, actor.userId, line, run.year, run.month);
+      for (const line of lines) {
+        await spendAutoLeave(tx, actor.companyId, actor.userId, line, run.year, run.month);
+        // Advance installments actually deducted (none in a month with no punches) become recoveries.
+        const deducted = (line.amountsJson as unknown as SalaryAmounts).installment;
+        const items = (line.installmentJson as unknown as { advanceId: string; amount: number }[] | null) ?? [];
+        if (deducted > 0 && items.length > 0) {
+          await tx.salaryAdvanceRecovery.createMany({ data: items.map((i) => ({ advanceId: i.advanceId, runLineId: line.id, amount: i.amount })), skipDuplicates: true });
+        }
+      }
       await logEvent(tx, runId, "FINALISED", actor.userId);
     },
     { timeout: 60_000 }
@@ -528,6 +553,8 @@ export async function reopenSalaryRun(actor: SalaryRunActor, runId: string, reas
         }
         await tx.salaryRunLine.update({ where: { id: line.id }, data: { leaveSpendJson: Prisma.DbNull } });
       }
+      // The month's advance installments are no longer recovered.
+      await tx.salaryAdvanceRecovery.deleteMany({ where: { runLine: { runId } } });
       await logEvent(tx, runId, "REOPENED", actor.userId, reason);
     },
     { timeout: 60_000 }

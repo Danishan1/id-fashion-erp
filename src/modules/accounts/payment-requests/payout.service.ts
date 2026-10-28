@@ -42,6 +42,7 @@ const FULL_PAYOUT_ONLY: ReadonlySet<PaymentRequestTypeKey> = new Set([
   "BANK_TRANSFER",
   "LOAN",
   "IMPREST",
+  "SALARY_ADVANCE",
 ]);
 
 type Request = Awaited<ReturnType<typeof getPaymentRequestById>>;
@@ -212,11 +213,31 @@ const payInvestment: Handler = async (ctx, numbers) => {
   return { journalId };
 };
 
+/**
+ * Advance salary (HRMS, 2026-10-28): Dr Salary Advance to Employees / Cr Cash-Bank.
+ * The advance is recovered from later salaries (see salary-run.service).
+ */
+const paySalaryAdvance: Handler = async (ctx, numbers) => {
+  const salAdv = await ensureControlAccount(ctx.tx, ctx.actor.companyId, "SAL-ADV", "Salary Advance to Employees", "ASSET");
+  const journalId = await postAutoJournalInTx(
+    ctx,
+    numbers.journalNumber,
+    `Advance salary ${ctx.request.requestNumber} — ${ctx.request.payToName}`,
+    { module: "PAYMENT_REQUEST", recordId: ctx.request.id },
+    [
+      { accountId: salAdv.id, debitAmount: ctx.amount, creditAmount: 0, description: `Salary advance — ${ctx.request.payToName}` },
+      { accountId: ctx.moneyAccountId, debitAmount: 0, creditAmount: ctx.amount, description: `Payment ${ctx.request.requestNumber}` },
+    ]
+  );
+  return { journalId };
+};
+
 /** Which document number a type's payout needs besides the journal number. */
 const PAYOUT_HANDLERS: Partial<Record<PaymentRequestTypeKey, { handler: Handler; documentType?: "PAYMENT" | "INTERNAL_TRANSFER" }>> = {
   SUPPLIER_ON_ACCOUNT: { handler: payToSupplierOnAccount, documentType: "PAYMENT" },
   CASH_WITHDRAWAL: { handler: payCashWithdrawal, documentType: "INTERNAL_TRANSFER" },
   INVESTMENT: { handler: payInvestment },
+  SALARY_ADVANCE: { handler: paySalaryAdvance },
 };
 
 /**

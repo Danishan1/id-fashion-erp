@@ -116,7 +116,11 @@ export function PaymentRequestsHubClient({ canCreate, canApprove, canPay, canVie
               {typesOfGroup(g).map((def) => (
                 <li key={def.type} className="flex items-center justify-between gap-2 text-sm">
                   <span className="text-zinc-700 dark:text-zinc-300">{def.label}</span>
-                  {def.available ? (
+                  {def.raisedFrom ? (
+                    <a href={def.raisedFrom.href} className="shrink-0 text-xs text-zinc-500 hover:text-indigo-600" title={def.raisedFrom.label}>
+                      From HRMS
+                    </a>
+                  ) : def.available ? (
                     canCreate && (
                       <button
                         type="button"

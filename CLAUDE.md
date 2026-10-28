@@ -8037,3 +8037,8 @@ Plan and decisions: `docs/hrms/SALARY_MANAGEMENT_PLAN.md` (reference-project for
 ## HRMS Salary Management - Slice 4 Salary History (2026-10-28)
 - Only FINALISED runs, read from the stored lines (never recalculated). `hrms_salary_history.view_all` sees everyone; without it a user sees only their own slips (via `User.employeeId`) - deliberately NOT the HRMS team scope, so managers can't see their team's pay. Every self-service role has `view`.
 - Slip PDF `src/modules/hrms/salary-slip-pdf.tsx` (rupees in words: `src/lib/amount-in-words.ts`); Excel report `salary-report-xlsx.ts` needs company-wide access. Screen `/salary/history`.
+
+## HRMS Salary Management - Slice 5 Advance Salary (2026-10-28)
+- An employee asks for an advance for themselves at `/salary/advances` (`salary-advance.service.ts`); it creates a `SALARY_ADVANCE` payment request (Expenditure group, approval matrix, paid in full: Dr SAL-ADV / Cr Cash-Bank). One open request per employee.
+- Registry entries can now have `raisedFrom` (`request-type-registry.ts`): the hub shows a link instead of + New, and `createPaymentRequest()` / `updatePaymentRequest()` refuse the type unless the owning module calls with `{ fromSource: true }`.
+- Advance status is derived from the payment request + `hrms_salary_advance_recoveries`, never stored. The salary run takes min(installment, left) per paid advance (`advanceInstallmentsFor`); finalise writes recoveries, reopen deletes them. The recovery journal (Dr salary payable / Cr SAL-ADV) is still to come with the salary payout (slice 6).

@@ -136,6 +136,7 @@ export const NAV_SECTIONS: NavSection[] = [
       "hrms_salary_attendance",
       "hrms_salary_generate",
       "hrms_salary_history",
+      "hrms_salary_advance",
     ],
     children: [
       { label: "My Attendance", href: "/attendance/my", modules: ["hrms_attendance"], group: "Attendance" },
@@ -154,6 +155,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Manage Attendance", href: "/salary/attendance", modules: ["hrms_salary_attendance"], group: "Salary" },
       { label: "Generate Salary", href: "/salary/generate", modules: ["hrms_salary_generate"], group: "Salary" },
       { label: "Salary History", href: "/salary/history", modules: ["hrms_salary_history"], group: "Salary" },
+      { label: "Advance Salary", href: "/salary/advances", modules: ["hrms_salary_advance"], group: "Salary" },
     ],
   },
   {
