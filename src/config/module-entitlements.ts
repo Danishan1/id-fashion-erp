@@ -91,6 +91,7 @@ export const ENTITLEMENT_PACKAGES = [
       "hrms_salary_setup",
       "hrms_salary_attendance",
       "hrms_salary_generate",
+      "hrms_salary_history",
     ],
   },
   {

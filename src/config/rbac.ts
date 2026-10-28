@@ -36,6 +36,7 @@ export const MODULES = [
   "hrms_salary_setup",
   "hrms_salary_attendance",
   "hrms_salary_generate",
+  "hrms_salary_history",
   "sampling",
   "buyer_enquiries",
   "sales_orders",
@@ -188,6 +189,8 @@ const HRMS_SELF_SERVICE: Partial<Record<Module, Action[]>> = {
   hrms_attendance_regularization: ["view", "create"],
   hrms_leave: ["view", "create"],
   hrms_leave_balances: ["view"],
+  // Own salary slips only (no view_all = only the caller's own employee, not the team).
+  hrms_salary_history: ["view"],
 };
 const HRMS_TEAM_APPROVER: Partial<Record<Module, Action[]>> = {
   hrms_attendance: ["view", "create"],
@@ -238,6 +241,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     // create = generate, edit = edit lines, approve/reject = maker-checker,
     // post = finalise, cancel = reopen a finalised month.
     hrms_salary_generate: ["view", "view_all", "create", "edit", "approve", "reject", "post", "cancel", "export"],
+    hrms_salary_history: ["view", "view_all", "export"],
     sampling: ["view", "approve", "reject"],
     buyer_enquiries: ["view", "reject"],
     sales_orders: ["view", "approve", "export"],
@@ -477,6 +481,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     ...HRMS_TEAM_APPROVER,
     // The checker for salary runs that MANAGEMENT generates (2026-10-28).
     hrms_salary_generate: ["view", "view_all", "approve", "reject", "post", "export"],
+    hrms_salary_history: ["view", "view_all", "export"],
     dashboard: ["view"],
     masters_core: ["view", "create", "edit"],
     masters_finance: ["view", "create", "edit"],

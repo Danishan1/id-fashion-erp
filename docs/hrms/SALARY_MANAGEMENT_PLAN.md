@@ -83,6 +83,12 @@ re-generate; approved rows still editable; history page re-runs the calculation;
   refuses salary adjustments, leave Paid/Unpaid, manual/corrected sessions, leave approval, regularization approval
   and overtime decisions in an APPROVED or FINALISED month. RBAC `hrms_salary_generate` (MANAGEMENT all; ACCOUNTS_MANAGER
   view/approve/reject/post/export as checker). Advance installment = 0 until slice 5.
+- [x] **Slice 4 — Salary History** (2026-10-28). No new tables. `salary-history.service.ts` lists FINALISED runs
+  only, straight from the stored lines (never recalculated). Scope: `hrms_salary_history.view_all` sees everyone;
+  without it only the caller's own employee (`User.employeeId`) — a manager does not see the team's salaries.
+  Every self-service role gets `view` (own slips). Slip PDF `salary-slip-pdf.tsx` (reference layout; amount in words
+  `src/lib/amount-in-words.ts`, Indian lakh/crore; bank account masked), Excel `salary-report-xlsx.ts` (company-wide
+  only). Screen `/salary/history`; APIs `/api/v1/salary/history`, `.../slips/[lineId]/pdf`, `.../runs/[runId]/export`.
 
 ## RBAC
 New sub-modules: `hrms_salary_setup`, `hrms_salary_attendance`, `hrms_salary_generate` (view/create/edit/approve

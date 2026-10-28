@@ -8033,3 +8033,7 @@ Plan and decisions: `docs/hrms/SALARY_MANAGEMENT_PLAN.md` (reference-project for
 - Approved/finalised months are locked by `assertSalaryMonthOpen()` (`salary-month-lock.ts`). It is called from salary adjustments, leave Paid/Unpaid, manual/corrected sessions, leave approval, regularization approval and overtime decisions — add it to any new attendance/leave write path. Test files for those services mock `./salary-month-lock`.
 - Finalise spends auto paid leave and stores the spend per line (`leave_spend_json`) so Reopen can refund it. The old Salary Sheet finalise and a salary run refuse the same month.
 - Service `src/modules/hrms/salary-run.service.ts`; screen `/salary/generate?month=YYYY-MM`; RBAC `hrms_salary_generate` (MANAGEMENT maker, ACCOUNTS_MANAGER checker).
+
+## HRMS Salary Management - Slice 4 Salary History (2026-10-28)
+- Only FINALISED runs, read from the stored lines (never recalculated). `hrms_salary_history.view_all` sees everyone; without it a user sees only their own slips (via `User.employeeId`) - deliberately NOT the HRMS team scope, so managers can't see their team's pay. Every self-service role has `view`.
+- Slip PDF `src/modules/hrms/salary-slip-pdf.tsx` (rupees in words: `src/lib/amount-in-words.ts`); Excel report `salary-report-xlsx.ts` needs company-wide access. Screen `/salary/history`.
