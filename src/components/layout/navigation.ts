@@ -133,6 +133,7 @@ export const NAV_SECTIONS: NavSection[] = [
       "hrms_leave_balances",
       "hrms_leave_types",
       "hrms_salary_setup",
+      "hrms_salary_attendance",
     ],
     children: [
       { label: "My Attendance", href: "/attendance/my", modules: ["hrms_attendance"], group: "Attendance" },
@@ -148,6 +149,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Leave Balances", href: "/leave-balances", modules: ["hrms_leave_balances"], group: "Leave" },
       { label: "Leave Types", href: "/leave-types", modules: ["hrms_leave_types"], requiredAction: "edit", group: "Leave" },
       { label: "Salary Setup", href: "/salary/setup", modules: ["hrms_salary_setup"], group: "Salary" },
+      { label: "Manage Attendance", href: "/salary/attendance", modules: ["hrms_salary_attendance"], group: "Salary" },
     ],
   },
   {

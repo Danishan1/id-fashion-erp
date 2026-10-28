@@ -76,6 +76,19 @@ export interface AttendanceDay {
   /** Extra payable for working on a weekly off / holiday. */
   extraPayable: number;
   code: DayCode;
+  /** Real worked hours (workedHours differs only when a salary adjustment applies). */
+  actualWorkedHours: number;
+  /** Active salary-only adjustment, set only when `applySalaryAdjustments` is on. */
+  salaryAdjustment: { id: string; mode: "FIXED_HOURS" | "OFFICE_TIME" | "FULL_DAY"; hours: number | null; reason: string } | null;
+}
+
+export interface ComputeMonthOptions {
+  /**
+   * Salary Management (2026-10-28): apply the salary-only overlay from
+   * hrms_salary_attendance_adjustments. Off for every attendance screen, so
+   * those always show the real punches.
+   */
+  applySalaryAdjustments?: boolean;
 }
 
 export interface AttendanceMonthSummary {
@@ -118,7 +131,14 @@ function round4(n: number) {
   return Math.round(n * 10000) / 10000;
 }
 
-export async function computeEmployeesMonth(companyId: string, employeeIds: string[], year: number, month: number, now: Date = new Date()): Promise<EmployeeMonth[]> {
+export async function computeEmployeesMonth(
+  companyId: string,
+  employeeIds: string[],
+  year: number,
+  month: number,
+  now: Date = new Date(),
+  options: ComputeMonthOptions = {}
+): Promise<EmployeeMonth[]> {
   if (employeeIds.length === 0) return [];
   const settings = await getAttendanceSettings(companyId);
   const monthKeys = monthDateKeys(year, month);
@@ -127,7 +147,7 @@ export async function computeEmployeesMonth(companyId: string, employeeIds: stri
   const toKey = addDays(monthKeys[monthKeys.length - 1], 7);
   const range = { gte: dateKeyToDbDate(fromKey), lte: dateKeyToDbDate(toKey) };
 
-  const [employees, holidays, records, leaveDays, legacyLeaves, overtime] = await Promise.all([
+  const [employees, holidays, records, leaveDays, legacyLeaves, overtime, adjustments] = await Promise.all([
     prisma.employee.findMany({
       where: { companyId, id: { in: employeeIds } },
       select: {
@@ -161,7 +181,15 @@ export async function computeEmployeesMonth(companyId: string, employeeIds: stri
       where: { companyId, employeeId: { in: employeeIds }, attendanceDate: { gte: dateKeyToDbDate(monthKeys[0]), lte: dateKeyToDbDate(monthKeys[monthKeys.length - 1]) } },
       select: { employeeId: true, hours: true, status: true },
     }),
+    options.applySalaryAdjustments
+      ? prisma.salaryAttendanceAdjustment.findMany({
+          where: { companyId, employeeId: { in: employeeIds }, attendanceDate: range, removedAt: null },
+          select: { id: true, employeeId: true, attendanceDate: true, mode: true, hours: true, reason: true },
+        })
+      : Promise.resolve([]),
   ]);
+  const adjustmentByKey = new Map<string, (typeof adjustments)[number]>();
+  for (const a of adjustments) adjustmentByKey.set(`${a.employeeId}:${a.attendanceDate.toISOString().slice(0, 10)}`, a);
 
   const holidayByKey = new Map<string, string>();
   for (const h of holidays) holidayByKey.set(h.date.toISOString().slice(0, 10), h.name);
@@ -199,7 +227,10 @@ export async function computeEmployeesMonth(companyId: string, employeeIds: stri
       const weekday = weekdayOf(key);
       const sessions = sessionsByKey.get(key) ?? [];
       const hours = computeDayHours(sessions, now, settings.maxSessionHours);
-      const worked = key === todayKey ? hours.liveHours : hours.finalizedHours;
+      const actualWorked = key === todayKey ? hours.liveHours : hours.finalizedHours;
+      const adj = adjustmentByKey.get(`${e.id}:${key}`) ?? null;
+      // FIXED_HOURS / OFFICE_TIME replace the hours; FULL_DAY keeps them and forces a full day below.
+      const worked = adj && adj.hours !== null && adj.mode !== "FULL_DAY" ? Number(adj.hours) : actualWorked;
       const isFuture = key > todayKey;
       const isPreJoining = !!joinKey && key < joinKey;
       const holidayName = holidayByKey.get(key) ?? null;
@@ -210,7 +241,12 @@ export async function computeEmployeesMonth(companyId: string, employeeIds: stri
       const paidLeave = Math.min(leaveFraction, leave?.paid ?? 0);
       const unpaidLeave = round2(leaveFraction - paidLeave);
       const isOutside = sessions.some((s) => s.status === "PRESENT_FROM_OUTSIDE" || !s.isLoginFromOffice || !s.isLogoutFromOffice);
-      const status = worked > 0 ? computeDayStatus(worked, expectedHours, settings.statusToleranceMinutes) : null;
+      const status =
+        adj?.mode === "FULL_DAY"
+          ? { band: "FULL" as const, present: 1, absent: 0 }
+          : worked > 0
+            ? computeDayStatus(worked, expectedHours, settings.statusToleranceMinutes)
+            : null;
       const isLate = hours.firstIn ? computeIsLateIst(hours.firstIn, e.shift?.startTime, e.shift?.graceMinutes ?? 0) : null;
 
       let present = 0;
@@ -267,6 +303,8 @@ export async function computeEmployeesMonth(companyId: string, employeeIds: stri
         paidOff,
         extraPayable,
         code,
+        actualWorkedHours: round2(actualWorked),
+        salaryAdjustment: adj ? { id: adj.id, mode: adj.mode, hours: adj.hours === null ? null : Number(adj.hours), reason: adj.reason } : null,
       };
     });
 

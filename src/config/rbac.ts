@@ -34,6 +34,7 @@ export const MODULES = [
   // Salary Management (2026-10-28, docs/hrms/SALARY_MANAGEMENT_PLAN.md) — one
   // module per screen, same as attendance/leave above.
   "hrms_salary_setup",
+  "hrms_salary_attendance",
   "sampling",
   "buyer_enquiries",
   "sales_orders",
@@ -232,6 +233,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     hrms_leave_balances: ["view", "view_all", "edit", "export"],
     hrms_leave_types: ["view", "create", "edit"],
     hrms_salary_setup: ["view", "create", "edit", "export"],
+    hrms_salary_attendance: ["view", "view_all", "edit"],
     sampling: ["view", "approve", "reject"],
     buyer_enquiries: ["view", "reject"],
     sales_orders: ["view", "approve", "export"],

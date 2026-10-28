@@ -8020,3 +8020,9 @@ Plan and decisions: `docs/hrms/SALARY_MANAGEMENT_PLAN.md` (reference-project for
 - No second source of truth: saving writes base salary to `Employee.fixedMonthlySalary`, and the OT rate lives only on `EmployeeAttendanceProfile.overtimeRatePerHour`.
 - An inactive PF/ESIC setting can stay on an employee who already has it, but can't be newly picked.
 - RBAC module `hrms_salary_setup` (sidebar HRMS → Salary). Service `src/modules/hrms/salary-setup.service.ts`; screens `/salary/setup` and `/salary/setup/[employeeId]`.
+
+## HRMS Salary Management — Slice 2 Manage Attendance (2026-10-28)
+- Salary-only day adjustments live in `hrms_salary_attendance_adjustments` (FIXED_HOURS / OFFICE_TIME / FULL_DAY). Real punches are never changed. Only `computeEmployeesMonth(..., now, { applySalaryAdjustments: true })` applies them; attendance screens must leave the flag off. Removing an adjustment sets `removed_at` (kept for history); a partial unique index allows one active adjustment per employee per day.
+- Paid ↔ Unpaid leave goes through `switchLeaveDayPayment()` (leave-balance.service): it moves the real balance and writes `hrms_leave_payment_changes`. `used` is not touched.
+- Nobody can adjust or re-pay their own attendance (`User.employeeId` check). The dev Super Admin login is linked to employee Ravikant.
+- Service `src/modules/hrms/salary-attendance.service.ts`; screens `/salary/attendance` and `/salary/attendance/[employeeId]?month=YYYY-MM`; RBAC `hrms_salary_attendance`. Slice 3 still has to add the month lock to these writes.

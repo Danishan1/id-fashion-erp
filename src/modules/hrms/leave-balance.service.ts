@@ -150,6 +150,57 @@ export async function refundLeaveDay(tx: Tx, day: { id: string; employeeId: stri
   return { refunded: round2(fromRemaining + fromCarry), fraction };
 }
 
+/**
+ * Salary Management (2026-10-28): switch a taken leave day between Paid and
+ * Not Paid. Paid → Not Paid gives the balance back to the month it came from;
+ * Not Paid → Paid takes it from that month's remaining first, then
+ * carry-forward, and refuses when the balance doesn't cover the day. `used`
+ * is untouched (the leave is still taken either way).
+ */
+export async function switchLeaveDayPayment(
+  tx: Tx,
+  companyId: string,
+  day: { id: string; employeeId: string; leaveDate: Date; fraction: Prisma.Decimal | number; paymentType: "PAID" | "NOT_PAID" | null; paidFromRemaining: Prisma.Decimal | number; paidFromCarry: Prisma.Decimal | number; leaveBalanceId: string | null },
+  leaveTypeId: string,
+  to: "PAID" | "NOT_PAID"
+): Promise<{ fromRemaining: number; fromCarry: number }> {
+  const from = day.paymentType ?? "PAID";
+  if (from === to) throw new BusinessRuleError("INVALID_STATE_TRANSITION", `This leave day is already ${to === "PAID" ? "paid" : "unpaid"}.`);
+
+  if (to === "NOT_PAID") {
+    const fromRemaining = Number(day.paidFromRemaining);
+    const fromCarry = Number(day.paidFromCarry);
+    if (day.leaveBalanceId && fromRemaining + fromCarry > 0) {
+      const balance = await tx.leaveBalance.findUnique({ where: { id: day.leaveBalanceId } });
+      if (balance) {
+        await tx.leaveBalance.update({ where: { id: balance.id }, data: { remaining: { increment: fromRemaining }, carryForward: { increment: fromCarry } } });
+        await cascadeAvailability(tx, day.employeeId, balance.leaveTypeId, balance.year, balance.month, fromRemaining + fromCarry);
+      }
+    }
+    await tx.leaveDay.update({ where: { id: day.id }, data: { paymentType: "NOT_PAID", paidFromRemaining: 0, paidFromCarry: 0 } });
+    return { fromRemaining, fromCarry };
+  }
+
+  const key = day.leaveDate.toISOString().slice(0, 10);
+  const year = Number(key.slice(0, 4));
+  const month = Number(key.slice(5, 7));
+  const balance = await ensureBalance(tx, companyId, day.employeeId, leaveTypeId, year, month);
+  const fraction = Number(day.fraction);
+  const plan = planLeaveDeduction(fraction, Number(balance.remaining), Number(balance.carryForward));
+  if (plan.paymentType !== "PAID") {
+    const available = round2(Number(balance.remaining) + Number(balance.carryForward));
+    throw new BusinessRuleError("VALIDATION_ERROR", `Not enough leave balance to make this day paid — ${available} day(s) available, ${fraction} needed.`, { available, needed: fraction });
+  }
+  const res = await tx.leaveBalance.updateMany({
+    where: { id: balance.id, remaining: { gte: plan.fromRemaining }, carryForward: { gte: plan.fromCarry } },
+    data: { remaining: { decrement: plan.fromRemaining }, carryForward: { decrement: plan.fromCarry } },
+  });
+  if (res.count === 0) throw new BusinessRuleError("INVALID_STATE_TRANSITION", "The leave balance changed — please try again.");
+  await cascadeAvailability(tx, day.employeeId, leaveTypeId, year, month, -(plan.fromRemaining + plan.fromCarry));
+  await tx.leaveDay.update({ where: { id: day.id }, data: { paymentType: "PAID", paidFromRemaining: plan.fromRemaining, paidFromCarry: plan.fromCarry, leaveBalanceId: balance.id } });
+  return { fromRemaining: plan.fromRemaining, fromCarry: plan.fromCarry };
+}
+
 /** Make sure every active employee has this month's balance for every active leave type (the monthly credit). */
 export async function creditMonthForCompany(companyId: string, year: number, month: number) {
   const [employees, leaveTypes] = await Promise.all([

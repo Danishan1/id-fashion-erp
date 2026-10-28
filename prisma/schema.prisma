@@ -185,6 +185,8 @@ model Company {
   attendanceMonthCloses               AttendanceMonthClose[]
   salaryStatutorySettings             SalaryStatutorySetting[]
   employeeSalarySettings              EmployeeSalarySetting[]
+  salaryAttendanceAdjustments         SalaryAttendanceAdjustment[]
+  leavePaymentChanges                 LeavePaymentChange[]
   chartOfAccounts                     ChartOfAccount[]
   taxTypes                            TaxType[]
   taxRates                            TaxRate[]
@@ -1664,6 +1666,7 @@ model Employee {
   leaveBalanceCarryForwards    LeaveBalanceCarryForward[]
   attendanceProfile            EmployeeAttendanceProfile?
   salarySetting                EmployeeSalarySetting?
+  salaryAttendanceAdjustments  SalaryAttendanceAdjustment[]
   facePhotos                   EmployeeFacePhoto[]
   attendanceSessions           AttendanceSession[]
   overtimeRecords              OvertimeRecord[]
@@ -4045,10 +4048,11 @@ model LeaveDay {
   createdAt         DateTime          @default(now()) @map("created_at")
   updatedAt         DateTime          @updatedAt @map("updated_at")
 
-  company      Company       @relation(fields: [companyId], references: [id])
-  leaveRequest LeaveRequest  @relation(fields: [leaveRequestId], references: [id], onDelete: Cascade)
-  employee     Employee      @relation(fields: [employeeId], references: [id])
-  leaveBalance LeaveBalance? @relation(fields: [leaveBalanceId], references: [id])
+  company        Company              @relation(fields: [companyId], references: [id])
+  leaveRequest   LeaveRequest         @relation(fields: [leaveRequestId], references: [id], onDelete: Cascade)
+  employee       Employee             @relation(fields: [employeeId], references: [id])
+  leaveBalance   LeaveBalance?        @relation(fields: [leaveBalanceId], references: [id])
+  paymentChanges LeavePaymentChange[]
 
   @@index([employeeId, leaveDate])
   @@index([leaveRequestId])
@@ -4178,6 +4182,65 @@ model EmployeeSalaryComponent {
 
   @@index([settingId])
   @@map("hrms_employee_salary_components")
+}
+
+// Salary Management — Slice 2: Manage Attendance (2026-10-28). Salary-only
+// overlay on a day's worked hours; the real punches/sessions are never
+// touched. Only salary views apply it (computeEmployeesMonth option).
+enum SalaryAdjustmentMode {
+  /// Count the day as `hours` worked (e.g. 9h).
+  FIXED_HOURS
+  /// Count the day as the employee's shift hours.
+  OFFICE_TIME
+  /// Count the day as fully present whatever the hours.
+  FULL_DAY
+}
+
+model SalaryAttendanceAdjustment {
+  id              String               @id @default(uuid()) @db.Uuid
+  companyId       String               @map("company_id") @db.Uuid
+  employeeId      String               @map("employee_id") @db.Uuid
+  attendanceDate  DateTime             @map("attendance_date") @db.Date
+  mode            SalaryAdjustmentMode
+  /// Hours the salary run counts (FIXED_HOURS / OFFICE_TIME); null for FULL_DAY.
+  hours           Decimal?             @db.Decimal(5, 2)
+  /// Real worked hours when the adjustment was made (for the record).
+  actualHours     Decimal              @map("actual_hours") @db.Decimal(5, 2)
+  reason          String
+  createdByUserId String               @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime             @default(now()) @map("created_at")
+  /// Removed adjustments are kept for the audit trail.
+  removedAt       DateTime?            @map("removed_at")
+  removedByUserId String?              @map("removed_by_user_id") @db.Uuid
+  removeReason    String?              @map("remove_reason")
+
+  company  Company  @relation(fields: [companyId], references: [id])
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@index([companyId, employeeId, attendanceDate])
+  @@map("hrms_salary_attendance_adjustments")
+}
+
+/// Every Paid <-> Unpaid switch of a leave day, with the balance it moved.
+model LeavePaymentChange {
+  id              String           @id @default(uuid()) @db.Uuid
+  companyId       String           @map("company_id") @db.Uuid
+  leaveDayId      String           @map("leave_day_id") @db.Uuid
+  employeeId      String           @map("employee_id") @db.Uuid
+  fromType        LeavePaymentType @map("from_type")
+  toType          LeavePaymentType @map("to_type")
+  fromRemaining   Decimal          @default(0) @map("from_remaining") @db.Decimal(4, 2)
+  fromCarry       Decimal          @default(0) @map("from_carry") @db.Decimal(4, 2)
+  reason          String
+  changedByUserId String           @map("changed_by_user_id") @db.Uuid
+  createdAt       DateTime         @default(now()) @map("created_at")
+
+  company  Company  @relation(fields: [companyId], references: [id])
+  leaveDay LeaveDay @relation(fields: [leaveDayId], references: [id], onDelete: Cascade)
+
+  @@index([leaveDayId])
+  @@index([companyId, employeeId])
+  @@map("hrms_leave_payment_changes")
 }
 
 // ─────────────────────────────────────────────────────────────

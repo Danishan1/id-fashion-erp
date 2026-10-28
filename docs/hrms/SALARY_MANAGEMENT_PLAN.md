@@ -62,6 +62,15 @@ re-generate; approved rows still editable; history page re-runs the calculation;
   and `/salary/setup/[employeeId]` (form + full-month estimate). Base salary is written through to
   `Employee.fixedMonthlySalary`; OT rate is saved on `EmployeeAttendanceProfile`. RBAC module `hrms_salary_setup`
   (MANAGEMENT: view/create/edit/export). PAN / bank account are masked in the audit log.
+- [x] **Slice 2 — Manage Attendance** (2026-10-28). `hrms_salary_attendance_adjustments` (salary-only overlay:
+  FIXED_HOURS / OFFICE_TIME / FULL_DAY, reason, actual hours snapshot; removed rows kept; one active per day via
+  partial unique index) and `hrms_leave_payment_changes`; migration `20261028170000_hrms_salary_attendance_adjustments`
+  (+ rollback). `computeEmployeesMonth(..., { applySalaryAdjustments: true })` applies the overlay — every attendance
+  screen leaves it off. `switchLeaveDayPayment()` in leave-balance.service moves the balance (Paid→Unpaid refunds to
+  the month it came from; Unpaid→Paid takes remaining then carry-forward, refused if short). Nobody can adjust or
+  re-pay their own attendance. Only working days (not holiday / weekly off / future / pre-joining / full leave) can be
+  adjusted. Screens `/salary/attendance` and `/salary/attendance/[employeeId]?month=`. RBAC `hrms_salary_attendance`
+  (MANAGEMENT: view/view_all/edit). **Slice 3 must add the month-lock check to adjust / remove / leave switch.**
 
 ## RBAC
 New sub-modules: `hrms_salary_setup`, `hrms_salary_attendance`, `hrms_salary_generate` (view/create/edit/approve
