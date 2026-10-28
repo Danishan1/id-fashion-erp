@@ -15,7 +15,11 @@ export const MODULES = [
   // rules) — split from "crm" so a salesperson who can edit leads cannot
   // also redefine the pipeline vocabulary everyone else uses (2026-10-01).
   "crm_settings",
-  "marketing",
+  // Sales & Marketing module (2026-10-28, docs/sales-marketing/) — replaces
+  // the old standalone "marketing" module (removed the same day). One module
+  // for Phase 01 (the module shell + dashboard); later phases add their own
+  // modules (enquiries, quotations, pricing, campaigns, ...) when built.
+  "sales_marketing",
   // HRMS is split into one module per screen (2026-10-27) so a role can be
   // given each attendance/leave screen separately. "hrms_attendance" is My
   // Attendance (punch + own records); "hrms_leave" is Leave Requests.
@@ -215,15 +219,12 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     masters_finance: ["view"],
     crm: ["view", "view_all", "export"],
     crm_settings: ["view", "edit"],
-    // Approve/reject added deliberately for the Campaign approval workflow —
-    // MANAGEMENT is the checkpoint (mirrors their identical approve/reject
-    // shape on `sampling` just below), MERCHANDISER (the creator) stays
-    // view/create/edit/export/print only, same self-approval-guard reasoning
-    // as every other final approval checkpoint in this project.
-    marketing: ["view", "approve", "reject", "export"],
+    // Same grants as crm (decided 2026-10-28: Sales & Marketing goes to the
+    // roles that already work the CRM).
+    sales_marketing: ["view", "view_all", "export"],
     // No dedicated HR role exists yet in this system — MANAGEMENT owns
     // attendance/leave for now (same "closest existing manager role" default
-    // used for crm/marketing above), including leave approval.
+    // used for crm above), including leave approval.
     // Approve/reject added for the Attendance Correction Request workflow —
     // same "MANAGEMENT is the checkpoint" shape as hrms_leave just below.
     // "override" = admin time corrections (attendance module port, 2026-10-23).
@@ -310,7 +311,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     payment_requests: ["view", "create"],
     masters_core: ["view", "create", "edit"],
     crm: ["view", "create", "edit", "export", "print"],
-    marketing: ["view", "create", "edit", "export", "print"],
+    sales_marketing: ["view", "create", "edit", "export", "print"],
     sampling: ["view", "create", "edit", "export", "print"],
     buyer_enquiries: ["view", "create", "edit", "reject", "export", "print"],
     sales_orders: ["view", "create", "edit", "cancel", "export", "print"],

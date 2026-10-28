@@ -6,7 +6,7 @@
  * QA pass) has been found and fixed repeatedly across this project — this is
  * the shared, canonical version of the fix, replacing what had drifted into
  * 3 separate hand-copied local implementations (SamplingFilters.tsx,
- * crm/page.tsx, marketing/channel-performance/page.tsx) plus ~26 separate
+ * crm/page.tsx and the since-removed Marketing channel report) plus ~26 separate
  * `new Date().toISOString().slice(0, 10)` "today" defaults that had the bug
  * outright rather than a local fix.
  */

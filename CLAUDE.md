@@ -8046,3 +8046,19 @@ Plan and decisions: `docs/hrms/SALARY_MANAGEMENT_PLAN.md` (reference-project for
 ## HRMS Salary Management - Slice 6 Salary payout (2026-10-28)
 - "Send to Accounts" on a finalised run (`salary-payout.service.ts`) posts one accrual journal (source `SALARY_RUN`; EXP-SALARY is the balancing debit) and raises one SALARY payment request per employee (`sourceModule SALARY_RUN_LINE`, direct to accountant). Paying it posts Dr SALARY-PAY / Cr Cash-Bank. Reopen is refused once any salary is paid; otherwise it cancels the requests and reverses the accrual.
 - Journal numbers: `journals` is unique per company but `document_sequences` counts per branch, so a journal numbered from the null-branch counter can collide with one from a branch counter (hit live here). Salary journals and salary/advance requests use the actor's branch, like other postings. The general mismatch is not fixed.
+
+## Sales & Marketing module — Phase 01 Foundation; legacy Marketing removed (2026-10-28, branch `sale-marketing`)
+Docs: `docs/sales-marketing/PHASE_00_ARCHITECTURE_ASSESSMENT.md`, `PHASE_01_FOUNDATION.md` (read both before any Sales & Marketing phase; one phase at a time, approval between phases). No separate requirements document exists yet.
+- The old standalone Marketing module (campaigns, ad integrations, channel report, customer segments, campaign CSV import, `/imports`) is deleted with its data: migration `20261028240000_remove_legacy_marketing` (drops `mkt_*`/`ad_*` tables + enums, `crm_leads.campaign_id`, enum values `CAMPAIGN`/`CAMPAIGN_DAILY_METRIC`, `marketing.*` permissions). CRM's UTM/campaign-source text fields stay.
+- New RBAC module `sales_marketing` (built-in roles get the same actions as `crm`) and package `SALES_MARKETING` (replaces `MARKETING`). Migration `20261028250000_sales_marketing_foundation` copies every `crm.*` role grant/user override and renames the package key. Down scripts in `prisma/rollback/` (the legacy one recreates tables empty).
+- Pages under `src/app/(dashboard)/sales-marketing/` (layout asserts `sales_marketing.view`); API `GET /api/v1/sales-marketing/overview`; service + client-safe section map in `src/modules/sales-marketing/`. Dashboard shows no S&M KPIs until real data exists — only real counts from modules the viewer can view.
+- A new section: build it, set `status: "AVAILABLE"` + `href` in `sales-marketing-sections.ts` and add its sidebar leaf in the same change. Give each later phase its own RBAC module (put it in the `SALES_MARKETING` package) and number new documents company-wide (`branchId: null`).
+- Generic `src/components/ui/PageHeader.tsx` / `PageStates.tsx`; `CrmPageHeader` / `CrmStates` delegate to them.
+
+## Sales & Marketing — Release 1 / S1 Enquiries (2026-10-28)
+Docs: `docs/sales-marketing/RELEASE_PLAN.md` (Release 1 slices S1–S6, decisions D1–D4) and `S1_ENQUIRIES.md`.
+- The Sales Enquiry IS `BuyerEnquiry` (D1). Merchandising's `status` (derived from line sampling) is untouched; the sales lifecycle is the separate `salesStage`, changed only via `src/modules/sales-marketing/enquiries/sales-enquiry.service.ts`. Transitions live in `sales-enquiry-registry.ts`; QUOTATION_IN_PROGRESS / QUOTED / WON are system stages for S2–S4 to set — never expose them as manual moves.
+- Visibility = CRM rule on `sales_marketing` (view = own/team/unassigned-created, view_all = all) + branch scope; reuses `crmOwnerWhere` with `{ owner: "ownerUserId", createdBy: "requestedByUserId" }`. Stage writes are guarded on `salesStage` + `updatedAt`.
+- CRM opportunity links use the CRM's `crm_opportunity_erp_links` via `linkErpDocument()` (no column on the enquiry). Timeline: `buyer_enquiry_activities`. Attachments: `BUYER_ENQUIRY` record-attachments target.
+- Migration `20261028260000_sales_enquiries_s1` (+ down script). S1 used the base `sales_marketing` permission module, no new permissions.
+

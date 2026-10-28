@@ -4,6 +4,7 @@ import { PermissionService } from "@/core/rbac/PermissionService";
 import type { Module } from "@/config/rbac";
 import type { RelatedModule } from "@prisma/client";
 import { assertPaymentRequestVisible } from "@/modules/accounts/payment-requests/payment-request.service";
+import { assertSalesEnquiryVisible } from "@/modules/sales-marketing/enquiries/sales-enquiry.service";
 
 /**
  * Which records the shared "record attachments" API (files + voice notes)
@@ -67,6 +68,16 @@ const TARGETS: Partial<Record<RelatedModule, AttachmentTarget>> = {
       prisma.paymentRequest.findFirst({ where: { id, companyId }, select: { branchId: true, status: true } }),
     // Without view_all a user sees only the requests they raised.
     assertVisible: assertPaymentRequestVisible,
+  },
+  // Sales & Marketing → Enquiries (S1, 2026-10-28). The context label is the sales stage.
+  BUYER_ENQUIRY: {
+    rbacModule: "sales_marketing",
+    load: async (companyId, id) => {
+      const enquiry = await prisma.buyerEnquiry.findFirst({ where: { id, companyId }, select: { branchId: true, salesStage: true } });
+      return enquiry ? { branchId: enquiry.branchId, status: enquiry.salesStage } : null;
+    },
+    // Same own/team/all rule as the enquiry list.
+    assertVisible: assertSalesEnquiryVisible,
   },
   PAYMENT: {
     rbacModule: "payments",

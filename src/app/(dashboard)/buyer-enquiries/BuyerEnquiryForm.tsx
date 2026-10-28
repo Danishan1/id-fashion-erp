@@ -5,6 +5,8 @@ import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { todayIsoDate } from "@/lib/date";
+import { CrmLinkFields, PrioritySelect, useEnquiryOwners } from "@/components/sales-marketing/enquiries/SalesEnquiryFields";
+import type { SalesEnquiryPriority } from "@/modules/sales-marketing/enquiries/sales-enquiry-registry";
 
 interface Option {
   id: string;
@@ -49,8 +51,29 @@ function emptyLine(): LineDraft {
   };
 }
 
-export function BuyerEnquiryForm() {
+/**
+ * `mode="sales"` (Sales & Marketing → Enquiries, S1 2026-10-28) adds the sales
+ * fields — subject, owner, priority, follow-up, CRM company/contact — and saves
+ * through the Sales & Marketing API. The enquiry is the same Buyer Enquiry
+ * record either way (decision D1).
+ */
+export function BuyerEnquiryForm({
+  mode = "merchandising",
+  currentUserId,
+  canUseCrm = false,
+}: {
+  mode?: "merchandising" | "sales";
+  currentUserId?: string;
+  canUseCrm?: boolean;
+} = {}) {
   const router = useRouter();
+  const isSales = mode === "sales";
+  const [subject, setSubject] = useState("");
+  const [ownerUserId, setOwnerUserId] = useState(currentUserId ?? "");
+  const [priority, setPriority] = useState<SalesEnquiryPriority>("NORMAL");
+  const [nextFollowUpDate, setNextFollowUpDate] = useState("");
+  const [crm, setCrm] = useState({ crmCompanyId: "", crmContactId: "" });
+  const owners = useEnquiryOwners(isSales);
 
   // Off by default — the common case is a known Customer. Toggling this on
   // reveals the prospect quick-capture fields instead of the Customer/Buyer
@@ -108,10 +131,20 @@ export function BuyerEnquiryForm() {
     setIsSubmitting(true);
     setError(null);
 
-    const res = await fetch("/api/v1/buyer-enquiries", {
+    const res = await fetch(isSales ? "/api/v1/sales-marketing/enquiries" : "/api/v1/buyer-enquiries", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        ...(isSales
+          ? {
+              subject: subject || undefined,
+              ownerUserId: ownerUserId || undefined,
+              priority,
+              nextFollowUpDate: nextFollowUpDate || undefined,
+              crmCompanyId: crm.crmCompanyId || undefined,
+              crmContactId: crm.crmContactId || undefined,
+            }
+          : {}),
         customerId: isProspect ? undefined : customerId || undefined,
         buyerId: isProspect ? undefined : buyerId || undefined,
         prospectName: isProspect ? prospectName : undefined,
@@ -145,12 +178,53 @@ export function BuyerEnquiryForm() {
     }
 
     const { data } = await res.json();
-    router.push(`/buyer-enquiries/${data.id}`);
+    router.push(isSales ? `/sales-marketing/enquiries/${data.id}` : `/buyer-enquiries/${data.id}`);
     router.refresh();
   };
 
   return (
     <form onSubmit={handleSubmit} className="max-w-3xl space-y-6">
+      {isSales && (
+        <div className="space-y-4 rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
+          <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Sales details</h2>
+          <FormField label="Subject" htmlFor="subject">
+            <input
+              id="subject"
+              value={subject}
+              maxLength={200}
+              onChange={(e) => setSubject(e.target.value)}
+              placeholder="e.g. AW27 knit tops — 3 styles"
+              className={textInputClass()}
+            />
+          </FormField>
+          <div className="grid gap-4 sm:grid-cols-3">
+            <FormField label="Owner" htmlFor="ownerUserId">
+              <SearchableSelect
+                id="ownerUserId"
+                value={ownerUserId}
+                onChange={setOwnerUserId}
+                options={owners.map((o) => ({ id: o.id, label: o.fullName }))}
+                placeholder="Search user…"
+                emptyOptionLabel="— Me —"
+              />
+            </FormField>
+            <FormField label="Priority" htmlFor="priority">
+              <PrioritySelect value={priority} onChange={setPriority} />
+            </FormField>
+            <FormField label="Next follow-up" htmlFor="nextFollowUpDate">
+              <input
+                id="nextFollowUpDate"
+                type="date"
+                value={nextFollowUpDate}
+                onChange={(e) => setNextFollowUpDate(e.target.value)}
+                className={textInputClass()}
+              />
+            </FormField>
+          </div>
+          {canUseCrm && <CrmLinkFields crmCompanyId={crm.crmCompanyId} crmContactId={crm.crmContactId} onChange={setCrm} />}
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Who is this enquiry from?</h2>
         <label className="flex items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400">
@@ -404,11 +478,11 @@ export function BuyerEnquiryForm() {
           disabled={isSubmitting}
           className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
         >
-          {isSubmitting ? "Saving…" : "Create Buyer Enquiry"}
+          {isSubmitting ? "Saving…" : isSales ? "Create Enquiry" : "Create Buyer Enquiry"}
         </button>
         <button
           type="button"
-          onClick={() => router.push("/buyer-enquiries")}
+          onClick={() => router.push(isSales ? "/sales-marketing/enquiries" : "/buyer-enquiries")}
           className="rounded-md border border-zinc-300 px-4 py-2 text-sm text-zinc-700 dark:border-zinc-700 dark:text-zinc-200"
         >
           Cancel

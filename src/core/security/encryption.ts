@@ -2,8 +2,7 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from "crypt
 
 /**
  * AES-256-GCM at-rest encryption for secrets that must never sit in plaintext
- * in Postgres — first (and so far only) consumer: `AdAccountConnection`'s
- * OAuth access/refresh tokens, which grant real ad-spend-account access, a
+ * in Postgres (AI provider keys, CRM channel and webhook secrets) — a
  * materially different risk than this app's own internal data. No new env
  * var: the key is derived by hashing the existing `NEXTAUTH_SECRET` down to
  * 32 bytes, so there's nothing extra to configure or accidentally leave unset

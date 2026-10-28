@@ -7,7 +7,7 @@ import type { Money } from "./dashboard-types";
 
 /**
  * Phase 21 — the dashboard's small, dependency-free charts (the app has no
- * charting library; see marketing/TrendChart.tsx for the same decision).
+ * charting library).
  *
  * Colours: one series = slot-1 blue; two series = blue + orange, validated
  * for colour-blind separation in light and dark (dataviz validator: adjacent

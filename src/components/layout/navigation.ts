@@ -106,15 +106,16 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Settings", href: "/crm/settings", modules: ["crm_settings"] },
     ],
   },
-  // Marketing (kept, unchanged shape, when the legacy CRM was replaced by
-  // the new CRM above — see CLAUDE.md's CRM Replacement section).
+  // Sales & Marketing (2026-10-28, docs/sales-marketing/) — replaced the old
+  // standalone "Marketing" group. Each phase adds its own leaf here when its
+  // screens exist; never link unbuilt pages.
   {
-    label: "Marketing",
-    href: "/marketing",
-    modules: ["marketing"],
+    label: "Sales & Marketing",
+    href: "/sales-marketing",
+    modules: ["sales_marketing"],
     children: [
-      { label: "Campaigns", href: "/campaigns", modules: ["marketing"] },
-      { label: "Import History", href: "/imports", modules: ["marketing"] },
+      { label: "Dashboard", href: "/sales-marketing", modules: ["sales_marketing"] },
+      { label: "Enquiries", href: "/sales-marketing/enquiries", modules: ["sales_marketing"] },
     ],
   },
   {

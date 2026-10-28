@@ -37,7 +37,6 @@ const PREFIX_BY_DOCUMENT_TYPE: Record<DocumentType, string> = {
   SKU: "SKU",
   CRM_LEAD: "LEAD",
   CRM_OPPORTUNITY: "OPP",
-  CAMPAIGN: "CAMP",
   FORWARDER: "TRN",
   // Finished Goods Inventory module (2026-10-13, FGI-004).
   FG_RECEIPT: "FGR",

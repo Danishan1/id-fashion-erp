@@ -66,10 +66,12 @@ export const ENTITLEMENT_PACKAGES = [
     modules: ["crm", "crm_settings"],
   },
   {
-    key: "MARKETING",
-    label: "Marketing",
-    description: "Campaigns and campaign imports.",
-    modules: ["marketing"],
+    // Replaced the old "MARKETING" package (2026-10-28); existing plan and
+    // company rows were renamed by migration 20261028250000.
+    key: "SALES_MARKETING",
+    label: "Sales & Marketing",
+    description: "Sales enquiries, quotations, pricing, targets, campaigns and sales & marketing analytics.",
+    modules: ["sales_marketing"],
   },
   {
     key: "HRMS",
