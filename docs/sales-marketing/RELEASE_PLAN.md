@@ -103,4 +103,7 @@ Goal: a salesperson records an enquiry, sends a priced, approved quotation PDF, 
 - **D3 — Price lists:** Release 1, as S5 — after Quote-to-Order works with manual prices.
 - **D4 — Quotation lines:** Style, approved Design (Sample) or free text; free-text lines must be mapped to a real Style before conversion to a Sales Order.
 
-Progress: **S1 Enquiries built and verified in the sandbox (2026-10-28)** — see `S1_ENQUIRIES.md`. Next: S2 Quotations core (decide first whether quotations get their own RBAC module).
+Progress:
+- **S1 Enquiries** — built and verified in the sandbox (2026-10-28), see `S1_ENQUIRIES.md`.
+- **S2 Quotations core** — built and verified in the sandbox (2026-10-28), see `S2_QUOTATIONS.md`. Decided before building: own permission module `sales_quotations`; quotations to prospects allowed (Customer needed to convert); GST shown as CGST + SGST / IGST. Colour × size split moved to conversion (S4) — the Sales Order form already captures it.
+- Next: S3 Issue, revise, approve, PDF, accept.

@@ -112,10 +112,11 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     label: "Sales & Marketing",
     href: "/sales-marketing",
-    modules: ["sales_marketing"],
+    modules: ["sales_marketing", "sales_quotations"],
     children: [
       { label: "Dashboard", href: "/sales-marketing", modules: ["sales_marketing"] },
       { label: "Enquiries", href: "/sales-marketing/enquiries", modules: ["sales_marketing"] },
+      { label: "Quotations", href: "/sales-marketing/quotations", modules: ["sales_quotations"] },
     ],
   },
   {

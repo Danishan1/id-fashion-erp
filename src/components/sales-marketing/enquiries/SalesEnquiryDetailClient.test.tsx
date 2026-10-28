@@ -67,7 +67,16 @@ const base: Detail = {
   activities: [],
   opportunities: { visible: [], hiddenCount: 0 },
 };
-const allow = { create: true, edit: true, viewAll: false, crmView: true, crmEdit: true, merchandisingView: true };
+const allow = {
+  view: true,
+  create: true,
+  edit: true,
+  viewAll: false,
+  crmView: true,
+  crmEdit: true,
+  merchandisingView: true,
+  quotations: { view: true, create: true, edit: true, cancel: true },
+};
 
 beforeEach(() => push.mockReset());
 afterEach(() => {
@@ -135,5 +144,18 @@ describe("SalesEnquiryDetailClient", () => {
     fireEvent.click(screen.getByRole("button", { name: "Reassign" }));
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(push).toHaveBeenCalledWith("/sales-marketing/enquiries"));
+  });
+
+  it("lists the enquiry's quotations and offers Create quotation at a quotable stage", () => {
+    const quotations = [
+      { id: "q1", quotationNumber: "QUO-2026-00001", status: "DRAFT" as const, owner: null, current: { revisionNumber: 1, title: "AW27", validUntil: "2026-11-27", grandTotal: "309330" } },
+    ];
+    const { unmount } = render(<SalesEnquiryDetailClient initialEnquiry={base} quotations={quotations} permissions={allow} currentUserId="u1" />);
+    expect(screen.getByText("QUO-2026-00001")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Create quotation" }).getAttribute("href")).toBe("/sales-marketing/quotations/new?enquiryId=e1");
+    unmount();
+    render(<SalesEnquiryDetailClient initialEnquiry={{ ...base, salesStage: "ON_HOLD" }} quotations={[]} permissions={allow} currentUserId="u1" />);
+    expect(screen.queryByRole("link", { name: "Create quotation" })).toBeNull();
+    expect(screen.getByText("No quotations yet.")).toBeTruthy();
   });
 });

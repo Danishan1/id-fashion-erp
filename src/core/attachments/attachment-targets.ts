@@ -5,6 +5,7 @@ import type { Module } from "@/config/rbac";
 import type { RelatedModule } from "@prisma/client";
 import { assertPaymentRequestVisible } from "@/modules/accounts/payment-requests/payment-request.service";
 import { assertSalesEnquiryVisible } from "@/modules/sales-marketing/enquiries/sales-enquiry.service";
+import { assertQuotationVisible } from "@/modules/sales-marketing/quotations/quotation.service";
 
 /**
  * Which records the shared "record attachments" API (files + voice notes)
@@ -24,6 +25,8 @@ interface AttachmentTarget {
   load: (companyId: string, recordId: string) => Promise<{ branchId: string | null; status: string } | null>;
   /** Extra per-user visibility rule (e.g. "own records only"); throws NOT_FOUND when hidden. */
   assertVisible?: (actor: { companyId: string; userId: string }, recordId: string) => Promise<void>;
+  /** Record has no branch (company-wide document): skip the branch restriction. */
+  companyWide?: boolean;
 }
 
 const TARGETS: Partial<Record<RelatedModule, AttachmentTarget>> = {
@@ -79,6 +82,16 @@ const TARGETS: Partial<Record<RelatedModule, AttachmentTarget>> = {
     // Same own/team/all rule as the enquiry list.
     assertVisible: assertSalesEnquiryVisible,
   },
+  // Sales & Marketing → Quotations (S2). Quotations are company-wide (no branch).
+  QUOTATION: {
+    rbacModule: "sales_quotations",
+    load: async (companyId, id) => {
+      const quotation = await prisma.quotation.findFirst({ where: { id, companyId }, select: { status: true } });
+      return quotation ? { branchId: null, status: quotation.status } : null;
+    },
+    assertVisible: assertQuotationVisible,
+    companyWide: true,
+  },
   PAYMENT: {
     rbacModule: "payments",
     load: (companyId, id) =>
@@ -114,7 +127,7 @@ export async function assertAttachmentAccess(
   if (!record) throw new BusinessRuleError("NOT_FOUND", "Record not found.", { id: recordId });
 
   const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
-  if (allowedBranchIds !== null && (!record.branchId || !allowedBranchIds.has(record.branchId))) {
+  if (!target.companyWide && allowedBranchIds !== null && (!record.branchId || !allowedBranchIds.has(record.branchId))) {
     throw new BusinessRuleError("NOT_FOUND", "Record not found.", { id: recordId });
   }
   if (target.assertVisible) await target.assertVisible(actor, recordId);

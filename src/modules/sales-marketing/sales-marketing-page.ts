@@ -11,6 +11,9 @@ export interface SalesMarketingPagePermissions {
   crmEdit: boolean;
   /** Merchandising's Buyer Enquiry screen (line review, Sample conversion). */
   merchandisingView: boolean;
+  /** Sales & Marketing itself (dashboard, enquiries). */
+  view: boolean;
+  quotations: { view: boolean; create: boolean; edit: boolean; cancel: boolean };
 }
 
 /**
@@ -22,16 +25,30 @@ export async function getSalesMarketingPageContext(): Promise<{ actor: SalesActo
   const session = await auth();
   if (!session?.user?.id) notFound();
   const userId = session.user.id;
-  const [create, edit, viewAll, crmView, crmEdit, merchandisingView] = await Promise.all([
+  const [view, create, edit, viewAll, crmView, crmEdit, merchandisingView, qView, qCreate, qEdit, qCancel] = await Promise.all([
+    PermissionService.can(userId, "sales_marketing", "view"),
     PermissionService.can(userId, "sales_marketing", "create"),
     PermissionService.can(userId, "sales_marketing", "edit"),
     PermissionService.can(userId, "sales_marketing", "view_all"),
     PermissionService.can(userId, "crm", "view"),
     PermissionService.can(userId, "crm", "edit"),
     PermissionService.can(userId, "buyer_enquiries", "view"),
+    PermissionService.can(userId, "sales_quotations", "view"),
+    PermissionService.can(userId, "sales_quotations", "create"),
+    PermissionService.can(userId, "sales_quotations", "edit"),
+    PermissionService.can(userId, "sales_quotations", "cancel"),
   ]);
   return {
     actor: { companyId: session.user.companyId, userId, branchId: session.user.defaultBranchId ?? null },
-    permissions: { create, edit, viewAll, crmView, crmEdit, merchandisingView },
+    permissions: {
+      view,
+      create,
+      edit,
+      viewAll,
+      crmView,
+      crmEdit,
+      merchandisingView,
+      quotations: { view: qView, create: qCreate, edit: qEdit, cancel: qCancel },
+    },
   };
 }

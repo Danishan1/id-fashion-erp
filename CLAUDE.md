@@ -8062,3 +8062,10 @@ Docs: `docs/sales-marketing/RELEASE_PLAN.md` (Release 1 slices S1–S6, decision
 - CRM opportunity links use the CRM's `crm_opportunity_erp_links` via `linkErpDocument()` (no column on the enquiry). Timeline: `buyer_enquiry_activities`. Attachments: `BUYER_ENQUIRY` record-attachments target.
 - Migration `20261028260000_sales_enquiries_s1` (+ down script). S1 used the base `sales_marketing` permission module, no new permissions.
 
+## Sales & Marketing — Release 1 / S2 Quotations core (2026-10-28)
+Doc: `docs/sales-marketing/S2_QUOTATIONS.md`.
+- `Quotation` (QUO-, company-wide numbering) → `QuotationRevision` (all commercial content + totals) → `QuotationLine`. S2 = drafts only (create, edit in place with `version`, cancel). S3 must freeze a revision on issue and create a new revision for later edits — never edit a non-DRAFT revision.
+- All amounts come from `src/modules/sales-marketing/quotations/quotation-calc.ts` (reuses `calculatePayableLine`); payloads are `.strict()` so client totals are rejected. GST rate from the effective Tax Rate, frozen per line; CGST+SGST vs IGST from company GSTIN state vs place of supply.
+- Own RBAC module `sales_quotations` (SALES_MARKETING package). The `/sales-marketing` root layout accepts either module; `enquiries/` and `quotations/` layouts check their own.
+- Enquiry stage hooks live in `sales-enquiry.service.ts` (`loadEnquiryForQuotation`, `markEnquiryQuotationStarted`, `releaseEnquiryQuotation`) and run inside the quotation's transaction.
+- Migration `20261028270000_sales_quotations_s2` (+ down script; the QUOTATION enum values can't be dropped).

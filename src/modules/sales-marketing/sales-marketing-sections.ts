@@ -32,7 +32,7 @@ export const SALES_MARKETING_AREAS: { key: SalesMarketingArea; label: string }[]
 
 export const SALES_MARKETING_SECTIONS: readonly SalesMarketingSection[] = [
   { key: "enquiries", label: "Sales Enquiries", area: "SALES", phase: 2, status: "AVAILABLE", href: "/sales-marketing/enquiries", description: "Capture and qualify incoming sales enquiries." },
-  { key: "quotations", label: "Quotations & Proposals", area: "SALES", phase: 2, status: "PLANNED", description: "Prepare, revise and send quotations to customers." },
+  { key: "quotations", label: "Quotations & Proposals", area: "SALES", phase: 2, status: "AVAILABLE", href: "/sales-marketing/quotations", description: "Prepare, revise and send quotations to customers." },
   { key: "pricing", label: "Pricing & Price Lists", area: "SALES", phase: 3, status: "PLANNED", description: "Price lists per customer, channel and currency." },
   { key: "discounts", label: "Discounts & Approvals", area: "SALES", phase: 3, status: "PLANNED", description: "Discount rules and approval limits." },
   { key: "sales-orders", label: "Sales Order Integration", area: "SALES", phase: 4, status: "PLANNED", description: "Turn accepted quotations into ERP Sales Orders." },

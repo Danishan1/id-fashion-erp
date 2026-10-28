@@ -165,7 +165,7 @@ export async function listEligibleOwners(actor: SalesActor) {
  * with each other, and — when both sides are linked to an ERP customer —
  * match the enquiry's customer. The user needs crm.view to set them.
  */
-async function assertCrmLinks(
+export async function assertCrmLinks(
   actor: SalesActor,
   links: { crmCompanyId: string | null; crmContactId: string | null; customerId: string | null }
 ) {
@@ -678,3 +678,53 @@ export async function unlinkSalesEnquiryOpportunity(actor: SalesActor, id: strin
 export async function assertSalesEnquiryVisible(actor: { companyId: string; userId: string }, id: string): Promise<void> {
   await loadVisible(actor, id);
 }
+
+// ── Quotation hooks (S2) ─────────────────────────────────────────
+// Quotations move the enquiry through the system stages; nothing else may.
+
+/** Stages from which a quotation can be started. */
+export const QUOTABLE_STAGES = ["NEW", "UNDER_REVIEW", "QUALIFIED", "QUOTATION_IN_PROGRESS", "QUOTED"] as const;
+
+/**
+ * Loads an enquiry a quotation is being made from: in the user's Sales &
+ * Marketing scope, not cancelled, and at a quotable stage.
+ */
+export async function loadEnquiryForQuotation(actor: SalesActor, id: string) {
+  await PermissionService.assert(actor.userId, "sales_marketing", "view");
+  const enquiry = await loadEditable(actor, id, "quoted");
+  if (!(QUOTABLE_STAGES as readonly string[]).includes(enquiry.salesStage)) {
+    throw new BusinessRuleError(
+      "INVALID_STATE_TRANSITION",
+      `This enquiry is ${SALES_ENQUIRY_STAGES[enquiry.salesStage].label.toLowerCase()} — ${enquiry.salesStage === "ON_HOLD" ? "resume" : "reopen"} it before quoting.`,
+      { stage: enquiry.salesStage }
+    );
+  }
+  return enquiry;
+}
+
+/** Inside the quotation's transaction: NEW / UNDER_REVIEW / QUALIFIED → QUOTATION_IN_PROGRESS. */
+export async function markEnquiryQuotationStarted(tx: Prisma.TransactionClient, actor: SalesActor, enquiryId: string, quotationNumber: string) {
+  const enquiry = await tx.buyerEnquiry.findFirst({ where: { id: enquiryId, companyId: actor.companyId } });
+  if (!enquiry || !["NEW", "UNDER_REVIEW", "QUALIFIED"].includes(enquiry.salesStage)) return;
+  await guardedUpdate(tx, enquiry, { salesStage: "QUOTATION_IN_PROGRESS", stageChangedAt: new Date() });
+  await tx.buyerEnquiryActivity.create({
+    data: activityData(enquiry, actor, "STAGE_CHANGED", `Quotation ${quotationNumber} started`, { from: enquiry.salesStage, to: "QUOTATION_IN_PROGRESS", quotationNumber }),
+  });
+}
+
+/**
+ * Inside the quotation's transaction, after a quotation stops being open: if
+ * the enquiry is QUOTATION_IN_PROGRESS and has no other open quotation, it goes
+ * back to QUALIFIED.
+ */
+export async function releaseEnquiryQuotation(tx: Prisma.TransactionClient, actor: SalesActor, enquiryId: string, quotationNumber: string, openStatuses: readonly string[]) {
+  const enquiry = await tx.buyerEnquiry.findFirst({ where: { id: enquiryId, companyId: actor.companyId } });
+  if (!enquiry || enquiry.salesStage !== "QUOTATION_IN_PROGRESS") return;
+  const stillOpen = await tx.quotation.count({ where: { buyerEnquiryId: enquiryId, status: { in: openStatuses as never } } });
+  if (stillOpen > 0) return;
+  await guardedUpdate(tx, enquiry, { salesStage: "QUALIFIED", stageChangedAt: new Date() });
+  await tx.buyerEnquiryActivity.create({
+    data: activityData(enquiry, actor, "STAGE_CHANGED", `Quotation ${quotationNumber} cancelled`, { from: "QUOTATION_IN_PROGRESS", to: "QUALIFIED", quotationNumber }),
+  });
+}
+

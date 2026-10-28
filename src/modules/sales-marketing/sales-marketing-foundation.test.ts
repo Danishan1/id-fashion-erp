@@ -24,8 +24,9 @@ describe("Sales & Marketing module wiring", () => {
   });
 
   it("owns its pages for route protection and module entitlements", () => {
-    expect(modulesForPath("/sales-marketing")).toEqual(["sales_marketing"]);
-    expect(modulesForPath("/sales-marketing/anything")).toEqual(["sales_marketing"]);
+    expect(modulesForPath("/sales-marketing")).toEqual(["sales_marketing", "sales_quotations"]);
+    expect(modulesForPath("/sales-marketing/enquiries/x")).toEqual(["sales_marketing"]);
+    expect(modulesForPath("/sales-marketing/quotations/x")).toEqual(["sales_quotations"]);
     expect(modulesForPath("/marketing")).toBeNull();
     expect(modulesForPath("/campaigns")).toBeNull();
   });

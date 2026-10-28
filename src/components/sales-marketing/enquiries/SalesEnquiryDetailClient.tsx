@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { AttachmentsPanel } from "@/components/ui/AttachmentsPanel";
-import { Button } from "@/components/ui/Button";
+import { Button, buttonClasses } from "@/components/ui/Button";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { Modal } from "@/components/ui/Modal";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
@@ -29,6 +29,8 @@ import {
 } from "@/modules/sales-marketing/enquiries/sales-enquiry-registry";
 import type { SalesMarketingPagePermissions } from "@/modules/sales-marketing/sales-marketing-page";
 import { CrmLinkFields, PrioritySelect, useEnquiryOwners } from "./SalesEnquiryFields";
+import { QuotationStatusBadge, formatInr } from "@/components/sales-marketing/quotations/QuotationStatusBadge";
+import type { QuotationStatus } from "@/modules/sales-marketing/quotations/quotation-registry";
 import { PriorityBadge, StageBadge } from "./SalesEnquiryBadges";
 
 interface Activity {
@@ -133,12 +135,26 @@ async function send(url: string, method: string, body?: unknown): Promise<{ ok: 
   return { ok: true, data: json.data };
 }
 
+export interface EnquiryQuotationRow {
+  id: string;
+  quotationNumber: string;
+  status: QuotationStatus;
+  owner: { fullName: string } | null;
+  current: { revisionNumber: number; title: string; validUntil: string; grandTotal: string } | null;
+}
+
+/** Stages from which a quotation can be started (mirrors QUOTABLE_STAGES in the service). */
+const QUOTABLE: readonly SalesEnquiryStage[] = ["NEW", "UNDER_REVIEW", "QUALIFIED", "QUOTATION_IN_PROGRESS", "QUOTED"];
+
 export function SalesEnquiryDetailClient({
   initialEnquiry,
+  quotations = null,
   permissions,
   currentUserId,
 }: {
   initialEnquiry: SalesEnquiryDetail;
+  /** null = the viewer can't see quotations. */
+  quotations?: EnquiryQuotationRow[] | null;
   permissions: SalesMarketingPagePermissions;
   currentUserId: string;
 }) {
@@ -335,6 +351,37 @@ export function SalesEnquiryDetailClient({
               </table>
             </div>
           </Section>
+
+          {quotations && (
+            <Section
+              title={`Quotations (${quotations.length})`}
+              actions={
+                permissions.quotations.create && !cancelled && QUOTABLE.includes(enquiry.salesStage) ? (
+                  <Link href={`/sales-marketing/quotations/new?enquiryId=${enquiry.id}`} className={buttonClasses("primary", "xs")}>
+                    Create quotation
+                  </Link>
+                ) : undefined
+              }
+            >
+              {quotations.length === 0 ? (
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">No quotations yet.</p>
+              ) : (
+                <ul className="divide-y divide-zinc-100 text-sm dark:divide-zinc-800">
+                  {quotations.map((q) => (
+                    <li key={q.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                      <Link href={`/sales-marketing/quotations/${q.id}`} className="font-medium text-indigo-600 hover:underline dark:text-indigo-400">
+                        {q.quotationNumber}
+                        {q.current && q.current.revisionNumber > 1 && ` rev ${q.current.revisionNumber}`}
+                      </Link>
+                      <span className="min-w-0 flex-1 truncate text-zinc-600 dark:text-zinc-300">{q.current?.title}</span>
+                      <QuotationStatusBadge status={q.status} />
+                      <span className="tabular-nums">{formatInr(q.current?.grandTotal)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Section>
+          )}
 
           <ActivityTimeline enquiryId={enquiry.id} activities={enquiry.activities} createdAt={enquiry.createdAt} createdBy={enquiry.requestedBy.fullName} canAdd={canAct} onAdded={(a) => setEnquiry((e) => ({ ...e, activities: [a, ...e.activities] }))} />
         </div>

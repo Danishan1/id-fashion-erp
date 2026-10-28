@@ -279,6 +279,8 @@ model Company {
   paymentRequestPayouts       PaymentRequestPayout[]
   payees                      Payee[]
   expensePurposes             ExpensePurpose[]
+  quotations                  Quotation[]
+  quotationRevisions          QuotationRevision[]
 
   @@map("companies")
 }
@@ -1093,6 +1095,9 @@ model User {
   permissionOverridesCreated         UserPermissionOverride[]     @relation("UserPermissionOverrideCreatedBy")
   productionOrderColorFabricsUpdated ProductionOrderColorFabric[] @relation("ProductionOrderColorFabricUpdatedBy")
   paymentRequestPayoutsCreated       PaymentRequestPayout[]       @relation("PaymentRequestPayoutCreatedBy")
+  quotationsOwned                    Quotation[]                  @relation("QuotationOwner")
+  quotationsCreated                  Quotation[]                  @relation("QuotationCreatedBy")
+  quotationRevisionsCreated          QuotationRevision[]          @relation("QuotationRevisionCreatedBy")
 
   @@unique([companyId, supportForPlatformUserId])
   @@map("users")
@@ -1274,6 +1279,7 @@ model Customer {
   customerReturns   CustomerReturn[]
 
   crmCompany CrmCompany?
+  quotations Quotation[]
 
   @@unique([companyId, code])
   @@map("customers")
@@ -1298,6 +1304,7 @@ model Buyer {
   salesOrders       SalesOrder[]
   aiGarmentProjects AiGarmentProject[]
   crmContacts       CrmContact[]
+  quotations        Quotation[]
 
   @@unique([customerId, code])
   @@map("buyers")
@@ -1841,6 +1848,7 @@ model Product {
   stockColorBalances               StockColorBalance[]
 
   paymentRequestInvoiceLines PaymentRequestInvoiceLine[] @relation("PaymentRequestInvoiceLineProduct")
+  quotationLines             QuotationLine[]
 
   @@unique([companyId, styleCode])
   @@map("products")
@@ -1925,6 +1933,7 @@ model UnitOfMeasure {
   materialSubstitutions        MaterialSubstitution[]
 
   productionOrderColorFabrics ProductionOrderColorFabric[]
+  quotationLines              QuotationLine[]
 
   @@map("units_of_measure")
 }
@@ -3013,7 +3022,8 @@ model SampleRequest {
   // (@unique), set once by createSampleRequestFromProject().
   aiGarmentProject AiGarmentProject?
 
-  stageCosts DesignStageCost[]
+  stageCosts     DesignStageCost[]
+  quotationLines QuotationLine[]
 
   @@unique([companyId, requestNumber])
   @@map("sample_requests")
@@ -3287,6 +3297,7 @@ model BuyerEnquiry {
   crmContact  CrmContact?            @relation(fields: [crmContactId], references: [id], onDelete: SetNull)
   lines       BuyerEnquiryLine[]
   activities  BuyerEnquiryActivity[]
+  quotations  Quotation[]
 
   @@unique([companyId, enquiryNumber])
   @@index([companyId, salesStage])
@@ -3382,10 +3393,11 @@ model BuyerEnquiryLine {
   createdAt          DateTime               @default(now()) @map("created_at")
   updatedAt          DateTime               @updatedAt @map("updated_at")
 
-  buyerEnquiry  BuyerEnquiry   @relation(fields: [buyerEnquiryId], references: [id])
-  product       Product?       @relation(fields: [productId], references: [id])
-  size          Size?          @relation(fields: [sizeId], references: [id])
-  sampleRequest SampleRequest? @relation(fields: [sampleRequestId], references: [id])
+  buyerEnquiry   BuyerEnquiry    @relation(fields: [buyerEnquiryId], references: [id])
+  product        Product?        @relation(fields: [productId], references: [id])
+  size           Size?           @relation(fields: [sizeId], references: [id])
+  sampleRequest  SampleRequest?  @relation(fields: [sampleRequestId], references: [id])
+  quotationLines QuotationLine[]
 
   @@map("buyer_enquiry_lines")
 }
@@ -7145,6 +7157,9 @@ model TaxRate {
   purchaseInvoiceItems       PurchaseInvoiceItem[]
   expenses                   Expense[]
   employeeAdvanceSettlements EmployeeAdvanceSettlement[]
+  quotationLines             QuotationLine[]
+  quotationFreight           QuotationRevision[]         @relation("QuotationFreightTaxRate")
+  quotationOtherCharges      QuotationRevision[]         @relation("QuotationOtherChargesTaxRate")
 
   @@index([taxTypeId])
   @@map("tax_rates")
@@ -10467,6 +10482,8 @@ model AiGarmentBuyerCommentCategorySummary {
 // ─────────────────────────────────────────────────────────────
 
 enum RelatedModule {
+  // Sales & Marketing S2: quotation attachments.
+  QUOTATION
   // P4 (2026-10-21): slips (generated PDFs or photos/scans of handwritten
   // slips) uploaded against a job order from the Work Portal.
   JOB_ORDER
@@ -11168,6 +11185,7 @@ model CrmCompany {
   mergeRecord    CrmCompanyMerge?  @relation("CrmCompanyMergeMerged")
   conversations  CrmConversation[]
   buyerEnquiries BuyerEnquiry[]
+  quotations     Quotation[]
 
   @@index([companyId, nameKey])
   @@index([companyId, nameMatchKey])
@@ -11304,6 +11322,7 @@ model CrmContact {
   conversations            CrmConversation[]
   conversationParticipants CrmConversationParticipant[]
   buyerEnquiries           BuyerEnquiry[]
+  quotations               Quotation[]
 
   @@index([companyId, crmCompanyId])
   @@index([companyId, archivedAt, createdAt])
@@ -12390,6 +12409,8 @@ model AuditLog {
 }
 
 enum DocumentType {
+  // Sales & Marketing S2 (2026-10-28): QUO-YYYY-#####, numbered company-wide.
+  QUOTATION
   SAMPLE_REQUEST
   // Platform SaaS Phase 5: customer support tickets (TKT-YYYY-#####, company-wide).
   SUPPORT_TICKET
@@ -14580,4 +14601,192 @@ model UserPermissionOverride {
   @@unique([userId, permissionId])
   @@index([companyId])
   @@map("user_permission_overrides")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Sales & Marketing — Quotations (Release 1 / S2, 2026-10-28)
+// ─────────────────────────────────────────────────────────────
+// A Quotation (stable number, party, owner) has numbered revisions; each
+// revision holds the full commercial content (header terms, charges, lines,
+// totals). A DRAFT revision is edited in place; S3 freezes a revision when it
+// is issued and makes any later change a new revision. All amounts are
+// computed on the server by quotation-calc.ts (see the rounding notes there).
+
+/// Status of the quotation as a whole (mirrors its current revision). S2 uses
+/// DRAFT and CANCELLED; the rest are set by S3 (approve/issue/accept/reject)
+/// and S4 (convert).
+enum QuotationStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  ISSUED
+  ACCEPTED
+  REJECTED
+  CONVERTED
+  CANCELLED
+}
+
+enum QuotationRevisionStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  ISSUED
+  SUPERSEDED
+  ACCEPTED
+  REJECTED
+  CANCELLED
+}
+
+/// D4: a line is an existing Style, an approved Design (Sample Request) or
+/// free text. Free text must be mapped to a Style before conversion (S4).
+enum QuotationLineType {
+  STYLE
+  DESIGN
+  FREE_TEXT
+}
+
+model Quotation {
+  id                    String          @id @default(uuid()) @db.Uuid
+  companyId             String          @map("company_id") @db.Uuid
+  quotationNumber       String          @map("quotation_number")
+  buyerEnquiryId        String?         @map("buyer_enquiry_id") @db.Uuid
+  // Customer, or a prospect name when the party isn't a Customer yet
+  // (conversion to a Sales Order needs a real Customer).
+  customerId            String?         @map("customer_id") @db.Uuid
+  buyerId               String?         @map("buyer_id") @db.Uuid
+  prospectName          String?         @map("prospect_name")
+  crmCompanyId          String?         @map("crm_company_id") @db.Uuid
+  crmContactId          String?         @map("crm_contact_id") @db.Uuid
+  ownerUserId           String?         @map("owner_user_id") @db.Uuid
+  status                QuotationStatus @default(DRAFT)
+  currentRevisionNumber Int             @default(1) @map("current_revision_number")
+  cancelledAt           DateTime?       @map("cancelled_at")
+  cancellationReason    String?         @map("cancellation_reason")
+  createdByUserId       String          @map("created_by_user_id") @db.Uuid
+  createdAt             DateTime        @default(now()) @map("created_at")
+  updatedAt             DateTime        @updatedAt @map("updated_at")
+
+  company      Company             @relation(fields: [companyId], references: [id])
+  buyerEnquiry BuyerEnquiry?       @relation(fields: [buyerEnquiryId], references: [id])
+  customer     Customer?           @relation(fields: [customerId], references: [id])
+  buyer        Buyer?              @relation(fields: [buyerId], references: [id])
+  crmCompany   CrmCompany?         @relation(fields: [crmCompanyId], references: [id], onDelete: SetNull)
+  crmContact   CrmContact?         @relation(fields: [crmContactId], references: [id], onDelete: SetNull)
+  owner        User?               @relation("QuotationOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
+  createdBy    User                @relation("QuotationCreatedBy", fields: [createdByUserId], references: [id])
+  revisions    QuotationRevision[]
+
+  @@unique([companyId, quotationNumber])
+  @@index([companyId, status])
+  @@index([companyId, ownerUserId])
+  @@index([buyerEnquiryId])
+  @@index([customerId])
+  @@map("quotations")
+}
+
+model QuotationRevision {
+  id                     String                  @id @default(uuid()) @db.Uuid
+  companyId              String                  @map("company_id") @db.Uuid
+  quotationId            String                  @map("quotation_id") @db.Uuid
+  revisionNumber         Int                     @map("revision_number")
+  status                 QuotationRevisionStatus @default(DRAFT)
+  title                  String
+  quotationDate          DateTime                @map("quotation_date") @db.Date
+  validUntil             DateTime                @map("valid_until") @db.Date
+  // Company base currency (INR) — multi-currency is out of Release 1.
+  currencyCode           String                  @map("currency_code") @db.Char(3)
+  // GST: company state from the company GSTIN, place of supply from the
+  // customer GSTIN (or picked). Different states = IGST, else CGST + SGST.
+  companyStateCode       String?                 @map("company_state_code") @db.VarChar(2)
+  placeOfSupplyStateCode String?                 @map("place_of_supply_state_code") @db.VarChar(2)
+  isInterState           Boolean                 @default(false) @map("is_inter_state")
+  billingAddress         String?                 @map("billing_address")
+  shippingAddress        String?                 @map("shipping_address")
+  paymentTermsDays       Int?                    @map("payment_terms_days")
+  deliveryTerms          String?                 @map("delivery_terms")
+  introduction           String?
+  customerNotes          String?                 @map("customer_notes")
+  internalNotes          String?                 @map("internal_notes")
+  termsAndConditions     String?                 @map("terms_and_conditions")
+  freightAmount          Decimal                 @default(0) @map("freight_amount") @db.Decimal(18, 2)
+  freightTaxRateId       String?                 @map("freight_tax_rate_id") @db.Uuid
+  freightGstRate         Decimal                 @default(0) @map("freight_gst_rate") @db.Decimal(5, 2)
+  freightTaxAmount       Decimal                 @default(0) @map("freight_tax_amount") @db.Decimal(18, 2)
+  otherChargesLabel      String?                 @map("other_charges_label")
+  otherChargesAmount     Decimal                 @default(0) @map("other_charges_amount") @db.Decimal(18, 2)
+  otherChargesTaxRateId  String?                 @map("other_charges_tax_rate_id") @db.Uuid
+  otherChargesGstRate    Decimal                 @default(0) @map("other_charges_gst_rate") @db.Decimal(5, 2)
+  otherChargesTaxAmount  Decimal                 @default(0) @map("other_charges_tax_amount") @db.Decimal(18, 2)
+  // Totals (server-computed): gross − discount = taxable lines; + charges; + GST.
+  subtotalAmount         Decimal                 @default(0) @map("subtotal_amount") @db.Decimal(18, 2)
+  discountTotal          Decimal                 @default(0) @map("discount_total") @db.Decimal(18, 2)
+  taxableTotal           Decimal                 @default(0) @map("taxable_total") @db.Decimal(18, 2)
+  chargesTotal           Decimal                 @default(0) @map("charges_total") @db.Decimal(18, 2)
+  cgstTotal              Decimal                 @default(0) @map("cgst_total") @db.Decimal(18, 2)
+  sgstTotal              Decimal                 @default(0) @map("sgst_total") @db.Decimal(18, 2)
+  igstTotal              Decimal                 @default(0) @map("igst_total") @db.Decimal(18, 2)
+  taxTotal               Decimal                 @default(0) @map("tax_total") @db.Decimal(18, 2)
+  grandTotal             Decimal                 @default(0) @map("grand_total") @db.Decimal(18, 2)
+  // Bumped on every save — a stale editor gets 409 instead of overwriting.
+  version                Int                     @default(1)
+  createdByUserId        String                  @map("created_by_user_id") @db.Uuid
+  updatedByUserId        String?                 @map("updated_by_user_id") @db.Uuid
+  createdAt              DateTime                @default(now()) @map("created_at")
+  updatedAt              DateTime                @updatedAt @map("updated_at")
+
+  company             Company         @relation(fields: [companyId], references: [id])
+  quotation           Quotation       @relation(fields: [quotationId], references: [id])
+  freightTaxRate      TaxRate?        @relation("QuotationFreightTaxRate", fields: [freightTaxRateId], references: [id])
+  otherChargesTaxRate TaxRate?        @relation("QuotationOtherChargesTaxRate", fields: [otherChargesTaxRateId], references: [id])
+  createdBy           User            @relation("QuotationRevisionCreatedBy", fields: [createdByUserId], references: [id])
+  lines               QuotationLine[]
+
+  @@unique([quotationId, revisionNumber])
+  @@map("quotation_revisions")
+}
+
+model QuotationLine {
+  id                    String            @id @default(uuid()) @db.Uuid
+  revisionId            String            @map("revision_id") @db.Uuid
+  lineNumber            Int               @map("line_number")
+  lineType              QuotationLineType @map("line_type")
+  productId             String?           @map("product_id") @db.Uuid
+  sampleRequestId       String?           @map("sample_request_id") @db.Uuid
+  buyerEnquiryLineId    String?           @map("buyer_enquiry_line_id") @db.Uuid
+  description           String
+  // Colour / size wording for the customer; the exact colour × size split is
+  // entered on the Sales Order at conversion (S4).
+  colorSizeRemarks      String?           @map("color_size_remarks")
+  customerReference     String?           @map("customer_reference")
+  quantity              Decimal           @db.Decimal(18, 3)
+  uomId                 String?           @map("uom_id") @db.Uuid
+  unitPrice             Decimal           @map("unit_price") @db.Decimal(18, 2)
+  discountPercent       Decimal           @default(0) @map("discount_percent") @db.Decimal(5, 2)
+  taxRateId             String?           @map("tax_rate_id") @db.Uuid
+  gstRate               Decimal           @default(0) @map("gst_rate") @db.Decimal(5, 2)
+  grossAmount           Decimal           @map("gross_amount") @db.Decimal(18, 2)
+  discountAmount        Decimal           @map("discount_amount") @db.Decimal(18, 2)
+  taxableAmount         Decimal           @map("taxable_amount") @db.Decimal(18, 2)
+  cgstRate              Decimal           @default(0) @map("cgst_rate") @db.Decimal(5, 2)
+  cgstAmount            Decimal           @default(0) @map("cgst_amount") @db.Decimal(18, 2)
+  sgstRate              Decimal           @default(0) @map("sgst_rate") @db.Decimal(5, 2)
+  sgstAmount            Decimal           @default(0) @map("sgst_amount") @db.Decimal(18, 2)
+  igstRate              Decimal           @default(0) @map("igst_rate") @db.Decimal(5, 2)
+  igstAmount            Decimal           @default(0) @map("igst_amount") @db.Decimal(18, 2)
+  taxAmount             Decimal           @map("tax_amount") @db.Decimal(18, 2)
+  lineTotal             Decimal           @map("line_total") @db.Decimal(18, 2)
+  requestedDeliveryDate DateTime?         @map("requested_delivery_date") @db.Date
+  notes                 String?
+  createdAt             DateTime          @default(now()) @map("created_at")
+
+  revision         QuotationRevision @relation(fields: [revisionId], references: [id], onDelete: Cascade)
+  product          Product?          @relation(fields: [productId], references: [id])
+  sampleRequest    SampleRequest?    @relation(fields: [sampleRequestId], references: [id])
+  buyerEnquiryLine BuyerEnquiryLine? @relation(fields: [buyerEnquiryLineId], references: [id], onDelete: SetNull)
+  uom              UnitOfMeasure?    @relation(fields: [uomId], references: [id])
+  taxRate          TaxRate?          @relation(fields: [taxRateId], references: [id])
+
+  @@unique([revisionId, lineNumber])
+  @@index([productId])
+  @@map("quotation_lines")
 }
