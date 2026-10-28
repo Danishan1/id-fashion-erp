@@ -13,6 +13,7 @@ import type { BillUploadExpenseInput, ExpenseInput, ExpensePaymentInput } from "
 import { ExpenseApprovalStatus } from "@prisma/client";
 import { ExpenseRepository, ExpensePaymentRepository, CompanyRepository } from "./expense.repository";
 import { ChartOfAccountRepository } from "./chart-of-account.repository";
+import { resolveMoneyAccount } from "./money-account";
 import { assertValidExpenseAccount } from "./chart-of-account.service";
 import { TaxRateRepository } from "./tax-config.repository";
 import { postJournalCore } from "./journal.service";
@@ -385,7 +386,7 @@ export async function recordExpensePayment(actor: ActorContext, id: string, inpu
   const tdsAmountNum = Number(expense.tdsAmount);
   const cashOrBankAccountCode = paymentType.type === "CASH" ? "CASH" : "BANK";
   const [cashOrBankAccount, payableAccount, gstInputAccount, tdsPayableAccount] = await Promise.all([
-    ChartOfAccountRepository.findByCode(actor.companyId, cashOrBankAccountCode),
+    resolveMoneyAccount(actor.companyId, paymentType.type, input.bankAccountId || null),
     ensureExpensesPayableAccount(actor.companyId),
     needsAccrual && taxAmountNum > 0 ? ChartOfAccountRepository.findByCode(actor.companyId, "GST-ITC") : null,
     needsAccrual && tdsAmountNum > 0 ? ChartOfAccountRepository.findByCode(actor.companyId, "TDS-PAY") : null,

@@ -2,6 +2,8 @@ import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import type { BankAccountInput, PaymentTypeInput } from "./finance-config.schema";
 import { FinanceConfigRepository } from "./finance-config.repository";
+import { prisma } from "@/core/db/client";
+import { FINANCIAL_ACCOUNT_PARENTS, createLedgerAccountForFinancialAccount } from "@/modules/accounts/money-account";
 
 interface ActorContext {
   companyId: string;
@@ -58,26 +60,48 @@ export async function updatePaymentType(actor: ActorContext, id: string, input: 
 // ── Bank Accounts ─────────────────────────────────────────────────────────
 
 export async function listBankAccounts(companyId: string) {
-  return FinanceConfigRepository.bankAccount.findMany({ where: { companyId }, orderBy: { name: "asc" } });
+  return FinanceConfigRepository.bankAccount.findMany({
+    where: { companyId },
+    orderBy: { name: "asc" },
+    include: { ledgerAccount: { select: { id: true, code: true, name: true } } },
+  });
 }
 
+function bankAccountData(input: BankAccountInput) {
+  return {
+    code: input.code,
+    name: input.name,
+    bankName: input.bankName || null,
+    accountNumber: input.accountNumber || null,
+    ifscCode: input.ifscCode || null,
+    branch: input.branch || null,
+    accountHolderName: input.accountHolderName || null,
+    upiId: input.upiId || null,
+    maturityDate: input.maturityDate ? new Date(input.maturityDate) : null,
+    interestRate: input.interestRate ?? null,
+    creditLimit: input.creditLimit ?? null,
+  };
+}
+
+/**
+ * Creates the financial account and, in the same transaction, its own ledger
+ * account in the Chart of Accounts (see accounts/money-account.ts).
+ */
 export async function createBankAccount(actor: ActorContext, input: BankAccountInput) {
   const existing = await FinanceConfigRepository.bankAccount.findFirst({ where: { companyId: actor.companyId, code: input.code } });
   if (existing) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Bank account code "${input.code}" is already in use.`);
 
-  const bankAccount = await FinanceConfigRepository.bankAccount.create({
-    data: {
-      companyId: actor.companyId,
-      code: input.code,
-      name: input.name,
-      bankName: input.bankName,
-      accountNumber: input.accountNumber,
-      ifscCode: input.ifscCode || null,
-      branch: input.branch || null,
-      accountHolderName: input.accountHolderName || null,
-      upiId: input.upiId || null,
-      isActive: input.isActive,
-    },
+  const bankAccount = await prisma.$transaction(async (tx) => {
+    const ledger = await createLedgerAccountForFinancialAccount(tx, actor.companyId, input);
+    return tx.bankAccount.create({
+      data: {
+        companyId: actor.companyId,
+        ...bankAccountData(input),
+        accountKind: input.accountKind,
+        ledgerAccountId: ledger.id,
+        isActive: input.isActive ?? true,
+      },
+    });
   });
 
   await writeAuditLog({
@@ -92,23 +116,41 @@ export async function createBankAccount(actor: ActorContext, input: BankAccountI
   return bankAccount;
 }
 
+/**
+ * The kind can't change once created: the ledger account sits under that
+ * kind's parent (Bank, FD, Credit Cards...). A new code or name is copied to
+ * the ledger account. isActive changes only when sent (the toggle), so a plain
+ * edit never re-activates a deactivated account.
+ */
 export async function updateBankAccount(actor: ActorContext, id: string, input: BankAccountInput) {
   const existing = await FinanceConfigRepository.bankAccount.findFirst({ where: { id, companyId: actor.companyId } });
   if (!existing) throw new BusinessRuleError("NOT_FOUND", "Bank account not found.", { id });
+  if (input.accountKind !== existing.accountKind) {
+    throw new BusinessRuleError(
+      "VALIDATION_ERROR",
+      "The kind of an account can't be changed after it is created. Deactivate it and create a new one instead.",
+      { field: "accountKind" }
+    );
+  }
+  if (input.code !== existing.code) {
+    const clash = await FinanceConfigRepository.bankAccount.findFirst({
+      where: { companyId: actor.companyId, code: input.code, id: { not: id } },
+    });
+    if (clash) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Bank account code "${input.code}" is already in use.`);
+  }
 
-  const updated = await FinanceConfigRepository.bankAccount.update({
-    where: { id },
-    data: {
-      code: input.code,
-      name: input.name,
-      bankName: input.bankName,
-      accountNumber: input.accountNumber,
-      ifscCode: input.ifscCode || null,
-      branch: input.branch || null,
-      accountHolderName: input.accountHolderName || null,
-      upiId: input.upiId || null,
-      isActive: input.isActive,
-    },
+  const updated = await prisma.$transaction(async (tx) => {
+    if (existing.ledgerAccountId) {
+      const parentCode = FINANCIAL_ACCOUNT_PARENTS[existing.accountKind].code;
+      await tx.chartOfAccount.update({
+        where: { id: existing.ledgerAccountId },
+        data: { name: input.name, ...(input.code !== existing.code ? { code: `${parentCode}-${input.code}` } : {}) },
+      });
+    }
+    return tx.bankAccount.update({
+      where: { id },
+      data: { ...bankAccountData(input), ...(input.isActive === undefined ? {} : { isActive: input.isActive }) },
+    });
   });
 
   await writeAuditLog({
@@ -117,6 +159,7 @@ export async function updateBankAccount(actor: ActorContext, id: string, input: 
     tableName: "bank_accounts",
     recordId: id,
     action: "UPDATE",
+    oldValues: existing,
     newValues: updated,
   });
 

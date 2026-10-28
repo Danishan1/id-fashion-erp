@@ -8,7 +8,7 @@ import { InternalTransferStatus, type Prisma } from "@prisma/client";
 import { FinanceConfigRepository } from "@/modules/finance-config/finance-config.repository";
 import type { InternalTransferInput } from "./internal-transfer.schema";
 import { InternalTransferRepository } from "./internal-transfer.repository";
-import { ChartOfAccountRepository } from "./chart-of-account.repository";
+import { resolveMoneyAccount } from "./money-account";
 import { postJournalCore } from "./journal.service";
 
 interface ActorContext {
@@ -64,20 +64,6 @@ export async function createInternalTransfer(actor: ActorContext, input: Interna
   if (!fromPaymentType) throw new BusinessRuleError("NOT_FOUND", "From account not found.", { id: input.fromPaymentTypeId });
   if (!toPaymentType) throw new BusinessRuleError("NOT_FOUND", "To account not found.", { id: input.toPaymentTypeId });
 
-  // This Chart of Accounts has exactly one CASH and one BANK control
-  // account (not one per physical bank account — see the schema's own
-  // comment on this model). A transfer between two same-typed payment
-  // types would resolve to the identical GL account on both sides, making
-  // the journal a Dr X / Cr X no-op — rejected here rather than silently
-  // posting a meaningless entry.
-  if (fromPaymentType.type === toPaymentType.type) {
-    throw new BusinessRuleError(
-      "VALIDATION_ERROR",
-      `Cannot transfer between two "${fromPaymentType.type}"-type accounts — this Chart of Accounts has one control account per type (Cash or Bank), so both sides would resolve to the same account. Transfer between a Cash-type and a Bank-type account instead.`,
-      { fromType: fromPaymentType.type, toType: toPaymentType.type }
-    );
-  }
-
   if (input.fromBankAccountId) {
     const bankAccount = await FinanceConfigRepository.bankAccount.findFirst({ where: { id: input.fromBankAccountId, companyId: actor.companyId } });
     if (!bankAccount) throw new BusinessRuleError("NOT_FOUND", "From bank account not found.", { id: input.fromBankAccountId });
@@ -85,6 +71,21 @@ export async function createInternalTransfer(actor: ActorContext, input: Interna
   if (input.toBankAccountId) {
     const bankAccount = await FinanceConfigRepository.bankAccount.findFirst({ where: { id: input.toBankAccountId, companyId: actor.companyId } });
     if (!bankAccount) throw new BusinessRuleError("NOT_FOUND", "To bank account not found.", { id: input.toBankAccountId });
+  }
+
+  // Each financial account has its own ledger account (money-account.ts), so a
+  // bank -> bank transfer is fine. Only a transfer whose two sides land on the
+  // same ledger account (a Dr X / Cr X no-op) is refused.
+  const [fromLedger, toLedger] = await Promise.all([
+    resolveMoneyAccount(actor.companyId, fromPaymentType.type, input.fromBankAccountId || null),
+    resolveMoneyAccount(actor.companyId, toPaymentType.type, input.toBankAccountId || null),
+  ]);
+  if (fromLedger.id === toLedger.id) {
+    throw new BusinessRuleError(
+      "VALIDATION_ERROR",
+      `Both sides of this transfer post to the same ledger account (${fromLedger.code}). Pick a different bank / cash account on one side.`,
+      { ledgerAccountCode: fromLedger.code }
+    );
   }
 
   const transferNumber = await generateDocumentNumber({
@@ -149,17 +150,12 @@ export async function postInternalTransfer(actor: ActorContext, id: string) {
     });
   }
 
-  const fromAccountCode = transfer.fromPaymentType.type === "CASH" ? "CASH" : "BANK";
-  const toAccountCode = transfer.toPaymentType.type === "CASH" ? "CASH" : "BANK";
   const [fromAccount, toAccount] = await Promise.all([
-    ChartOfAccountRepository.findByCode(actor.companyId, fromAccountCode),
-    ChartOfAccountRepository.findByCode(actor.companyId, toAccountCode),
+    resolveMoneyAccount(actor.companyId, transfer.fromPaymentType.type, transfer.fromBankAccountId),
+    resolveMoneyAccount(actor.companyId, transfer.toPaymentType.type, transfer.toBankAccountId),
   ]);
-  if (!fromAccount) {
-    throw new BusinessRuleError("NOT_FOUND", `The ${fromAccountCode === "CASH" ? "Cash" : "Bank"} control account is missing from the Chart of Accounts.`, {});
-  }
-  if (!toAccount) {
-    throw new BusinessRuleError("NOT_FOUND", `The ${toAccountCode === "CASH" ? "Cash" : "Bank"} control account is missing from the Chart of Accounts.`, {});
+  if (fromAccount.id === toAccount.id) {
+    throw new BusinessRuleError("VALIDATION_ERROR", `Both sides of this transfer post to the same ledger account (${fromAccount.code}).`);
   }
 
   const journalNumber = await generateDocumentNumber({

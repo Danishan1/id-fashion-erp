@@ -37,7 +37,8 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
         },
       }),
       prisma.bankAccount.findMany({
-        where: { companyId, isActive: true },
+        // Only real bank accounts a customer can pay into (not cash boxes, deposits, cards...).
+        where: { companyId, isActive: true, accountKind: { in: ["CURRENT", "SAVINGS"] }, bankName: { not: null }, accountNumber: { not: null } },
         select: {
           bankName: true,
           accountHolderName: true,
@@ -52,7 +53,11 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
     const companyAddress = (company?.addressJson as { line1?: string } | null)?.line1 ?? null;
 
     // Bank account rule: exactly one active bank account is included; if 0 or multiple, omit to prevent ambiguity
-    const singleBankAccount = activeBankAccounts.length === 1 ? activeBankAccounts[0] : null;
+    const onlyBank = activeBankAccounts.length === 1 ? activeBankAccounts[0] : null;
+    const singleBankAccount =
+      onlyBank && onlyBank.bankName && onlyBank.accountNumber
+        ? { ...onlyBank, bankName: onlyBank.bankName, accountNumber: onlyBank.accountNumber }
+        : null;
 
     // Assemble PDF data
     const pdfData: CustomInvoicePdfData = {

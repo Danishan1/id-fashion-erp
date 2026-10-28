@@ -718,6 +718,7 @@ const importBankAccountRow: BulkImportRowHandler = async (actor, raw, ctx) => {
   const bankAccount = await createBankAccount(actor, {
     code,
     name,
+    accountKind: "CURRENT",
     bankName,
     accountNumber,
     ifscCode: raw.ifscCode?.trim() ?? "",

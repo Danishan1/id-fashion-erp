@@ -54,8 +54,21 @@ custom form if kind fields are too many).
 child account created per kind under the right parent; resolver picks bank ledger, falls back correctly;
 bank→bank transfer now posts Dr bankB / Cr bankA; inactive bank refused.
 
-## Done checklist
-- [ ] enum + columns + backfill + verified by SQL
-- [ ] resolver used by every money-moving service, old tests still green
-- [ ] Bank Accounts UI with kind
-- [ ] trial balance still balances after backfill
+## Done checklist (built 2026-10-28)
+- [x] enum + columns + backfill (migration `20261028090000_financial_accounts`, + rollback), verified by SQL:
+      existing banks got `BANK-<code>` ledgers under BANK; no journal moved
+- [x] `src/modules/accounts/money-account.ts`: `createLedgerAccountForFinancialAccount` + `resolveMoneyAccount`,
+      used by Payment post, Expense payment, Employee Advance issue, Internal Transfer post and the payment-request
+      payout; old tests green
+- [x] Internal Transfer now refuses only when both sides hit the same ledger account — bank→bank and bank→FD work
+- [x] Masters → Finance Config → Bank Accounts: Kind (fixed after creation), maturity date, interest %, credit limit;
+      bank name/number required only for bank-held kinds; a plain edit no longer re-activates an account
+- [x] trial balance still balances (journals only ever add balanced lines; backfill posts nothing)
+- [x] tests: money-account.test.ts, finance-config + internal-transfer tests updated; full suite 3660 green; live check
+
+Notes:
+- Old balances stay on the BANK / CASH parents. Per-bank balances start from 2026-10-28; to move an old balance,
+  post a manual journal (Dr BANK-<bank> / Cr BANK) — offered as a follow-up, not done.
+- Custom Invoice PDF now picks only CURRENT/SAVINGS accounts for "pay into" details.
+- The Investment payout still posts to the one INVESTMENTS control account; a per-investment account picker comes
+  with `payment-request-investment`.

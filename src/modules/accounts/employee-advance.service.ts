@@ -10,6 +10,7 @@ import { FinanceConfigRepository } from "@/modules/finance-config/finance-config
 import type { EmployeeAdvanceInput, EmployeeAdvanceSettlementInput } from "./employee-advance.schema";
 import { EmployeeAdvanceRepository, EmployeeAdvanceSettlementRepository } from "./employee-advance.repository";
 import { ChartOfAccountRepository } from "./chart-of-account.repository";
+import { resolveMoneyAccount } from "./money-account";
 import { assertValidExpenseAccount } from "./chart-of-account.service";
 import { TaxRateRepository } from "./tax-config.repository";
 import { postJournalCore } from "./journal.service";
@@ -136,7 +137,7 @@ export async function issueEmployeeAdvance(actor: ActorContext, id: string) {
 
   const cashOrBankAccountCode = advance.paymentType.type === "CASH" ? "CASH" : "BANK";
   const [cashOrBankAccount, empAdvanceAccount] = await Promise.all([
-    ChartOfAccountRepository.findByCode(actor.companyId, cashOrBankAccountCode),
+    resolveMoneyAccount(actor.companyId, advance.paymentType.type, advance.bankAccountId),
     ChartOfAccountRepository.findByCode(actor.companyId, "EMP-ADV"),
   ]);
   if (!cashOrBankAccount) {

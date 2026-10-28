@@ -2790,6 +2790,17 @@ model CostMaster {
 // no ledger/balance wiring yet, that lands with the Phase 7 Accounts domain)
 // ─────────────────────────────────────────────────────────────
 
+enum FinancialAccountKind {
+  CURRENT
+  SAVINGS
+  CASH
+  FIXED_DEPOSIT
+  RECURRING_DEPOSIT
+  CREDIT_CARD
+  LOAN_GIVEN
+  INVESTMENT
+}
+
 enum PaymentTypeKind {
   CASH
   BANK
@@ -2823,22 +2834,35 @@ model PaymentType {
   @@map("payment_types")
 }
 
+// Financial accounts (2026-10-28): besides real bank accounts this master now
+// holds cash boxes, fixed / recurring deposits, credit cards, loans given and
+// investments (accountKind). Each one gets its own ledger account in the
+// Chart of Accounts (ledgerAccountId, a child of BANK / CASH / FD / RD /
+// CC-PAY / LOAN-GIVEN / INVESTMENTS), so money moves post to that account and
+// bank-to-bank transfers work. Older journals stay on the BANK/CASH parents.
 model BankAccount {
-  id                String   @id @default(uuid()) @db.Uuid
-  companyId         String   @map("company_id") @db.Uuid
+  id                String               @id @default(uuid()) @db.Uuid
+  companyId         String               @map("company_id") @db.Uuid
   code              String
   name              String
-  bankName          String   @map("bank_name")
-  accountNumber     String   @map("account_number")
-  ifscCode          String?  @map("ifsc_code")
+  accountKind       FinancialAccountKind @default(CURRENT) @map("account_kind")
+  // Required for bank-type kinds only (validated in finance-config.schema.ts).
+  bankName          String?              @map("bank_name")
+  accountNumber     String?              @map("account_number")
+  ledgerAccountId   String?              @unique @map("ledger_account_id") @db.Uuid
+  maturityDate      DateTime?            @map("maturity_date") @db.Date
+  interestRate      Decimal?             @map("interest_rate") @db.Decimal(5, 2)
+  creditLimit       Decimal?             @map("credit_limit") @db.Decimal(18, 2)
+  ifscCode          String?              @map("ifsc_code")
   branch            String?
-  accountHolderName String?  @map("account_holder_name")
-  upiId             String?  @map("upi_id")
-  isActive          Boolean  @default(true) @map("is_active")
-  createdAt         DateTime @default(now()) @map("created_at")
-  updatedAt         DateTime @updatedAt @map("updated_at")
+  accountHolderName String?              @map("account_holder_name")
+  upiId             String?              @map("upi_id")
+  isActive          Boolean              @default(true) @map("is_active")
+  createdAt         DateTime             @default(now()) @map("created_at")
+  updatedAt         DateTime             @updatedAt @map("updated_at")
 
   company               Company                @relation(fields: [companyId], references: [id])
+  ledgerAccount         ChartOfAccount?        @relation("BankAccountLedger", fields: [ledgerAccountId], references: [id])
   payments              Payment[]
   expenses              Expense[]
   expensePayments       ExpensePayment[]
@@ -6917,6 +6941,7 @@ model ChartOfAccount {
   customInvoicesAsIncomeAccount CustomInvoice[]
   employeeAdvanceSettlements    EmployeeAdvanceSettlement[]
   purchaseInvoiceDirectLines    PurchaseInvoiceItem[]
+  financialAccount              BankAccount?                @relation("BankAccountLedger")
 
   @@unique([companyId, code])
   @@map("chart_of_accounts")

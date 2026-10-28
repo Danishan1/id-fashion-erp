@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { SimpleLookupManager } from "@/components/ui/SimpleLookupManager";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
+import { FINANCIAL_ACCOUNT_KINDS, FINANCIAL_ACCOUNT_KIND_LABELS } from "@/modules/finance-config/finance-config.schema";
 
 const TABS = ["Payment Types", "Bank Accounts", "Invoice Series"] as const;
 type Tab = (typeof TABS)[number];
@@ -16,8 +17,9 @@ export function FinanceConfigClient() {
         <Breadcrumb items={[{ label: "Masters", href: "/masters" }, { label: "Finance Configuration" }]} />
         <h1 className="mt-2 text-lg font-semibold text-zinc-900 dark:text-zinc-50">Finance Configuration</h1>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-          Payment type and bank account masters, imported from Inventory/HRMS — standalone lookups for now; ledger
-          and balance tracking arrive with the Phase 7 Accounts domain.
+          Payment types, and bank / financial accounts (banks, cash boxes, FD, RD, credit cards, loans given,
+          investments). Every financial account gets its own ledger account in the Chart of Accounts, so its balance
+          shows in the Account Ledger and Trial Balance.
         </p>
       </div>
 
@@ -64,20 +66,31 @@ export function FinanceConfigClient() {
       {tab === "Bank Accounts" && (
         <SimpleLookupManager
           fetchUrl="/api/v1/bank-accounts"
-          entityLabel="Bank Account"
+          entityLabel="Bank / Financial Account"
           fields={[
             { key: "code", label: "Code", required: true },
             { key: "name", label: "Label", required: true, placeholder: "e.g. Primary Current A/C" },
-            { key: "bankName", label: "Bank Name", required: true },
-            { key: "accountNumber", label: "Account No.", required: true },
+            {
+              key: "accountKind",
+              label: "Kind (can't change later)",
+              type: "select",
+              required: true,
+              options: FINANCIAL_ACCOUNT_KINDS.map((k) => ({ value: k, label: FINANCIAL_ACCOUNT_KIND_LABELS[k] })),
+            },
+            { key: "bankName", label: "Bank Name (bank / FD / RD / card)" },
+            { key: "accountNumber", label: "Account / Card No." },
             { key: "ifscCode", label: "IFSC" },
             { key: "branch", label: "Branch" },
             { key: "accountHolderName", label: "Account Holder" },
             { key: "upiId", label: "UPI ID" },
+            { key: "maturityDate", label: "Maturity Date (FD / RD)", type: "date" },
+            { key: "interestRate", label: "Interest Rate %", type: "number" },
+            { key: "creditLimit", label: "Credit Limit (card)", type: "number" },
           ]}
           displayColumns={[
             { key: "code", header: "Code" },
             { key: "name", header: "Label" },
+            { key: "accountKind", header: "Kind" },
             { key: "bankName", header: "Bank" },
             { key: "accountNumber", header: "Account No." },
           ]}

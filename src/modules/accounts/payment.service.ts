@@ -14,6 +14,7 @@ import { PaymentRepository, CompanyRepository } from "./payment.repository";
 import { SalesInvoiceRepository } from "./sales-invoice.repository";
 import { PurchaseInvoiceRepository } from "./purchase-invoice.repository";
 import { ChartOfAccountRepository } from "./chart-of-account.repository";
+import { resolveMoneyAccount } from "./money-account";
 import { postJournalCore } from "./journal.service";
 
 interface ActorContext {
@@ -354,7 +355,7 @@ export async function postPayment(actor: ActorContext, id: string) {
   // silently return nothing for CHEQUE/CARD/UPI-typed payment types.
   const cashOrBankAccountCode = payment.paymentType.type === "CASH" ? "CASH" : "BANK";
   const [cashOrBankAccount, arAccount, apAccount] = await Promise.all([
-    ChartOfAccountRepository.findByCode(actor.companyId, cashOrBankAccountCode),
+    resolveMoneyAccount(actor.companyId, payment.paymentType.type, payment.bankAccountId),
     payment.direction === "RECEIPT" ? ChartOfAccountRepository.findByCode(actor.companyId, "AR") : null,
     payment.direction === "PAYMENT_OUT" ? ChartOfAccountRepository.findByCode(actor.companyId, "AP") : null,
   ]);

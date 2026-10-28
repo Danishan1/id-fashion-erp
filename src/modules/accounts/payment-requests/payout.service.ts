@@ -6,6 +6,7 @@ import { PermissionService } from "@/core/rbac/PermissionService";
 import { round2 } from "@/lib/money";
 import type { PaymentType, Prisma, RelatedModule } from "@prisma/client";
 import { postJournalCore } from "../journal.service";
+import { resolveMoneyAccount } from "../money-account";
 import type { PaymentRequestPayoutInput } from "./payout.schema";
 import { getPaymentRequestById } from "./payment-request.service";
 import { getApproverIdentity } from "./approval-matrix.service";
@@ -289,11 +290,8 @@ export async function recordPaymentRequestPayout(actor: ActorContext, id: string
     const bank = await prisma.bankAccount.findFirst({ where: { id: input.bankAccountId, companyId: actor.companyId, isActive: true } });
     if (!bank) throw new BusinessRuleError("NOT_FOUND", "Bank account not found.", { id: input.bankAccountId });
   }
-  // Cash vs Bank by the payment type's kind, never its code (same rule as Payment / Expense).
-  const moneyAccount = await prisma.chartOfAccount.findFirst({ where: { companyId: actor.companyId, code: fromCash ? "CASH" : "BANK" } });
-  if (!moneyAccount) {
-    throw new BusinessRuleError("NOT_FOUND", `The ${fromCash ? "Cash" : "Bank"} control account is missing from the Chart of Accounts.`);
-  }
+  // The chosen bank's own ledger account, else Cash/Bank by the payment type's kind (money-account.ts).
+  const moneyAccount = await resolveMoneyAccount(actor.companyId, paymentType.type, fromCash ? null : input.bankAccountId);
 
   const [journalNumber, documentNumber] = await Promise.all([
     generateDocumentNumber({ companyId: actor.companyId, branchId: request.branchId ?? null, documentType: "JOURNAL" }),

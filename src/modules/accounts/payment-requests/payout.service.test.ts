@@ -23,6 +23,7 @@ vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/numbering/DocumentNumberingService", () => ({ generateDocumentNumber: vi.fn() }));
 vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { assert: vi.fn() } }));
 vi.mock("../journal.service", () => ({ postJournalCore: vi.fn() }));
+vi.mock("../money-account", () => ({ resolveMoneyAccount: vi.fn().mockResolvedValue({ id: "acct-bank", code: "BANK" }) }));
 vi.mock("./payment-request.service", () => ({ getPaymentRequestById: vi.fn() }));
 vi.mock("./approval-matrix.service", () => ({ getApproverIdentity: vi.fn().mockResolvedValue({ roleIds: [], isSuperAdmin: false }) }));
 

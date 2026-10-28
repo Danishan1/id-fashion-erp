@@ -48,7 +48,11 @@ beforeEach(() => {
 });
 
 describe("createInternalTransfer", () => {
-  it("rejects transferring between two same-typed accounts (this Chart of Accounts has one control account per type)", async () => {
+  beforeEach(() => {
+    vi.mocked(ChartOfAccountRepository.findByCode).mockImplementation(((_c: string, code: string) => Promise.resolve({ id: `acct-${code}`, code })) as never);
+  });
+
+  it("rejects a transfer whose two sides land on the same ledger account (no bank chosen on either side)", async () => {
     vi.mocked(FinanceConfigRepository.paymentType.findFirst)
       .mockResolvedValueOnce({ id: "pt-bank1", type: "BANK" } as never)
       .mockResolvedValueOnce({ id: "pt-bank2", type: "BANK" } as never);
@@ -78,6 +82,42 @@ describe("createInternalTransfer", () => {
     } as never);
 
     expect(result).toMatchObject({ id: "trf-1" });
+  });
+
+  it("allows bank -> bank when each bank has its own ledger account (financial accounts, 2026-10-28)", async () => {
+    vi.mocked(FinanceConfigRepository.paymentType.findFirst)
+      .mockResolvedValueOnce({ id: "pt-bank", type: "BANK" } as never)
+      .mockResolvedValueOnce({ id: "pt-bank", type: "BANK" } as never);
+    vi.mocked(FinanceConfigRepository.bankAccount.findFirst).mockImplementation((async ({ where }: { where: { id: string } }) => ({
+      id: where.id,
+      ledgerAccount: { id: `led-${where.id}`, code: `BANK-${where.id}`, isActive: true },
+    })) as never);
+    vi.mocked(InternalTransferRepository.create).mockResolvedValue({ id: "trf-2", status: "DRAFT" } as never);
+
+    const result = await createInternalTransfer(actor, {
+      transferDate: "2026-10-28",
+      fromPaymentTypeId: "pt-bank",
+      fromBankAccountId: "sbi",
+      toPaymentTypeId: "pt-bank",
+      toBankAccountId: "icici",
+      amount: 1000,
+    } as never);
+    expect(result).toMatchObject({ id: "trf-2" });
+
+    // Same bank on both sides is still a no-op and refused.
+    vi.mocked(FinanceConfigRepository.paymentType.findFirst)
+      .mockResolvedValueOnce({ id: "pt-bank", type: "BANK" } as never)
+      .mockResolvedValueOnce({ id: "pt-bank", type: "BANK" } as never);
+    await expect(
+      createInternalTransfer(actor, {
+        transferDate: "2026-10-28",
+        fromPaymentTypeId: "pt-bank",
+        fromBankAccountId: "sbi",
+        toPaymentTypeId: "pt-bank",
+        toBankAccountId: "sbi",
+        amount: 1000,
+      } as never)
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
 });
 

@@ -53,6 +53,7 @@ Steps 2 and 3 can run in parallel with 1's UI work; 7–9, 13 and 17–22 are in
 - [x] Foundation hub built (2026-10-27)
 - [x] Approval Matrix built (2026-10-27)
 - [x] Accountant Payout built (2026-10-27) — Investment, Supplier on Account and Cash Payment can be paid
+- [x] Financial Accounts built (2026-10-28) — per-account ledgers, bank-to-bank transfers
 - [ ] a Salary (bulk auto + single, no approver)
 - [ ] b1 Advance reminder · [ ] b2 Investment · [ ] b3 Tax invoice non-supplier · [ ] b4 Voucher single
 - [ ] b5 Voucher multiple · [ ] b6 Excel upload
