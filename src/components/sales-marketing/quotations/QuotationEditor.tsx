@@ -557,17 +557,20 @@ export interface TotalsView {
 }
 
 export function TotalsCard({ preview, otherLabel, note }: { preview: TotalsView; otherLabel?: string; note?: string }) {
-  const row = (label: string, value: number | string, strong = false) => (
+  const row = (label: string, value: number | string, strong = false, minus = false) => (
     <div className={`flex justify-between gap-4 ${strong ? "border-t border-zinc-200 pt-2 text-base font-semibold dark:border-zinc-700" : ""}`}>
       <span className={strong ? "" : "text-zinc-600 dark:text-zinc-400"}>{label}</span>
-      <span className="tabular-nums">{formatInr(value)}</span>
+      <span className="tabular-nums">
+        {minus ? "− " : ""}
+        {formatInr(value)}
+      </span>
     </div>
   );
   return (
     <section className="h-fit space-y-2 rounded-lg border border-zinc-200 bg-white p-4 text-sm dark:border-zinc-800 dark:bg-zinc-900">
       <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Totals</h2>
       {row("Gross", preview.subtotalAmount)}
-      {Number(preview.discountTotal) > 0 && row("Discount", -Number(preview.discountTotal))}
+      {Number(preview.discountTotal) > 0 && row("Discount", preview.discountTotal, false, true)}
       {row("Taxable value", preview.taxableTotal)}
       {Number(preview.chargesTotal) > 0 && row(`Freight${otherLabel ? ` & ${otherLabel}` : " & charges"}`, preview.chargesTotal)}
       {preview.isInterState ? (

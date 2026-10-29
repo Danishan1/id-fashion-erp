@@ -39,7 +39,7 @@ describe("SalesMarketingDashboardClient", () => {
     expect(screen.getByText("1,234")).toBeTruthy();
     expect(screen.getByText("Not available yet")).toBeTruthy();
     expect(screen.getByText("Quotations & Proposals")).toBeTruthy();
-    expect(screen.getAllByText(/Planned · Phase 02/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Planned · Phase 03/).length).toBeGreaterThan(0);
     expect(screen.getByRole("link", { name: /Customers/ }).getAttribute("href")).toBe("/masters/customers");
   });
 

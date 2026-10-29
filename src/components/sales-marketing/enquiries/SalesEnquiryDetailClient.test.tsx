@@ -75,7 +75,8 @@ const allow = {
   crmView: true,
   crmEdit: true,
   merchandisingView: true,
-  quotations: { view: true, create: true, edit: true, cancel: true },
+  quotations: { view: true, create: true, edit: true, cancel: true, approve: false, reject: false, print: true },
+  settings: { view: false, edit: false },
 };
 
 beforeEach(() => push.mockReset());

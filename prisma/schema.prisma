@@ -281,6 +281,8 @@ model Company {
   expensePurposes             ExpensePurpose[]
   quotations                  Quotation[]
   quotationRevisions          QuotationRevision[]
+  quotationEvents             QuotationEvent[]
+  salesMarketingSettings      SalesMarketingSettings?
 
   @@map("companies")
 }
@@ -1098,6 +1100,7 @@ model User {
   quotationsOwned                    Quotation[]                  @relation("QuotationOwner")
   quotationsCreated                  Quotation[]                  @relation("QuotationCreatedBy")
   quotationRevisionsCreated          QuotationRevision[]          @relation("QuotationRevisionCreatedBy")
+  quotationEvents                    QuotationEvent[]             @relation("QuotationEventCreatedBy")
 
   @@unique([companyId, supportForPlatformUserId])
   @@map("users")
@@ -14675,6 +14678,7 @@ model Quotation {
   owner        User?               @relation("QuotationOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
   createdBy    User                @relation("QuotationCreatedBy", fields: [createdByUserId], references: [id])
   revisions    QuotationRevision[]
+  events       QuotationEvent[]
 
   @@unique([companyId, quotationNumber])
   @@index([companyId, status])
@@ -14727,6 +14731,36 @@ model QuotationRevision {
   igstTotal              Decimal                 @default(0) @map("igst_total") @db.Decimal(18, 2)
   taxTotal               Decimal                 @default(0) @map("tax_total") @db.Decimal(18, 2)
   grandTotal             Decimal                 @default(0) @map("grand_total") @db.Decimal(18, 2)
+  // ── S3: revision history, approval, issue, sending, customer decision ──
+  // Why this revision exists (required from revision 2) and the one it replaced.
+  revisionReason         String?                 @map("revision_reason")
+  previousRevisionId     String?                 @map("previous_revision_id") @db.Uuid
+  // Approval (decision D2): worked out from the saved revision when it is
+  // submitted or issued; reasons = which rule(s) triggered it.
+  approvalRequired       Boolean                 @default(false) @map("approval_required")
+  approvalReasons        Json                    @default("[]") @map("approval_reasons")
+  submittedAt            DateTime?               @map("submitted_at")
+  submittedByUserId      String?                 @map("submitted_by_user_id") @db.Uuid
+  approvedAt             DateTime?               @map("approved_at")
+  approvedByUserId       String?                 @map("approved_by_user_id") @db.Uuid
+  approvalComment        String?                 @map("approval_comment")
+  // Issued = frozen. The letterhead and party block printed on the PDF are
+  // copied here at issue so the document can be reproduced exactly later.
+  issuedAt               DateTime?               @map("issued_at")
+  issuedByUserId         String?                 @map("issued_by_user_id") @db.Uuid
+  documentSnapshot       Json?                   @map("document_snapshot")
+  // Last "marked as sent" (manual record — no e-mail provider is connected).
+  sentAt                 DateTime?               @map("sent_at")
+  sentByUserId           String?                 @map("sent_by_user_id") @db.Uuid
+  sentTo                 String?                 @map("sent_to")
+  sentMethod             String?                 @map("sent_method")
+  // Customer decision, recorded by an internal user against this exact revision.
+  customerDecisionAt     DateTime?               @map("customer_decision_at")
+  decisionRecordedAt     DateTime?               @map("decision_recorded_at")
+  decisionRecordedById   String?                 @map("decision_recorded_by_id") @db.Uuid
+  decisionMethod         String?                 @map("decision_method")
+  customerReference      String?                 @map("customer_reference")
+  decisionComment        String?                 @map("decision_comment")
   // Bumped on every save — a stale editor gets 409 instead of overwriting.
   version                Int                     @default(1)
   createdByUserId        String                  @map("created_by_user_id") @db.Uuid
@@ -14789,4 +14823,49 @@ model QuotationLine {
   @@unique([revisionId, lineNumber])
   @@index([productId])
   @@map("quotation_lines")
+}
+
+/// Quotation timeline (S3): every lifecycle step — submission, approval
+/// decisions, issue, "marked as sent", customer decision, revision, cancel —
+/// with who, when, which revision and any comment. Append-only.
+model QuotationEvent {
+  id              String   @id @default(uuid()) @db.Uuid
+  companyId       String   @map("company_id") @db.Uuid
+  quotationId     String   @map("quotation_id") @db.Uuid
+  revisionNumber  Int      @map("revision_number")
+  // CREATED, UPDATED, SUBMITTED, WITHDRAWN, APPROVED, APPROVAL_REJECTED,
+  // ISSUED, SENT, ACCEPTED, REJECTED, REVISED, CANCELLED — validated in code
+  // (quotation-registry.ts), like CRM event types.
+  type            String
+  comment         String?
+  metadata        Json     @default("{}")
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  company   Company   @relation(fields: [companyId], references: [id])
+  quotation Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  createdBy User      @relation("QuotationEventCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@index([quotationId, createdAt])
+  @@map("quotation_events")
+}
+
+/// Per-company Sales & Marketing settings (S3). One row per company, created
+/// with defaults on first read.
+model SalesMarketingSettings {
+  id                                  String   @id @default(uuid()) @db.Uuid
+  companyId                           String   @unique @map("company_id") @db.Uuid
+  // D2: a quotation needs approval when any line discount is above this %...
+  quotationApprovalMaxDiscountPercent Decimal  @default(10) @map("quotation_approval_max_discount_percent") @db.Decimal(5, 2)
+  // ...or its grand total is above this amount (company currency).
+  quotationApprovalMaxTotal           Decimal  @default(500000) @map("quotation_approval_max_total") @db.Decimal(18, 2)
+  quotationDefaultValidityDays        Int      @default(30) @map("quotation_default_validity_days")
+  quotationDefaultTerms               String?  @map("quotation_default_terms")
+  updatedByUserId                     String?  @map("updated_by_user_id") @db.Uuid
+  createdAt                           DateTime @default(now()) @map("created_at")
+  updatedAt                           DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@map("sales_marketing_settings")
 }

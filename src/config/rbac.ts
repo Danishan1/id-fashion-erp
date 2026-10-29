@@ -24,6 +24,9 @@ export const MODULES = [
   // roles can see enquiries without prices (or the reverse), and so Management
   // can approve quotations (S3) without editing them.
   "sales_quotations",
+  // Sales & Marketing settings (S3): quotation approval limits, defaults.
+  // Same grants as crm_settings.
+  "sales_marketing_settings",
   // HRMS is split into one module per screen (2026-10-27) so a role can be
   // given each attendance/leave screen separately. "hrms_attendance" is My
   // Attendance (punch + own records); "hrms_leave" is Leave Requests.
@@ -227,6 +230,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     // roles that already work the CRM).
     sales_marketing: ["view", "view_all", "export"],
     sales_quotations: ["view", "view_all", "approve", "reject", "export", "print"],
+    sales_marketing_settings: ["view", "edit"],
     // No dedicated HR role exists yet in this system — MANAGEMENT owns
     // attendance/leave for now (same "closest existing manager role" default
     // used for crm above), including leave approval.

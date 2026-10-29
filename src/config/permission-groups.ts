@@ -47,6 +47,7 @@ const MODULE_LABELS: Record<string, string> = {
   hrms_salary_advance: "Advance Salary",
   sales_marketing: "Sales & Marketing",
   sales_quotations: "Sales Quotations",
+  sales_marketing_settings: "Sales & Marketing Settings",
   payment_requests: "Payment Requests",
   payment_request_settings: "Payment Approval Matrix",
 };

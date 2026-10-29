@@ -71,7 +71,7 @@ export const ENTITLEMENT_PACKAGES = [
     key: "SALES_MARKETING",
     label: "Sales & Marketing",
     description: "Sales enquiries, quotations, pricing, targets, campaigns and sales & marketing analytics.",
-    modules: ["sales_marketing", "sales_quotations"],
+    modules: ["sales_marketing", "sales_quotations", "sales_marketing_settings"],
   },
   {
     key: "HRMS",

@@ -9,9 +9,9 @@ import { getSalesMarketingPageContext } from "@/modules/sales-marketing/sales-ma
  * here as their phases are built — none are shown before real data exists.
  */
 export default async function SalesMarketingDashboardPage() {
-  // Users who only work quotations land on their list.
+  // Users without Sales & Marketing itself land on the area they do have.
   const { permissions } = await getSalesMarketingPageContext();
-  if (!permissions.view) redirect("/sales-marketing/quotations");
+  if (!permissions.view) redirect(permissions.quotations.view ? "/sales-marketing/quotations" : "/sales-marketing/settings");
   return (
     <>
       <SalesMarketingPageHeader

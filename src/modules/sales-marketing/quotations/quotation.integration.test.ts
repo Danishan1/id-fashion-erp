@@ -8,6 +8,7 @@
  * quotation access; everyone has enquiry and CRM access.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { alignEnquiryCounter } from "../integration-test-helpers";
 
 const DB_URL = process.env.CRM_IT_DATABASE_URL;
 if (DB_URL) process.env.DATABASE_URL = DB_URL;
@@ -32,6 +33,7 @@ type Actor = { companyId: string; userId: string; branchId: string | null };
 describe.skipIf(!DB_URL)("Quotations (database integration)", async () => {
   const { prisma } = await import("@/core/db/client");
   const svc = await import("./quotation.service");
+  const life = await import("./quotation-lifecycle.service");
   const enquiries = await import("@/modules/sales-marketing/enquiries/sales-enquiry.service");
   const { assertAttachmentAccess } = await import("@/core/attachments/attachment-targets");
 
@@ -70,6 +72,7 @@ describe.skipIf(!DB_URL)("Quotations (database integration)", async () => {
 
   beforeAll(async () => {
     const company = await prisma.company.findFirstOrThrow({ orderBy: { createdAt: "asc" } });
+    await alignEnquiryCounter(prisma, company.id);
     companyGstin = company.taxRegistrationNo;
     await prisma.company.update({ where: { id: company.id }, data: { taxRegistrationNo: "33AAACQ1234A1Z5" } }); // Tamil Nadu
     const mk = (n: string) => prisma.user.create({ data: { companyId: company.id, email: `${n}.${run}@q-it.local`, passwordHash: "x", fullName: `${n} ${run}` } });
@@ -182,15 +185,15 @@ describe.skipIf(!DB_URL)("Quotations (database integration)", async () => {
 
     // A second quotation keeps the stage; cancelling one of two keeps it too.
     const q2 = await svc.createQuotation(rep, { ...body } as never);
-    await svc.cancelQuotation(rep, q2.id, { reason: "Duplicate" });
+    await life.cancelQuotation(rep, q2.id, { reason: "Duplicate" });
     expect((await prisma.buyerEnquiry.findUniqueOrThrow({ where: { id: e.id } })).salesStage).toBe("QUOTATION_IN_PROGRESS");
-    const cancelled = await svc.cancelQuotation(rep, q.id, { reason: "Customer paused" });
+    const cancelled = await life.cancelQuotation(rep, q.id, { reason: "Customer paused" });
     expect(cancelled).toMatchObject({ status: "CANCELLED", cancellationReason: "Customer paused" });
-    expect(cancelled.current.status).toBe("CANCELLED");
+    expect(cancelled).toMatchObject({ current: { status: "CANCELLED" } });
     expect((await prisma.buyerEnquiry.findUniqueOrThrow({ where: { id: e.id } })).salesStage).toBe("QUALIFIED");
     const stages = await prisma.buyerEnquiryActivity.findMany({ where: { buyerEnquiryId: e.id, type: "STAGE_CHANGED" }, orderBy: { occurredAt: "asc" } });
     expect(stages.map((s) => (s.metadata as { to: string }).to)).toEqual(["QUOTATION_IN_PROGRESS", "QUALIFIED"]);
-    await expectCode(svc.cancelQuotation(rep, q.id, { reason: "again" }), "INVALID_STATE_TRANSITION");
+    await expectCode(life.cancelQuotation(rep, q.id, { reason: "again" }), "INVALID_STATE_TRANSITION");
     await expectCode(svc.updateQuotationDraft(rep, q.id, { ...draft(), version: 1 }), "INVALID_STATE_TRANSITION");
 
     // An enquiry on hold can't be quoted.

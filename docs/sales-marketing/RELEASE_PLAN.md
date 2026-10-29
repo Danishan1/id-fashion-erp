@@ -106,4 +106,5 @@ Goal: a salesperson records an enquiry, sends a priced, approved quotation PDF, 
 Progress:
 - **S1 Enquiries** — built and verified in the sandbox (2026-10-28), see `S1_ENQUIRIES.md`.
 - **S2 Quotations core** — built and verified in the sandbox (2026-10-28), see `S2_QUOTATIONS.md`. Decided before building: own permission module `sales_quotations`; quotations to prospects allowed (Customer needed to convert); GST shown as CGST + SGST / IGST. Colour × size split moved to conversion (S4) — the Sales Order form already captures it.
-- Next: S3 Issue, revise, approve, PDF, accept.
+- **S3 Issue, revise, approve, PDF, send, accept** — built and verified in the sandbox (2026-10-29), see `S3_QUOTATION_LIFECYCLE.md`. Approval limits live in the new Sales & Marketing → Settings (`sales_marketing_settings`).
+- Next: S4 Convert accepted quotation → Sales Order.

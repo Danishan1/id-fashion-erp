@@ -8069,3 +8069,11 @@ Doc: `docs/sales-marketing/S2_QUOTATIONS.md`.
 - Own RBAC module `sales_quotations` (SALES_MARKETING package). The `/sales-marketing` root layout accepts either module; `enquiries/` and `quotations/` layouts check their own.
 - Enquiry stage hooks live in `sales-enquiry.service.ts` (`loadEnquiryForQuotation`, `markEnquiryQuotationStarted`, `releaseEnquiryQuotation`) and run inside the quotation's transaction.
 - Migration `20261028270000_sales_quotations_s2` (+ down script; the QUOTATION enum values can't be dropped).
+
+## Sales & Marketing — Release 1 / S3 Quotation lifecycle (2026-10-29)
+Doc: `docs/sales-marketing/S3_QUOTATION_LIFECYCLE.md`.
+- All lifecycle steps are in `src/modules/sales-marketing/quotations/quotation-lifecycle.service.ts`, exposed as `POST /api/v1/sales-marketing/quotations/:id/actions/:action` (each action names its `sales_quotations` permission). Every step = guarded write on quotation + revision status, audit row, `quotation_events` row.
+- Only DRAFT revisions are editable; issue snapshots the PDF letterhead/party onto `documentSnapshot`. New changes after issue = `reviseQuotation()` (old ISSUED → SUPERSEDED). Expiry is derived (`isQuotationExpired`), never stored.
+- Approval rule D2 in `quotation-approval.ts`, limits in `sales_marketing_settings` (module `sales_marketing_settings`); approver ≠ creator / last editor / submitter via PermissionService's self-approval guard. Approvers without view_all see PENDING_APPROVAL quotations (`scopedWhere`). Actions return `{ id, visible: false }` when the actor can no longer see the record.
+- Shared `document-pdf.tsx` gained optional column `width` and `sections` (backward compatible).
+- Migration `20261028280000_sales_quotations_s3` (+ down script).

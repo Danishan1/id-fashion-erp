@@ -719,12 +719,22 @@ export async function markEnquiryQuotationStarted(tx: Prisma.TransactionClient, 
  */
 export async function releaseEnquiryQuotation(tx: Prisma.TransactionClient, actor: SalesActor, enquiryId: string, quotationNumber: string, openStatuses: readonly string[]) {
   const enquiry = await tx.buyerEnquiry.findFirst({ where: { id: enquiryId, companyId: actor.companyId } });
-  if (!enquiry || enquiry.salesStage !== "QUOTATION_IN_PROGRESS") return;
+  if (!enquiry || !["QUOTATION_IN_PROGRESS", "QUOTED"].includes(enquiry.salesStage)) return;
   const stillOpen = await tx.quotation.count({ where: { buyerEnquiryId: enquiryId, status: { in: openStatuses as never } } });
   if (stillOpen > 0) return;
   await guardedUpdate(tx, enquiry, { salesStage: "QUALIFIED", stageChangedAt: new Date() });
   await tx.buyerEnquiryActivity.create({
-    data: activityData(enquiry, actor, "STAGE_CHANGED", `Quotation ${quotationNumber} cancelled`, { from: "QUOTATION_IN_PROGRESS", to: "QUALIFIED", quotationNumber }),
+    data: activityData(enquiry, actor, "STAGE_CHANGED", `Quotation ${quotationNumber} cancelled`, { from: enquiry.salesStage, to: "QUALIFIED", quotationNumber }),
+  });
+}
+
+/** Inside the quotation's transaction when a quotation is issued: the enquiry becomes QUOTED (from any open stage before it). */
+export async function markEnquiryQuoted(tx: Prisma.TransactionClient, actor: SalesActor, enquiryId: string, quotationNumber: string, revisionNumber: number) {
+  const enquiry = await tx.buyerEnquiry.findFirst({ where: { id: enquiryId, companyId: actor.companyId } });
+  if (!enquiry || !["NEW", "UNDER_REVIEW", "QUALIFIED", "QUOTATION_IN_PROGRESS"].includes(enquiry.salesStage)) return;
+  await guardedUpdate(tx, enquiry, { salesStage: "QUOTED", stageChangedAt: new Date() });
+  await tx.buyerEnquiryActivity.create({
+    data: activityData(enquiry, actor, "STAGE_CHANGED", `Quotation ${quotationNumber} rev ${revisionNumber} issued`, { from: enquiry.salesStage, to: "QUOTED", quotationNumber }),
   });
 }
 

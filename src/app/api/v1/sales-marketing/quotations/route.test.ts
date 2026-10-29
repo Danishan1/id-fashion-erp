@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
-const m = vi.hoisted(() => ({ requireSession: vi.fn(), assert: vi.fn(), list: vi.fn(), create: vi.fn(), update: vi.fn(), cancel: vi.fn(), prefill: vi.fn() }));
+const m = vi.hoisted(() => ({ requireSession: vi.fn(), assert: vi.fn(), list: vi.fn(), create: vi.fn(), update: vi.fn(), cancel: vi.fn(), approve: vi.fn(), prefill: vi.fn() }));
 
 vi.mock("@/lib/api-route", async () => {
   const { toErrorResponse } = await import("@/core/errors/BusinessRuleError");
@@ -18,13 +18,24 @@ vi.mock("@/modules/sales-marketing/quotations/quotation.service", () => ({
   listQuotations: m.list,
   createQuotation: m.create,
   updateQuotationDraft: m.update,
-  cancelQuotation: m.cancel,
   getQuotationPrefillFromEnquiry: m.prefill,
+}));
+vi.mock("@/modules/sales-marketing/quotations/quotation-lifecycle.service", () => ({
+  cancelQuotation: m.cancel,
+  approveQuotation: m.approve,
+  submitForApproval: vi.fn(),
+  returnToDraft: vi.fn(),
+  declineApproval: vi.fn(),
+  issueQuotation: vi.fn(),
+  markQuotationSent: vi.fn(),
+  recordAcceptance: vi.fn(),
+  recordRejection: vi.fn(),
+  reviseQuotation: vi.fn(),
 }));
 
 const list = await import("./route");
 const one = await import("./[id]/route");
-const cancel = await import("./[id]/cancel/route");
+const actions = await import("./[id]/actions/[action]/route");
 const prefill = await import("./prefill/route");
 const ctx = <P,>(params: P) => ({ params: Promise.resolve(params) });
 const req = (url: string, init?: RequestInit) => new NextRequest(new URL(url, "http://localhost"), init as never);
@@ -53,9 +64,11 @@ describe("Quotation API routes use the sales_quotations permission module", () =
     expect(m.assert).toHaveBeenLastCalledWith("u1", "sales_quotations", "create");
     await one.PUT(req("/x", { method: "PUT", body: "{}" }), ctx({ id: "q1" }));
     expect(m.assert).toHaveBeenLastCalledWith("u1", "sales_quotations", "edit");
-    await cancel.POST(req("/x", { method: "POST", body: JSON.stringify({ reason: "dup" }) }), ctx({ id: "q1" }));
+    await actions.POST(req("/x", { method: "POST", body: JSON.stringify({ reason: "dup" }) }), ctx({ id: "q1", action: "cancel" }));
     expect(m.assert).toHaveBeenLastCalledWith("u1", "sales_quotations", "cancel");
     expect(m.cancel).toHaveBeenCalledWith(expect.anything(), "q1", { reason: "dup" });
+    await actions.POST(req("/x", { method: "POST", body: "{}" }), ctx({ id: "q1", action: "approve" }));
+    expect(m.assert).toHaveBeenLastCalledWith("u1", "sales_quotations", "approve");
   });
 
   it("denied users never reach the service", async () => {
@@ -63,6 +76,12 @@ describe("Quotation API routes use the sales_quotations permission module", () =
     m.assert.mockRejectedValue(new BusinessRuleError("PERMISSION_DENIED", "No."));
     expect((await one.PUT(req("/x", { method: "PUT", body: "{}" }), ctx({ id: "q1" }))).status).toBe(403);
     expect(m.update).not.toHaveBeenCalled();
+  });
+
+  it("unknown actions are 404 and never reach a service", async () => {
+    const res = await actions.POST(req("/x", { method: "POST", body: "{}" }), ctx({ id: "q1", action: "delete-everything" }));
+    expect(res.status).toBe(404);
+    expect(m.cancel).not.toHaveBeenCalled();
   });
 
   it("prefill needs a valid enquiry id", async () => {

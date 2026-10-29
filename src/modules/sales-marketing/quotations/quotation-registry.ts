@@ -47,3 +47,38 @@ export const MAX_QUOTATION_LINES = 200;
 
 export const QUOTATION_SORT_FIELDS = ["quotationNumber", "createdAt", "updatedAt", "status"] as const;
 export type QuotationSortField = (typeof QUOTATION_SORT_FIELDS)[number];
+
+// ── S3: lifecycle vocabulary ─────────────────────────────────────
+
+/** Timeline event types (quotation_events.type). */
+export const QUOTATION_EVENT_TYPES = {
+  CREATED: "Created",
+  UPDATED: "Draft saved",
+  SUBMITTED: "Submitted for approval",
+  WITHDRAWN: "Returned to draft",
+  APPROVED: "Approved",
+  APPROVAL_REJECTED: "Approval declined",
+  ISSUED: "Issued",
+  SENT: "Marked as sent",
+  ACCEPTED: "Accepted by customer",
+  REJECTED: "Rejected by customer",
+  REVISED: "New revision started",
+  CANCELLED: "Cancelled",
+} as const;
+export type QuotationEventType = keyof typeof QUOTATION_EVENT_TYPES;
+
+/** How the quotation reached the customer (recorded by hand — nothing is sent from the ERP). */
+export const SENT_METHODS = { EMAIL: "Email", WHATSAPP: "WhatsApp", COURIER: "Courier / post", IN_PERSON: "In person", OTHER: "Other" } as const;
+export type SentMethod = keyof typeof SENT_METHODS;
+export const SENT_METHOD_KEYS = Object.keys(SENT_METHODS) as [SentMethod, ...SentMethod[]];
+
+/** How the customer gave their decision. */
+export const DECISION_METHODS = { PURCHASE_ORDER: "Purchase order", EMAIL: "Email", SIGNED_COPY: "Signed quotation", PHONE: "Phone", IN_PERSON: "In person", OTHER: "Other" } as const;
+export type DecisionMethod = keyof typeof DECISION_METHODS;
+export const DECISION_METHOD_KEYS = Object.keys(DECISION_METHODS) as [DecisionMethod, ...DecisionMethod[]];
+
+/** Expiry is derived (no background job): an issued revision past its valid-until date. `today` is YYYY-MM-DD. */
+export function isQuotationExpired(status: string, validUntil: string | Date, today: string): boolean {
+  const v = typeof validUntil === "string" ? validUntil.slice(0, 10) : validUntil.toISOString().slice(0, 10);
+  return status === "ISSUED" && v < today;
+}

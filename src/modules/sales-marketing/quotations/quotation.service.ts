@@ -13,13 +13,13 @@ import {
   assertCrmLinks,
   loadEnquiryForQuotation,
   markEnquiryQuotationStarted,
-  releaseEnquiryQuotation,
   type SalesActor,
 } from "@/modules/sales-marketing/enquiries/sales-enquiry.service";
 import { calculateQuotation } from "./quotation-calc";
-import { DEFAULT_VALIDITY_DAYS, OPEN_QUOTATION_STATUSES, QUOTATION_STATUS_KEYS, type QuotationSortField } from "./quotation-registry";
+import { OPEN_QUOTATION_STATUSES, QUOTATION_STATUS_KEYS, isQuotationExpired, type QuotationEventType, type QuotationSortField } from "./quotation-registry";
+import { approvalReasons } from "./quotation-approval";
+import { getSalesMarketingSettings } from "@/modules/sales-marketing/settings/sales-marketing-settings.service";
 import {
-  quotationCancelSchema,
   quotationCreateSchema,
   quotationUpdateSchema,
   type QuotationCreateInput,
@@ -46,18 +46,46 @@ const TABLE = "quotations";
 const OWNER_FIELDS = { owner: "ownerUserId", createdBy: "createdByUserId" };
 const blank = (v: string | undefined | null) => (v ? v : null);
 
+/** Appends one row to the quotation timeline (inside the caller's transaction). */
+export function recordQuotationEvent(
+  tx: Prisma.TransactionClient,
+  actor: SalesActor,
+  quotation: { id: string; companyId: string },
+  revisionNumber: number,
+  type: QuotationEventType,
+  comment: string | null = null,
+  metadata: Record<string, unknown> = {}
+) {
+  return tx.quotationEvent.create({
+    data: { companyId: quotation.companyId, quotationId: quotation.id, revisionNumber, type, comment, metadata: metadata as Prisma.InputJsonValue, createdByUserId: actor.userId },
+  });
+}
+
 // ── Scope ────────────────────────────────────────────────────────
 
-async function getQuotationScope(actor: SalesActor): Promise<CrmRecordScope> {
-  if (await PermissionService.can(actor.userId, "sales_quotations", "view_all")) return { mode: "ALL" };
-  return { mode: "OWN", userId: actor.userId, teamUserIds: (await getTeamScope(actor.userId, "CRM")).teamUserIds };
+export interface QuotationScope {
+  record: CrmRecordScope;
+  /** Approvers also see every quotation waiting for approval (S3). */
+  approver: boolean;
 }
 
-function scopedWhere(actor: SalesActor, scope: CrmRecordScope, extra: Prisma.QuotationWhereInput = {}): Prisma.QuotationWhereInput {
-  return { AND: [{ companyId: actor.companyId }, crmOwnerWhere(scope, OWNER_FIELDS) as Prisma.QuotationWhereInput, extra] };
+export async function getQuotationScope(actor: SalesActor): Promise<QuotationScope> {
+  const [viewAll, approver] = await Promise.all([
+    PermissionService.can(actor.userId, "sales_quotations", "view_all"),
+    PermissionService.can(actor.userId, "sales_quotations", "approve"),
+  ]);
+  if (viewAll) return { record: { mode: "ALL" }, approver };
+  return { record: { mode: "OWN", userId: actor.userId, teamUserIds: (await getTeamScope(actor.userId, "CRM")).teamUserIds }, approver };
 }
 
-async function loadVisible(actor: SalesActor, id: string) {
+export function scopedWhere(actor: SalesActor, scope: QuotationScope, extra: Prisma.QuotationWhereInput = {}): Prisma.QuotationWhereInput {
+  const own = crmOwnerWhere(scope.record, OWNER_FIELDS) as Prisma.QuotationWhereInput;
+  const visible: Prisma.QuotationWhereInput =
+    scope.record.mode === "OWN" && scope.approver ? { OR: [own, { status: "PENDING_APPROVAL" }] } : own;
+  return { AND: [{ companyId: actor.companyId }, visible, extra] };
+}
+
+export async function loadVisible(actor: SalesActor, id: string) {
   const quotation = await prisma.quotation.findFirst({ where: scopedWhere(actor, await getQuotationScope(actor), { id }) });
   if (!quotation) throw new BusinessRuleError("NOT_FOUND", "Quotation not found.", { id });
   return quotation;
@@ -206,10 +234,10 @@ async function resolveLines(actor: SalesActor, lines: QuotationLineInput[], rate
   });
 }
 
-type DraftBody = Omit<QuotationCreateInput, "buyerEnquiryId">;
+export type DraftBody = Omit<QuotationCreateInput, "buyerEnquiryId">;
 
 /** Validates a full draft and computes every amount. Returns the revision data and line rows. */
-async function buildDraft(actor: SalesActor, input: DraftBody, buyerEnquiryId: string | null) {
+export async function buildDraft(actor: SalesActor, input: DraftBody, buyerEnquiryId: string | null) {
   const [rates, company] = await Promise.all([effectiveTaxRates(actor.companyId, input.quotationDate), companyStateCode(actor.companyId)]);
   const rateMap: TaxRateMap = new Map(rates.map((r) => [r.id, Number(r.ratePercentage)]));
   for (const [field, id] of [["freightTaxRateId", input.freightTaxRateId], ["otherChargesTaxRateId", input.otherChargesTaxRateId]] as const) {
@@ -307,8 +335,9 @@ export async function getQuotationPrefillFromEnquiry(actor: SalesActor, enquiryI
       },
     },
   });
+  const settings = await getSalesMarketingSettings(actor.companyId);
   const today = new Date(todayIsoDate());
-  const validUntil = toIsoDate(new Date(today.getFullYear(), today.getMonth(), today.getDate() + DEFAULT_VALIDITY_DAYS));
+  const validUntil = toIsoDate(new Date(today.getFullYear(), today.getMonth(), today.getDate() + settings.quotationDefaultValidityDays));
   const party = enquiry.customer?.name ?? enquiry.prospectName ?? "customer";
   return {
     buyerEnquiryId: enquiry.id,
@@ -327,6 +356,7 @@ export async function getQuotationPrefillFromEnquiry(actor: SalesActor, enquiryI
     billingAddress: enquiry.customer?.billingAddress ?? "",
     shippingAddress: enquiry.customer?.shippingAddress ?? "",
     paymentTermsDays: enquiry.customer?.paymentTermsDays ?? "",
+    termsAndConditions: settings.quotationDefaultTerms ?? "",
     lines: enquiry.lines
       .filter((l) => l.lineStatus !== "REJECTED")
       .map((l) => {
@@ -404,6 +434,7 @@ export async function createQuotation(actor: SalesActor, raw: unknown) {
       },
     });
     if (enquiryId) await markEnquiryQuotationStarted(tx, actor, enquiryId, quotationNumber);
+    await recordQuotationEvent(tx, actor, created, 1, "CREATED", null, { grandTotal: revision.grandTotal });
     await writeAuditLog(
       {
         companyId: actor.companyId,
@@ -468,6 +499,7 @@ export async function updateQuotationDraft(actor: SalesActor, id: string, raw: u
     await tx.quotationLine.deleteMany({ where: { revisionId: current.id } });
     await tx.quotationLine.createMany({ data: lineRows.map((l) => ({ ...l, revisionId: current.id })) });
     await tx.quotation.update({ where: { id: quotation.id }, data: { ...party, ownerUserId } });
+    await recordQuotationEvent(tx, actor, quotation, current.revisionNumber, "UPDATED", null, { grandTotal: revision.grandTotal, version: current.version + 1 });
     await writeAuditLog(
       {
         companyId: actor.companyId,
@@ -492,27 +524,6 @@ export async function updateQuotationDraft(actor: SalesActor, id: string, raw: u
     if (error instanceof BusinessRuleError && error.code === "NOT_FOUND") return { id, visible: false as const };
     throw error;
   });
-}
-
-export async function cancelQuotation(actor: SalesActor, id: string, raw: unknown) {
-  const { reason } = quotationCancelSchema.parse(raw);
-  const quotation = await loadVisible(actor, id);
-  // S2: drafts only. S3 widens this (e.g. withdrawing an issued quotation).
-  if (quotation.status !== "DRAFT") throw new BusinessRuleError("INVALID_STATE_TRANSITION", "Only a draft quotation can be cancelled here.", { status: quotation.status });
-  await prisma.$transaction(async (tx) => {
-    const { count } = await tx.quotation.updateMany({
-      where: { id: quotation.id, status: "DRAFT" },
-      data: { status: "CANCELLED", cancelledAt: new Date(), cancellationReason: reason },
-    });
-    if (count === 0) throw new BusinessRuleError("RECORD_VERSION_CONFLICT", "This quotation changed just now. Reload and try again.");
-    await tx.quotationRevision.updateMany({ where: { quotationId: quotation.id, status: "DRAFT" }, data: { status: "CANCELLED" } });
-    if (quotation.buyerEnquiryId) await releaseEnquiryQuotation(tx, actor, quotation.buyerEnquiryId, quotation.quotationNumber, OPEN_QUOTATION_STATUSES);
-    await writeAuditLog(
-      { companyId: actor.companyId, userId: actor.userId, tableName: TABLE, recordId: quotation.id, action: "CANCEL", oldValues: { status: "DRAFT" }, newValues: { status: "CANCELLED", reason } },
-      tx
-    );
-  });
-  return getQuotation(actor, id);
 }
 
 // ── Read ─────────────────────────────────────────────────────────
@@ -563,7 +574,11 @@ export async function listQuotations(
     }),
     prisma.quotation.count({ where }),
   ]);
-  return { data: rows.map(({ revisions, ...q }) => ({ ...q, current: revisions[0] ?? null })), totalCount };
+  const today = todayIsoDate();
+  return {
+    data: rows.map(({ revisions, ...q }) => ({ ...q, current: revisions[0] ?? null, isExpired: revisions[0] ? isQuotationExpired(q.status, revisions[0].validUntil, today) : false })),
+    totalCount,
+  };
 }
 
 /** Quotations of one enquiry that the user can see (for the enquiry page). */
@@ -577,7 +592,11 @@ export async function listQuotationsForEnquiry(actor: SalesActor, buyerEnquiryId
   return rows.map(({ revisions, ...q }) => ({ id: q.id, quotationNumber: q.quotationNumber, status: q.status, owner: q.owner, current: revisions[0] ?? null }));
 }
 
-export async function getQuotation(actor: SalesActor, id: string) {
+/**
+ * Quotation detail: header, revision list, the requested revision (default the
+ * current one) with its lines, the timeline, and what the viewer may do next.
+ */
+export async function getQuotation(actor: SalesActor, id: string, revisionNumber?: number) {
   const scope = await getQuotationScope(actor);
   const quotation = await prisma.quotation.findFirst({
     where: scopedWhere(actor, scope, { id }),
@@ -591,13 +610,15 @@ export async function getQuotation(actor: SalesActor, id: string) {
       createdBy: { select: { id: true, fullName: true } },
       revisions: {
         orderBy: { revisionNumber: "desc" },
-        select: { id: true, revisionNumber: true, status: true, grandTotal: true, createdAt: true, updatedAt: true },
+        select: { id: true, revisionNumber: true, status: true, grandTotal: true, revisionReason: true, issuedAt: true, createdAt: true, updatedAt: true },
       },
+      events: { orderBy: { createdAt: "desc" }, take: 300, include: { createdBy: { select: { id: true, fullName: true } } } },
     },
   });
   if (!quotation) throw new BusinessRuleError("NOT_FOUND", "Quotation not found.", { id });
-  const current = await prisma.quotationRevision.findUniqueOrThrow({
-    where: { quotationId_revisionNumber: { quotationId: quotation.id, revisionNumber: quotation.currentRevisionNumber } },
+  const wanted = revisionNumber ?? quotation.currentRevisionNumber;
+  const current = await prisma.quotationRevision.findUnique({
+    where: { quotationId_revisionNumber: { quotationId: quotation.id, revisionNumber: wanted } },
     include: {
       freightTaxRate: { select: { id: true, name: true } },
       otherChargesTaxRate: { select: { id: true, name: true } },
@@ -612,13 +633,52 @@ export async function getQuotation(actor: SalesActor, id: string) {
       },
     },
   });
-  const canViewCrm = await PermissionService.can(actor.userId, "crm", "view");
+  if (!current) throw new BusinessRuleError("NOT_FOUND", "Revision not found.", { id, revisionNumber: wanted });
+
+  const userIds = [current.submittedByUserId, current.approvedByUserId, current.issuedByUserId, current.sentByUserId, current.decisionRecordedById].filter((v): v is string => Boolean(v));
+  const [canViewCrm, settings, users] = await Promise.all([
+    PermissionService.can(actor.userId, "crm", "view"),
+    getSalesMarketingSettings(actor.companyId),
+    userIds.length ? prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, fullName: true } }) : Promise.resolve([]),
+  ]);
+  const names = Object.fromEntries(users.map((u) => [u.id, u.fullName]));
+  const isCurrent = wanted === quotation.currentRevisionNumber;
+  const today = todayIsoDate();
+  // While a draft, show what the approval rule would say right now.
+  const approvalPreview =
+    current.status === "DRAFT"
+      ? approvalReasons(
+          { lines: current.lines.map((l) => ({ lineNumber: l.lineNumber, discountPercent: Number(l.discountPercent) })), grandTotal: Number(current.grandTotal) },
+          { maxDiscountPercent: settings.quotationApprovalMaxDiscountPercent, maxTotal: settings.quotationApprovalMaxTotal }
+        )
+      : null;
   return {
     ...quotation,
     crmCompany: canViewCrm ? quotation.crmCompany : quotation.crmCompany ? { id: quotation.crmCompany.id, name: "CRM company" } : null,
     crmContact: canViewCrm ? quotation.crmContact : quotation.crmContact ? { id: quotation.crmContact.id, fullName: "CRM contact" } : null,
     current,
+    isCurrentRevision: isCurrent,
+    isExpired: isCurrent && isQuotationExpired(current.status, current.validUntil, today),
+    approvalPreview,
+    people: {
+      submittedBy: current.submittedByUserId ? (names[current.submittedByUserId] ?? null) : null,
+      approvedBy: current.approvedByUserId ? (names[current.approvedByUserId] ?? null) : null,
+      issuedBy: current.issuedByUserId ? (names[current.issuedByUserId] ?? null) : null,
+      sentBy: current.sentByUserId ? (names[current.sentByUserId] ?? null) : null,
+      decisionRecordedBy: current.decisionRecordedById ? (names[current.decisionRecordedById] ?? null) : null,
+    },
+    viewerCanApprove: await canApproveRevision(actor, current),
   };
+}
+
+/** True when the viewer may approve this revision: it awaits approval, they hold the permission, and they didn't create, save or submit it. */
+export async function canApproveRevision(actor: SalesActor, revision: { status: string; createdByUserId: string; updatedByUserId: string | null; submittedByUserId: string | null }) {
+  if (revision.status !== "PENDING_APPROVAL") return false;
+  const involved = [...new Set([revision.createdByUserId, revision.updatedByUserId, revision.submittedByUserId].filter((v): v is string => Boolean(v)))];
+  for (const createdBy of involved) {
+    if (!(await PermissionService.can(actor.userId, "sales_quotations", "approve", { createdBy }))) return false;
+  }
+  return involved.length > 0 || (await PermissionService.can(actor.userId, "sales_quotations", "approve"));
 }
 
 /** Record-attachments visibility hook. */

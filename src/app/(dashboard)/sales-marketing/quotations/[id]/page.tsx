@@ -4,10 +4,13 @@ import { QuotationDetailClient } from "@/components/sales-marketing/quotations/Q
 import { getQuotation } from "@/modules/sales-marketing/quotations/quotation.service";
 import { getSalesMarketingPageContext } from "@/modules/sales-marketing/sales-marketing-page";
 
-export default async function QuotationDetailPage({ params }: { params: Promise<{ id: string }> }) {
+/** Quotation detail; `?revision=n` shows an earlier revision read-only. */
+export default async function QuotationDetailPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ revision?: string }> }) {
   const { id } = await params;
+  const { revision } = await searchParams;
+  const n = Number(revision);
   const { actor, permissions } = await getSalesMarketingPageContext();
-  const q = await getQuotation(actor, id).catch(() => null);
+  const q = await getQuotation(actor, id, Number.isInteger(n) && n > 0 ? n : undefined).catch(() => null);
   if (!q) notFound();
   const party = q.customer?.name ?? q.prospectName ?? "—";
   return (
@@ -17,8 +20,8 @@ export default async function QuotationDetailPage({ params }: { params: Promise<
         description={`${party}${q.customer ? "" : " (prospect)"}${q.buyer ? ` — ${q.buyer.name}` : ""}`}
         breadcrumbs={[{ label: "Quotations", href: "/sales-marketing/quotations" }, { label: q.quotationNumber }]}
       />
-      {/* JSON round-trip: Decimal/Date aren't serialisable across the RSC boundary. key={id}: remount between quotations. */}
-      <QuotationDetailClient key={id} initialQuotation={JSON.parse(JSON.stringify(q))} permissions={permissions} />
+      {/* JSON round-trip: Decimal/Date aren't serialisable across the RSC boundary. key: remount between quotations/revisions. */}
+      <QuotationDetailClient key={`${id}-${q.current.revisionNumber}`} initialQuotation={JSON.parse(JSON.stringify(q))} permissions={permissions} />
     </>
   );
 }

@@ -51,5 +51,5 @@ export const SALES_MARKETING_SECTIONS: readonly SalesMarketingSection[] = [
   { key: "reports", label: "Sales & Marketing Reports", area: "ANALYTICS", phase: 17, status: "PLANNED", description: "Reports and dashboards across sales and marketing." },
   { key: "ai-insights", label: "AI-Assisted Insights", area: "ANALYTICS", phase: 18, status: "PLANNED", description: "AI help for sales and marketing decisions." },
   { key: "integrations", label: "Integrations & Webhooks", area: "PLATFORM", phase: 16, status: "PLANNED", description: "External systems, webhooks and APIs." },
-  { key: "settings", label: "Settings", area: "PLATFORM", phase: 2, status: "PLANNED", description: "Module configuration, added with the first features that need it." },
+  { key: "settings", label: "Settings", area: "PLATFORM", phase: 2, status: "AVAILABLE", href: "/sales-marketing/settings", description: "Module configuration, added with the first features that need it." },
 ];

@@ -10,6 +10,7 @@
  * "outsider" has no Sales & Marketing access; "nocrm" has no CRM access.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { alignEnquiryCounter } from "../integration-test-helpers";
 
 const DB_URL = process.env.CRM_IT_DATABASE_URL;
 if (DB_URL) process.env.DATABASE_URL = DB_URL;
@@ -76,6 +77,7 @@ describe.skipIf(!DB_URL)("Sales enquiries (database integration)", async () => {
 
   beforeAll(async () => {
     const company = await prisma.company.findFirstOrThrow({ orderBy: { createdAt: "asc" } });
+    await alignEnquiryCounter(prisma, company.id);
     const mk = (n: string) => prisma.user.create({ data: { companyId: company.id, email: `${n}.${run}@sm-it.local`, passwordHash: "x", fullName: `${n} ${run}` } });
     const [m, r, o, x, n] = await Promise.all([mk("manager"), mk("rep"), mk("otherrep"), mk("outsider"), mk("nocrm")]);
     const actor = (id: string) => ({ companyId: company.id, userId: id, branchId: null });

@@ -17,6 +17,7 @@ interface QuotationRow {
   owner: { fullName: string } | null;
   buyerEnquiry: { id: string; enquiryNumber: string } | null;
   current: { revisionNumber: number; title: string; validUntil: string; grandTotal: string } | null;
+  isExpired: boolean;
 }
 
 type View = "open" | "closed" | "all";
@@ -95,7 +96,17 @@ export function QuotationsListClient({ viewAll }: { viewAll: boolean }) {
           ),
         },
         { key: "enquiry", header: "Enquiry", render: (row) => row.buyerEnquiry?.enquiryNumber ?? "—" },
-        { key: "status", header: "Status", sortable: true, render: (row) => <QuotationStatusBadge status={row.status} /> },
+        {
+          key: "status",
+          header: "Status",
+          sortable: true,
+          render: (row) => (
+            <div className="flex flex-col items-start gap-0.5">
+              <QuotationStatusBadge status={row.status} />
+              {row.isExpired && <span className="text-xs font-medium text-red-600 dark:text-red-400">Expired</span>}
+            </div>
+          ),
+        },
         { key: "owner", header: "Owner", render: (row) => row.owner?.fullName ?? <span className="text-zinc-400">Unassigned</span> },
         { key: "grandTotal", header: "Total", render: (row) => <span className="tabular-nums">{formatInr(row.current?.grandTotal)}</span> },
         { key: "validUntil", header: "Valid until", render: (row) => (row.current ? formatDate(row.current.validUntil) : "—") },
