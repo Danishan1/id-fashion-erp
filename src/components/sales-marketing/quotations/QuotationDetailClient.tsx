@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { AttachmentsPanel } from "@/components/ui/AttachmentsPanel";
 import { Button, buttonClasses } from "@/components/ui/Button";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { Modal } from "@/components/ui/Modal";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { toast } from "@/components/ui/Toast";
 import { getApiErrorMessage } from "@/lib/api-client";
 import { todayIsoDate } from "@/lib/date";
@@ -67,6 +68,8 @@ export interface QuotationDetail {
   people: { submittedBy: string | null; approvedBy: string | null; issuedBy: string | null; sentBy: string | null; decisionRecordedBy: string | null };
   customer: { id: string; name: string; code: string } | null;
   buyer: { id: string; name: string } | null;
+  /** The Sales Order made from this quotation (S4), if any. */
+  salesOrder: { id: string; orderNumber: string; status: string; totalAmount: Num; revisionNumber: number } | null;
   buyerEnquiry: { id: string; enquiryNumber: string; subject: string | null; salesStage: SalesEnquiryStage } | null;
   crmCompany: { id: string; name: string } | null;
   crmContact: { id: string; fullName: string } | null;
@@ -218,6 +221,62 @@ function ActionDialog({ spec, busy, error, onClose, onSubmit }: { spec: ActionSp
   );
 }
 
+// ── Prospect → Customer ──────────────────────────────────────────
+
+/** Picks the real Customer (and optional buyer) for a prospect quotation. */
+function LinkCustomerDialog({ prospectName, busy, error, onClose, onSubmit }: { prospectName: string | null; busy: boolean; error: string | null; onClose: () => void; onSubmit: (values: Record<string, string>) => void }) {
+  const [customers, setCustomers] = useState<{ id: string; label: string; sublabel?: string }[] | null>(null);
+  const [buyers, setBuyers] = useState<{ id: string; label: string }[]>([]);
+  const [customerId, setCustomerId] = useState("");
+  const [buyerId, setBuyerId] = useState("");
+  useEffect(() => {
+    fetch("/api/v1/customers?pageSize=200")
+      .then((r) => r.json())
+      .then((b) => setCustomers((b.data ?? []).filter((c: { isActive?: boolean }) => c.isActive !== false).map((c: { id: string; name: string; code: string }) => ({ id: c.id, label: c.name, sublabel: c.code }))))
+      .catch(() => setCustomers([]));
+  }, []);
+  const pickCustomer = (id: string) => {
+    setCustomerId(id);
+    setBuyerId("");
+    setBuyers([]);
+    if (!id) return;
+    fetch(`/api/v1/customers/${id}`)
+      .then((r) => r.json())
+      .then((b) => setBuyers((b.data?.buyers ?? []).map((x: { id: string; name: string }) => ({ id: x.id, label: x.name }))))
+      .catch(() => setBuyers([]));
+  };
+  return (
+    <Modal open onClose={onClose} title="Link customer">
+      <form
+        className="space-y-3"
+        onSubmit={(e) => {
+          e.preventDefault();
+          onSubmit({ customerId, buyerId });
+        }}
+      >
+        <p className="text-sm text-zinc-600 dark:text-zinc-300">
+          {prospectName ?? "This prospect"} must be a Customer before the quotation can become a Sales Order. Create the customer in Masters first if it isn&apos;t there.
+        </p>
+        <FormField label="Customer" htmlFor="link-customer" required>
+          <SearchableSelect id="link-customer" required value={customerId} onChange={pickCustomer} options={customers ?? []} placeholder={customers ? "Search customer…" : "Loading…"} />
+        </FormField>
+        <FormField label="Buyer" htmlFor="link-buyer">
+          <SearchableSelect id="link-buyer" value={buyerId} onChange={setBuyerId} disabled={!customerId || buyers.length === 0} options={buyers} placeholder={customerId && buyers.length === 0 ? "No buyers" : "Search buyer…"} />
+        </FormField>
+        {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+        <div className="flex justify-end gap-2 pt-1">
+          <Button type="button" variant="secondary" onClick={onClose}>
+            Close
+          </Button>
+          <Button type="submit" isLoading={busy} loadingLabel="Saving…" disabled={!customerId}>
+            Link customer
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 // ── Page ─────────────────────────────────────────────────────────
 
 export function QuotationDetailClient({ initialQuotation, permissions }: { initialQuotation: QuotationDetail; permissions: SalesMarketingPagePermissions }) {
@@ -341,6 +400,9 @@ export function QuotationDetailClient({ initialQuotation, permissions }: { initi
         spec: { action: "revise", title: "Start a new revision", help: `Revision ${c.revisionNumber + 1} starts as a draft copy${q.status === "ISSUED" ? `; revision ${c.revisionNumber} becomes superseded and can no longer be accepted` : ""}.`, submitLabel: "Start revision", fields: [{ name: "reason", label: "Why", type: "textarea", required: true }] },
       });
     }
+    if (!q.customer && ["DRAFT", "PENDING_APPROVAL", "APPROVED", "ISSUED", "ACCEPTED"].includes(q.status) && p.edit) {
+      actions.push({ label: "Link customer", variant: "secondary", spec: { action: "link-customer", title: "Link customer", submitLabel: "Link customer", fields: [{ name: "customerId", label: "Customer", type: "text", required: true }] } });
+    }
     if (["DRAFT", "PENDING_APPROVAL", "APPROVED", "ISSUED"].includes(q.status) && p.cancel) {
       actions.push({ label: q.status === "ISSUED" ? "Withdraw" : "Cancel", variant: "danger", spec: { action: "cancel", title: q.status === "ISSUED" ? "Withdraw quotation" : "Cancel quotation", help: q.buyerEnquiry ? "If this is the enquiry's only open quotation, the enquiry goes back to Qualified." : undefined, submitLabel: "Cancel quotation", danger: true, fields: [{ name: "reason", label: "Reason", type: "textarea", required: true }] } });
     }
@@ -374,6 +436,17 @@ export function QuotationDetailClient({ initialQuotation, permissions }: { initi
               Edit draft
             </Link>
           )}
+          {live && q.status === "ACCEPTED" && p.edit && permissions.salesOrders.create && (
+            q.customer ? (
+              <Link href={`/sales-marketing/quotations/${q.id}/convert`} className={buttonClasses("primary", "xs")}>
+                Convert to Sales Order
+              </Link>
+            ) : (
+              <Button size="xs" disabled title="Link a customer first">
+                Convert to Sales Order
+              </Button>
+            )
+          )}
           {actions.map((a) => (
             <Button key={a.spec.action} size="xs" variant={a.variant ?? "primary"} disabled={busy || Boolean(a.disabled)} title={a.disabled} onClick={() => open(a.spec)}>
               {a.label}
@@ -393,7 +466,22 @@ export function QuotationDetailClient({ initialQuotation, permissions }: { initi
       {live && c.status === "DRAFT" && c.approvalComment && <p className="text-xs text-red-700 dark:text-red-400">Sent back by the approver: {c.approvalComment}</p>}
       {q.status === "ACCEPTED" && live && (
         <p className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-900 dark:border-green-900 dark:bg-green-950 dark:text-green-100">
-          Accepted — converting it to a Sales Order comes with the next release step.
+          {q.customer
+            ? "Accepted — convert it to a Sales Order to split the quantities by colour and size."
+            : "Accepted — this is a prospect: link the real customer before converting it to a Sales Order."}
+        </p>
+      )}
+      {q.salesOrder && (
+        <p className="rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-900 dark:border-indigo-900 dark:bg-indigo-950 dark:text-indigo-100">
+          Converted to Sales Order{" "}
+          {permissions.salesOrders.view ? (
+            <Link href={`/sales-orders/${q.salesOrder.id}`} className="font-medium underline">
+              {q.salesOrder.orderNumber}
+            </Link>
+          ) : (
+            <strong>{q.salesOrder.orderNumber}</strong>
+          )}{" "}
+          from revision {q.salesOrder.revisionNumber} · {formatInr(q.salesOrder.totalAmount)} before GST · order status: {q.salesOrder.status.toLowerCase().replace(/_/g, " ")}.
         </p>
       )}
       {q.status === "CANCELLED" && live && (
@@ -473,7 +561,7 @@ export function QuotationDetailClient({ initialQuotation, permissions }: { initi
                           {l.customerReference && ` · Ref ${l.customerReference}`}
                           {l.requestedDeliveryDate && ` · Delivery ${formatDate(l.requestedDeliveryDate)}`}
                         </div>
-                        {l.lineType === "FREE_TEXT" && <div className="text-xs text-amber-700 dark:text-amber-400">Needs a Style before conversion</div>}
+                        {l.lineType === "FREE_TEXT" && !q.salesOrder && <div className="text-xs text-amber-700 dark:text-amber-400">The Style is picked when converting to a Sales Order</div>}
                       </td>
                       <td className="py-2 pr-3 text-right tabular-nums">
                         {qty(l.quantity)} {l.uom?.code ?? ""}
@@ -596,7 +684,8 @@ export function QuotationDetailClient({ initialQuotation, permissions }: { initi
         </div>
       </div>
 
-      {dialog && <ActionDialog key={dialog.action} spec={dialog} busy={busy} error={error} onClose={() => setDialog(null)} onSubmit={(values) => run(dialog.action, values)} />}
+      {dialog?.action === "link-customer" && <LinkCustomerDialog prospectName={q.prospectName} busy={busy} error={error} onClose={() => setDialog(null)} onSubmit={(values) => run("link-customer", values)} />}
+      {dialog && dialog.action !== "link-customer" && <ActionDialog key={dialog.action} spec={dialog} busy={busy} error={error} onClose={() => setDialog(null)} onSubmit={(values) => run(dialog.action, values)} />}
     </div>
   );
 }

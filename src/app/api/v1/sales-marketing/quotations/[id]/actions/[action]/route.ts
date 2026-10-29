@@ -15,6 +15,7 @@ import {
   reviseQuotation,
   submitForApproval,
 } from "@/modules/sales-marketing/quotations/quotation-lifecycle.service";
+import { linkQuotationCustomer } from "@/modules/sales-marketing/quotations/quotation-conversion.service";
 import type { SalesActor } from "@/modules/sales-marketing/enquiries/sales-enquiry.service";
 
 /**
@@ -33,6 +34,7 @@ const ACTIONS: Record<string, { permission: Action; run: (actor: SalesActor, id:
   reject: { permission: "edit", run: recordRejection },
   revise: { permission: "edit", run: reviseQuotation },
   cancel: { permission: "cancel", run: cancelQuotation },
+  "link-customer": { permission: "edit", run: linkQuotationCustomer },
 };
 
 

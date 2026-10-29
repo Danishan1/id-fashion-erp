@@ -237,7 +237,13 @@ async function assertCustomerAndBuyer(companyId: string, customerId: string, buy
   return customer;
 }
 
-export async function createSalesOrder(actor: ActorContext, input: SalesOrderInput) {
+/**
+ * `origin.sourceQuotationRevisionId` is set only by Sales & Marketing's
+ * quotation conversion (S4, 2026-10-29) — never from the public order API.
+ * The column is unique, so a second conversion of the same revision fails
+ * with a unique violation instead of creating a second order.
+ */
+export async function createSalesOrder(actor: ActorContext, input: SalesOrderInput, origin: { sourceQuotationRevisionId?: string } = {}) {
   await assertCustomerAndBuyer(actor.companyId, input.customerId, input.buyerId);
 
   await assertItemsAreStyles(actor.companyId, input.items, { rejectInactive: true });
@@ -288,6 +294,7 @@ export async function createSalesOrder(actor: ActorContext, input: SalesOrderInp
     requiredShipDate: input.requiredShipDate ? new Date(input.requiredShipDate) : null,
     customerPoNumber: input.customerPoNumber || null,
     originatingOpportunityId: input.originatingOpportunityId || null,
+    sourceQuotationRevisionId: origin.sourceQuotationRevisionId ?? null,
     status: "DRAFT",
     currencyCode,
     exchangeRate: 1,

@@ -6,7 +6,7 @@ import { runCrmMutation } from "../core/crm-mutation";
 import { CrmErpRepository } from "../erp/crm-erp.repository";
 import { loadEditableOpportunity, loadOpportunityForActor, refreshOpportunitySearchText } from "./crm-opportunities.service";
 import { CrmOpportunityRepository } from "./crm-opportunity.repository";
-import { ERP_DOC_TYPE_KEYS, ERP_DOC_TYPES, QUOTATION_NOT_AVAILABLE, type ErpDocType } from "./opportunity-registry";
+import { ERP_DOC_TYPE_KEYS, ERP_DOC_TYPES, type ErpDocType } from "./opportunity-registry";
 import { erpDocumentSearchSchema, linkErpDocumentSchema } from "./opportunity.schema";
 
 /**
@@ -55,6 +55,21 @@ const PROVIDERS: Record<ErpDocType, Provider> = {
       return (await CrmErpRepository.buyerEnquiryDocs({ companyId, ...(customerId ? { customerId } : {}), ...(term ? { enquiryNumber: contains(term) } : {}), ...branch }, take)).map(enquiryView);
     },
   },
+  // Sales & Marketing quotations (2026-10-29): company-wide documents (no
+  // branch); amount and status are those of the current revision.
+  QUOTATION: {
+    async load(companyId, ids) {
+      return (await CrmErpRepository.quotationDocs({ companyId, id: { in: ids } }, ids.length)).map(quotationView);
+    },
+    async search(companyId, { customerId, term }, _branch, take) {
+      return (
+        await CrmErpRepository.quotationDocs(
+          { companyId, ...(customerId ? { customerId } : {}), ...(term ? { OR: [{ quotationNumber: contains(term) }, { prospectName: contains(term) }, { revisions: { some: { title: contains(term) } } }] } : {}) },
+          take
+        )
+      ).map(quotationView);
+    },
+  },
   SAMPLE_REQUEST: {
     async load(companyId, ids, branch) {
       return (await CrmErpRepository.sampleRequestDocs({ companyId, id: { in: ids }, ...branch }, ids.length)).map(sampleView);
@@ -76,6 +91,25 @@ const PROVIDERS: Record<ErpDocType, Provider> = {
 type EnquiryRow = Awaited<ReturnType<typeof CrmErpRepository.buyerEnquiryDocs>>[number];
 type SampleRow = Awaited<ReturnType<typeof CrmErpRepository.sampleRequestDocs>>[number];
 type OrderRow = Awaited<ReturnType<typeof CrmErpRepository.salesOrderDocs>>[number];
+type QuotationRow = Awaited<ReturnType<typeof CrmErpRepository.quotationDocs>>[number];
+
+function quotationView(x: QuotationRow): ErpDocView {
+  const r = x.revisions[0];
+  return {
+    id: x.id,
+    number: r && r.revisionNumber > 1 ? `${x.quotationNumber} rev ${r.revisionNumber}` : x.quotationNumber,
+    date: r?.quotationDate ?? x.createdAt,
+    status: x.status,
+    amount: money(r?.grandTotal),
+    currencyCode: r?.currencyCode ?? null,
+    dueDate: r?.validUntil ?? null,
+    subtitle: r?.title ?? null,
+    customerId: x.customerId,
+    customerName: x.customer?.name ?? (x.prospectName ? `${x.prospectName} (prospect)` : null),
+    person: x.owner?.fullName ?? x.createdBy.fullName,
+    href: `/sales-marketing/quotations/${x.id}`,
+  };
+}
 
 function enquiryView(x: EnquiryRow): ErpDocView {
   return {
@@ -138,7 +172,7 @@ export async function listOpportunityErpDocuments(actor: CrmActor, opportunityId
   return {
     customerLinked: Boolean(customerId),
     sections,
-    notAvailable: [{ key: "QUOTATION", label: "Quotations", reason: QUOTATION_NOT_AVAILABLE }],
+    notAvailable: [] as { key: string; label: string; reason: string }[],
     // Links whose type is no longer registered are kept and listed, never dropped silently.
     unknown: links.filter((l) => !(ERP_DOC_TYPE_KEYS as readonly string[]).includes(l.docType)).map((l) => ({ linkId: l.id, docType: l.docType, docNumber: l.docNumber })),
   };

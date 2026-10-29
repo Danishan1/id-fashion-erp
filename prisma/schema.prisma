@@ -4276,56 +4276,61 @@ enum SalesOrderStatus {
 }
 
 model SalesOrder {
-  id                       String            @id @default(uuid()) @db.Uuid
-  companyId                String            @map("company_id") @db.Uuid
-  branchId                 String?           @map("branch_id") @db.Uuid
-  orderNumber              String            @map("order_number")
-  customerId               String            @map("customer_id") @db.Uuid
-  buyerId                  String?           @map("buyer_id") @db.Uuid
-  orderDate                DateTime          @map("order_date") @db.Date
-  requiredShipDate         DateTime?         @map("required_ship_date") @db.Date
+  id                        String            @id @default(uuid()) @db.Uuid
+  companyId                 String            @map("company_id") @db.Uuid
+  branchId                  String?           @map("branch_id") @db.Uuid
+  orderNumber               String            @map("order_number")
+  customerId                String            @map("customer_id") @db.Uuid
+  buyerId                   String?           @map("buyer_id") @db.Uuid
+  orderDate                 DateTime          @map("order_date") @db.Date
+  requiredShipDate          DateTime?         @map("required_ship_date") @db.Date
   // The buyer's own PO reference number, free text — this app's real
   // ORD-2026-00001 numbering is unrelated and unaffected; a buyer's PO
   // document (the file itself) attaches via the existing generic Attachment
   // mechanism (RelatedModule.SALES_ORDER), not a dedicated column here.
-  customerPoNumber         String?           @map("customer_po_number")
-  status                   SalesOrderStatus  @default(DRAFT)
-  statusBeforeHold         SalesOrderStatus? @map("status_before_hold")
+  customerPoNumber          String?           @map("customer_po_number")
+  status                    SalesOrderStatus  @default(DRAFT)
+  statusBeforeHold          SalesOrderStatus? @map("status_before_hold")
   // Frozen at creation (no live FX picker — multi-currency UI is deferred
   // project-wide); base amounts are stored, not computed live, so historical
   // totals never drift if a rate source changes later.
-  currencyCode             String            @map("currency_code") @db.Char(3)
-  exchangeRate             Decimal           @default(1) @map("exchange_rate") @db.Decimal(18, 6)
-  baseCurrencyCode         String            @map("base_currency_code") @db.Char(3)
-  totalAmount              Decimal           @default(0) @map("total_amount") @db.Decimal(18, 2)
-  baseTotalAmount          Decimal           @default(0) @map("base_total_amount") @db.Decimal(18, 2)
-  requestedByUserId        String            @map("requested_by_user_id") @db.Uuid
+  currencyCode              String            @map("currency_code") @db.Char(3)
+  exchangeRate              Decimal           @default(1) @map("exchange_rate") @db.Decimal(18, 6)
+  baseCurrencyCode          String            @map("base_currency_code") @db.Char(3)
+  totalAmount               Decimal           @default(0) @map("total_amount") @db.Decimal(18, 2)
+  baseTotalAmount           Decimal           @default(0) @map("base_total_amount") @db.Decimal(18, 2)
+  requestedByUserId         String            @map("requested_by_user_id") @db.Uuid
   // CRM traceability (2026-10-09, CRM Replacement) — which Opportunity this
   // order came from, if any; optional, set manually on the New Sales Order
   // form, never auto-populated. Was originatingDealId against the legacy
   // CRM's Deal model before the replacement.
-  originatingOpportunityId String?           @map("originating_opportunity_id") @db.Uuid
-  createdAt                DateTime          @default(now()) @map("created_at")
-  updatedAt                DateTime          @updatedAt @map("updated_at")
+  originatingOpportunityId  String?           @map("originating_opportunity_id") @db.Uuid
+  // Sales & Marketing S4 (2026-10-29): the accepted quotation revision this
+  // order was converted from. Unique — one order per revision, so a retried
+  // or concurrent conversion can never create a second order.
+  sourceQuotationRevisionId String?           @unique @map("source_quotation_revision_id") @db.Uuid
+  createdAt                 DateTime          @default(now()) @map("created_at")
+  updatedAt                 DateTime          @updatedAt @map("updated_at")
 
-  company                Company           @relation(fields: [companyId], references: [id])
-  branch                 Branch?           @relation(fields: [branchId], references: [id])
-  customer               Customer          @relation(fields: [customerId], references: [id])
-  buyer                  Buyer?            @relation(fields: [buyerId], references: [id])
-  requestedBy            User              @relation("SalesOrderRequestedBy", fields: [requestedByUserId], references: [id])
-  originatingOpportunity CrmOpportunity?   @relation(fields: [originatingOpportunityId], references: [id])
-  items                  SalesOrderItem[]
-  salesOrderLines        SalesOrderLine[]
-  materialRequests       MaterialRequest[]
-  salesInvoices          SalesInvoice[]
-  dispatches             Dispatch[]
-  productUnits           ProductUnit[]
-  customerReturns        CustomerReturn[]
+  company                 Company            @relation(fields: [companyId], references: [id])
+  branch                  Branch?            @relation(fields: [branchId], references: [id])
+  customer                Customer           @relation(fields: [customerId], references: [id])
+  buyer                   Buyer?             @relation(fields: [buyerId], references: [id])
+  requestedBy             User               @relation("SalesOrderRequestedBy", fields: [requestedByUserId], references: [id])
+  originatingOpportunity  CrmOpportunity?    @relation(fields: [originatingOpportunityId], references: [id])
+  sourceQuotationRevision QuotationRevision? @relation(fields: [sourceQuotationRevisionId], references: [id])
+  items                   SalesOrderItem[]
+  salesOrderLines         SalesOrderLine[]
+  materialRequests        MaterialRequest[]
+  salesInvoices           SalesInvoice[]
+  dispatches              Dispatch[]
+  productUnits            ProductUnit[]
+  customerReturns         CustomerReturn[]
   // Reserved, unused this phase — AiGarmentProject.salesOrderId is a nullable
   // FK not yet written by any code path (no Sales Order linkage exists yet
   // for AI Garment Flow); documented placeholder, same precedent as
   // ProductionOrderStatus.MATERIAL_ALLOCATED.
-  aiGarmentProject       AiGarmentProject?
+  aiGarmentProject        AiGarmentProject?
 
   @@unique([companyId, orderNumber])
   @@map("sales_orders")
@@ -14774,6 +14779,7 @@ model QuotationRevision {
   otherChargesTaxRate TaxRate?        @relation("QuotationOtherChargesTaxRate", fields: [otherChargesTaxRateId], references: [id])
   createdBy           User            @relation("QuotationRevisionCreatedBy", fields: [createdByUserId], references: [id])
   lines               QuotationLine[]
+  salesOrder          SalesOrder?
 
   @@unique([quotationId, revisionNumber])
   @@map("quotation_revisions")

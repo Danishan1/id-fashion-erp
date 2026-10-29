@@ -8077,3 +8077,11 @@ Doc: `docs/sales-marketing/S3_QUOTATION_LIFECYCLE.md`.
 - Approval rule D2 in `quotation-approval.ts`, limits in `sales_marketing_settings` (module `sales_marketing_settings`); approver ≠ creator / last editor / submitter via PermissionService's self-approval guard. Approvers without view_all see PENDING_APPROVAL quotations (`scopedWhere`). Actions return `{ id, visible: false }` when the actor can no longer see the record.
 - Shared `document-pdf.tsx` gained optional column `width` and `sections` (backward compatible).
 - Migration `20261028280000_sales_quotations_s3` (+ down script).
+
+## Sales & Marketing — Release 1 / S4 Convert accepted quotation → Sales Order (2026-10-29)
+Doc: `docs/sales-marketing/S4_CONVERSION.md`.
+- `quotation-conversion.service.ts`: `getConversionPlan` (pieces via the unit master → PCS, unit price = line taxable ÷ pieces, blockers), `convertQuotationToSalesOrder` (needs `sales_orders.create`; re-validates everything, calls the existing `createSalesOrder()` with origin `{ sourceQuotationRevisionId }`), `linkQuotationCustomer` (prospect → real Customer, action `link-customer`). Routes `GET|POST /api/v1/sales-marketing/quotations/:id/convert`.
+- Idempotency is the unique `sales_orders.source_quotation_revision_id`; a lost race (P2002) or retry returns the existing order and only brings the quotation in line (ACCEPTED → CONVERTED, enquiry WON via `markEnquiryWon`, event, audit, owner notification). CRM opportunity links (QUOTATION + SALES_ORDER) are added best-effort after commit.
+- UI is the existing `SalesOrderForm` in `fromQuotation` mode (locked customer/buyer/style/design/price, no add/remove line, per-line piece target) at `/sales-marketing/quotations/:id/convert`. The order page shows "From quotation …".
+- CRM's `QUOTATION` document type is now real (`crm-opportunity-erp.service.ts` provider, `module: sales_quotations`); `QUOTATION_NOT_AVAILABLE` / unavailable stage requirements removed.
+- Migration `20261029090000_sales_quotation_conversion_s4` (+ down script, run before S3's).

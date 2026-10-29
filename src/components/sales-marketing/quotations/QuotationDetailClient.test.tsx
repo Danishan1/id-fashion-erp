@@ -82,6 +82,7 @@ const base = {
   customer: { id: "c1", name: "Zenith", code: "C1" },
   buyer: null,
   buyerEnquiry: null,
+  salesOrder: null,
   crmCompany: null,
   crmContact: null,
   owner: null,
@@ -101,6 +102,7 @@ const perms = {
   merchandisingView: true,
   quotations: { view: true, create: true, edit: true, cancel: true, approve: true, reject: true, print: true },
   settings: { view: false, edit: false },
+  salesOrders: { view: true, create: true },
 };
 const withStatus = (status: string, extra: Partial<Detail> = {}) => ({ ...base, status, current: { ...rev, status }, ...extra }) as Detail;
 const buttons = () => screen.queryAllByRole("button").map((b) => b.textContent);
@@ -153,9 +155,43 @@ describe("QuotationDetailClient actions", () => {
     fireEvent.click(screen.getByRole("button", { name: "Record acceptance" }));
     fireEvent.change(screen.getByLabelText(/Customer reference/), { target: { value: "PO-7781" } });
     fireEvent.click(screen.getAllByRole("button", { name: "Record acceptance" }).at(-1)!);
-    await waitFor(() => expect(screen.getByText(/converting it to a Sales Order/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/convert it to a Sales Order/)).toBeTruthy());
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("/api/v1/sales-marketing/quotations/q1/actions/accept");
     expect(JSON.parse(String(init.body))).toMatchObject({ method: "PURCHASE_ORDER", customerReference: "PO-7781" });
+  });
+
+  it("offers Convert to Sales Order on an accepted quotation, only with sales order permission", () => {
+    const { unmount } = render(<QuotationDetailClient initialQuotation={withStatus("ACCEPTED")} permissions={perms} />);
+    expect(screen.getByRole("link", { name: "Convert to Sales Order" }).getAttribute("href")).toBe("/sales-marketing/quotations/q1/convert");
+    unmount();
+    render(<QuotationDetailClient initialQuotation={withStatus("ACCEPTED")} permissions={{ ...perms, salesOrders: { view: true, create: false } }} />);
+    expect(screen.queryByText("Convert to Sales Order")).toBeNull();
+  });
+
+  it("asks to link a customer before a prospect can be converted, and posts the pick", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.startsWith("/api/v1/customers?")) return new Response(JSON.stringify({ data: [{ id: "c9", name: "Real Co", code: "C9" }] }));
+      if (url === "/api/v1/customers/c9") return new Response(JSON.stringify({ data: { buyers: [] } }));
+      return new Response(JSON.stringify({ data: withStatus("ACCEPTED") }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<QuotationDetailClient initialQuotation={withStatus("ACCEPTED", { customer: null, prospectName: "Prospect Ltd" } as Partial<Detail>)} permissions={perms} />);
+    expect((screen.getByRole("button", { name: "Convert to Sales Order" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/link the real customer/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Link customer" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/v1/customers?pageSize=200"));
+    fireEvent.focus(screen.getByLabelText(/^Customer/));
+    fireEvent.click(await screen.findByText("Real Co"));
+    fireEvent.click(screen.getAllByRole("button", { name: "Link customer" }).at(-1)!);
+    await waitFor(() => expect(fetchMock.mock.calls.some(([u]) => u === "/api/v1/sales-marketing/quotations/q1/actions/link-customer")).toBe(true));
+    const call = fetchMock.mock.calls.find(([u]) => u === "/api/v1/sales-marketing/quotations/q1/actions/link-customer") as unknown as [string, RequestInit];
+    expect(JSON.parse(String(call[1].body))).toEqual({ customerId: "c9" });
+  });
+
+  it("links the Sales Order once converted", () => {
+    render(<QuotationDetailClient initialQuotation={withStatus("CONVERTED", { salesOrder: { id: "so1", orderNumber: "ORD-2026-00042", status: "DRAFT", totalAmount: "10800", revisionNumber: 1 } } as Partial<Detail>)} permissions={perms} />);
+    expect(screen.getByRole("link", { name: "ORD-2026-00042" }).getAttribute("href")).toBe("/sales-orders/so1");
+    expect(buttons()).not.toContain("Convert to Sales Order");
   });
 });

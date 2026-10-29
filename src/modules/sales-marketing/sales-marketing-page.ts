@@ -15,6 +15,8 @@ export interface SalesMarketingPagePermissions {
   view: boolean;
   quotations: { view: boolean; create: boolean; edit: boolean; cancel: boolean; approve: boolean; reject: boolean; print: boolean };
   settings: { view: boolean; edit: boolean };
+  /** The Sales Orders module (S4: convert an accepted quotation, open its order). */
+  salesOrders: { view: boolean; create: boolean };
 }
 
 /**
@@ -26,7 +28,7 @@ export async function getSalesMarketingPageContext(): Promise<{ actor: SalesActo
   const session = await auth();
   if (!session?.user?.id) notFound();
   const userId = session.user.id;
-  const [view, create, edit, viewAll, crmView, crmEdit, merchandisingView, qView, qCreate, qEdit, qCancel, qApprove, qReject, qPrint, sView, sEdit] = await Promise.all([
+  const [view, create, edit, viewAll, crmView, crmEdit, merchandisingView, qView, qCreate, qEdit, qCancel, qApprove, qReject, qPrint, sView, sEdit, soView, soCreate] = await Promise.all([
     PermissionService.can(userId, "sales_marketing", "view"),
     PermissionService.can(userId, "sales_marketing", "create"),
     PermissionService.can(userId, "sales_marketing", "edit"),
@@ -43,6 +45,8 @@ export async function getSalesMarketingPageContext(): Promise<{ actor: SalesActo
     PermissionService.can(userId, "sales_quotations", "print"),
     PermissionService.can(userId, "sales_marketing_settings", "view"),
     PermissionService.can(userId, "sales_marketing_settings", "edit"),
+    PermissionService.can(userId, "sales_orders", "view"),
+    PermissionService.can(userId, "sales_orders", "create"),
   ]);
   return {
     actor: { companyId: session.user.companyId, userId, branchId: session.user.defaultBranchId ?? null },
@@ -56,6 +60,7 @@ export async function getSalesMarketingPageContext(): Promise<{ actor: SalesActo
       merchandisingView,
       quotations: { view: qView, create: qCreate, edit: qEdit, cancel: qCancel, approve: qApprove, reject: qReject, print: qPrint },
       settings: { view: sView, edit: sEdit },
+      salesOrders: { view: soView, create: soCreate },
     },
   };
 }

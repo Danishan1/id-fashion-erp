@@ -635,6 +635,11 @@ export async function getQuotation(actor: SalesActor, id: string, revisionNumber
   });
   if (!current) throw new BusinessRuleError("NOT_FOUND", "Revision not found.", { id, revisionNumber: wanted });
 
+  // S4: the Sales Order made from this quotation (any revision), shown live.
+  const salesOrder = await prisma.salesOrder.findFirst({
+    where: { companyId: actor.companyId, sourceQuotationRevision: { quotationId: quotation.id } },
+    select: { id: true, orderNumber: true, status: true, totalAmount: true, sourceQuotationRevision: { select: { revisionNumber: true } } },
+  });
   const userIds = [current.submittedByUserId, current.approvedByUserId, current.issuedByUserId, current.sentByUserId, current.decisionRecordedById].filter((v): v is string => Boolean(v));
   const [canViewCrm, settings, users] = await Promise.all([
     PermissionService.can(actor.userId, "crm", "view"),
@@ -668,6 +673,9 @@ export async function getQuotation(actor: SalesActor, id: string, revisionNumber
       decisionRecordedBy: current.decisionRecordedById ? (names[current.decisionRecordedById] ?? null) : null,
     },
     viewerCanApprove: await canApproveRevision(actor, current),
+    salesOrder: salesOrder
+      ? { id: salesOrder.id, orderNumber: salesOrder.orderNumber, status: salesOrder.status, totalAmount: salesOrder.totalAmount, revisionNumber: salesOrder.sourceQuotationRevision?.revisionNumber ?? null }
+      : null,
   };
 }
 

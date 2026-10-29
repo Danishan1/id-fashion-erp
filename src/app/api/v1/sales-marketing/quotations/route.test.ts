@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
-const m = vi.hoisted(() => ({ requireSession: vi.fn(), assert: vi.fn(), list: vi.fn(), create: vi.fn(), update: vi.fn(), cancel: vi.fn(), approve: vi.fn(), prefill: vi.fn() }));
+const m = vi.hoisted(() => ({ requireSession: vi.fn(), assert: vi.fn(), list: vi.fn(), create: vi.fn(), update: vi.fn(), cancel: vi.fn(), approve: vi.fn(), prefill: vi.fn(), plan: vi.fn(), convert: vi.fn(), linkCustomer: vi.fn() }));
 
 vi.mock("@/lib/api-route", async () => {
   const { toErrorResponse } = await import("@/core/errors/BusinessRuleError");
@@ -33,7 +33,14 @@ vi.mock("@/modules/sales-marketing/quotations/quotation-lifecycle.service", () =
   reviseQuotation: vi.fn(),
 }));
 
+vi.mock("@/modules/sales-marketing/quotations/quotation-conversion.service", () => ({
+  getConversionPlan: m.plan,
+  convertQuotationToSalesOrder: m.convert,
+  linkQuotationCustomer: m.linkCustomer,
+}));
+
 const list = await import("./route");
+const convert = await import("./[id]/convert/route");
 const one = await import("./[id]/route");
 const actions = await import("./[id]/actions/[action]/route");
 const prefill = await import("./prefill/route");
@@ -89,5 +96,26 @@ describe("Quotation API routes use the sales_quotations permission module", () =
     const ok = await prefill.GET(req("/x?enquiryId=00000000-0000-4000-8000-000000000001"), ctx({}));
     expect(ok.status).toBe(200);
     expect(m.assert).toHaveBeenCalledWith("u1", "sales_quotations", "create");
+  });
+
+  it("convert: GET plan → view; POST → edit (the service also asserts sales_orders.create); 201 new, 200 when it already existed", async () => {
+    m.plan.mockResolvedValue({ lines: [] });
+    expect((await convert.GET(req("/x"), ctx({ id: "q1" }))).status).toBe(200);
+    expect(m.assert).toHaveBeenLastCalledWith("u1", "sales_quotations", "view");
+    m.convert.mockResolvedValue({ salesOrderId: "so1", orderNumber: "ORD-1", alreadyConverted: false });
+    const created = await convert.POST(req("/x", { method: "POST", body: JSON.stringify({ items: [] }) }), ctx({ id: "q1" }));
+    expect(created.status).toBe(201);
+    expect(m.assert).toHaveBeenLastCalledWith("u1", "sales_quotations", "edit");
+    expect(m.convert).toHaveBeenCalledWith(expect.objectContaining({ companyId: "c1", userId: "u1" }), "q1", { items: [] });
+    m.convert.mockResolvedValue({ salesOrderId: "so1", orderNumber: "ORD-1", alreadyConverted: true });
+    const again = await convert.POST(req("/x", { method: "POST" }), ctx({ id: "q1" }));
+    expect(again.status).toBe(200);
+    expect(m.convert).toHaveBeenLastCalledWith(expect.anything(), "q1", {});
+  });
+
+  it("link-customer action → edit", async () => {
+    await actions.POST(req("/x", { method: "POST", body: JSON.stringify({ customerId: "c9" }) }), ctx({ id: "q1", action: "link-customer" }));
+    expect(m.assert).toHaveBeenLastCalledWith("u1", "sales_quotations", "edit");
+    expect(m.linkCustomer).toHaveBeenCalledWith(expect.anything(), "q1", { customerId: "c9" });
   });
 });

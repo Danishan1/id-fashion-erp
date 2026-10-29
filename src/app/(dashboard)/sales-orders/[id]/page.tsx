@@ -1,5 +1,8 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { auth } from "@/core/auth/auth";
+import { prisma } from "@/core/db/client";
+import { PermissionService } from "@/core/rbac/PermissionService";
 import { getSalesOrderById } from "@/modules/sales-orders/sales-order.service";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Barcode } from "@/components/ui/Barcode";
@@ -12,6 +15,14 @@ export default async function SalesOrderDetailPage({ params }: { params: Promise
 
   const order = await getSalesOrderById({ companyId: session!.user.companyId, userId: session!.user.id }, id).catch(() => null);
   if (!order) notFound();
+
+  // Made from an accepted quotation (Sales & Marketing S4) — shown for traceability.
+  const source = await prisma.salesOrder.findFirst({
+    where: { id, companyId: session!.user.companyId },
+    select: { sourceQuotationRevision: { select: { revisionNumber: true, quotation: { select: { id: true, quotationNumber: true } } } } },
+  });
+  const fromQuotation = source?.sourceQuotationRevision ?? null;
+  const canViewQuotations = fromQuotation ? await PermissionService.can(session!.user.id, "sales_quotations", "view") : false;
 
   return (
     <div className="space-y-6">
@@ -26,6 +37,19 @@ export default async function SalesOrderDetailPage({ params }: { params: Promise
             {order.requiredShipDate ? ` · Required ship: ${formatDate(order.requiredShipDate)}` : ""}
             {order.customerPoNumber ? ` · Customer PO: ${order.customerPoNumber}` : ""}
           </p>
+          {fromQuotation && (
+            <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+              From quotation{" "}
+              {canViewQuotations ? (
+                <Link href={`/sales-marketing/quotations/${fromQuotation.quotation.id}`} className="text-indigo-600 hover:underline dark:text-indigo-400">
+                  {fromQuotation.quotation.quotationNumber}
+                </Link>
+              ) : (
+                fromQuotation.quotation.quotationNumber
+              )}{" "}
+              revision {fromQuotation.revisionNumber}
+            </p>
+          )}
         </div>
         <div className="flex flex-col items-end gap-2">
           {/* Scan-to-lookup during production/dispatch — encodes the order number itself, nothing else. */}

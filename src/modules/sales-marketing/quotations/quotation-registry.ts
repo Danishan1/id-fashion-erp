@@ -64,6 +64,8 @@ export const QUOTATION_EVENT_TYPES = {
   REJECTED: "Rejected by customer",
   REVISED: "New revision started",
   CANCELLED: "Cancelled",
+  CUSTOMER_LINKED: "Customer linked",
+  CONVERTED: "Converted to Sales Order",
 } as const;
 export type QuotationEventType = keyof typeof QUOTATION_EVENT_TYPES;
 

@@ -738,3 +738,29 @@ export async function markEnquiryQuoted(tx: Prisma.TransactionClient, actor: Sal
   });
 }
 
+
+/**
+ * Inside the conversion's transaction (S4): a real Sales Order now exists, so
+ * the enquiry is WON — the only way it can be. Skipped if it is already
+ * closed (e.g. marked lost while another quotation of it was accepted).
+ */
+export async function markEnquiryWon(tx: Prisma.TransactionClient, actor: SalesActor, enquiryId: string, orderNumber: string, quotationNumber: string) {
+  const enquiry = await tx.buyerEnquiry.findFirst({ where: { id: enquiryId, companyId: actor.companyId } });
+  if (!enquiry || isClosedStage(enquiry.salesStage)) return;
+  const now = new Date();
+  await guardedUpdate(tx, enquiry, {
+    salesStage: "WON",
+    stageChangedAt: now,
+    stageBeforeHold: null,
+    closedAt: now,
+    closureReason: `Sales Order ${orderNumber} from quotation ${quotationNumber}`,
+  });
+  await tx.buyerEnquiryActivity.create({
+    data: activityData(enquiry, actor, "STAGE_CHANGED", `Sales Order ${orderNumber} created from quotation ${quotationNumber}`, {
+      from: enquiry.salesStage,
+      to: "WON",
+      orderNumber,
+      quotationNumber,
+    }),
+  });
+}

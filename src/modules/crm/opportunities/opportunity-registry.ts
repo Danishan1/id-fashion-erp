@@ -69,19 +69,17 @@ export const DEFAULT_OPPORTUNITY_OPTION_VALUES: Record<OpportunityOptionListKey,
 
 /**
  * ERP documents an opportunity can reference (many per opportunity). Data is
- * always read live from the ERP. The ERP has no quotation module yet — when
- * one exists, add a "QUOTATION" provider in crm-opportunity-erp.service.ts
- * and an entry here (no migration: doc_type is validated in code).
+ * always read live from the ERP; doc_type is validated in code (no migration
+ * to add one). QUOTATION = Sales & Marketing quotations (2026-10-29).
  */
 export const ERP_DOC_TYPES = {
   BUYER_ENQUIRY: { label: "Buyer enquiry", plural: "Buyer enquiries", module: "buyer_enquiries" },
+  QUOTATION: { label: "Quotation", plural: "Quotations", module: "sales_quotations" },
   SAMPLE_REQUEST: { label: "Sample request", plural: "Sample requests", module: "sampling" },
   SALES_ORDER: { label: "Sales order", plural: "Sales orders", module: "sales_orders" },
 } as const;
 export type ErpDocType = keyof typeof ERP_DOC_TYPES;
 export const ERP_DOC_TYPE_KEYS = Object.keys(ERP_DOC_TYPES) as [ErpDocType, ...ErpDocType[]];
-
-export const QUOTATION_NOT_AVAILABLE = "The ERP has no quotation module yet. Link the buyer enquiry, sample request or sales order instead; quotations will appear here once the ERP has them.";
 
 // ── Related sections with no data source yet ─────────────────────
 

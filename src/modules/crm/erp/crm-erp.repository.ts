@@ -76,6 +76,25 @@ export const CrmErpRepository = {
       take,
     });
   },
+  quotationDocs(where: Prisma.QuotationWhereInput, take: number) {
+    return prisma.quotation.findMany({
+      where,
+      select: {
+        id: true,
+        quotationNumber: true,
+        status: true,
+        customerId: true,
+        prospectName: true,
+        createdAt: true,
+        customer: { select: { name: true } },
+        owner: { select: { fullName: true } },
+        createdBy: { select: { fullName: true } },
+        revisions: { orderBy: { revisionNumber: "desc" }, take: 1, select: { revisionNumber: true, title: true, quotationDate: true, validUntil: true, grandTotal: true, currencyCode: true } },
+      },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take,
+    });
+  },
   salesOrderDocs(where: Prisma.SalesOrderWhereInput, take: number) {
     return prisma.salesOrder.findMany({
       where,

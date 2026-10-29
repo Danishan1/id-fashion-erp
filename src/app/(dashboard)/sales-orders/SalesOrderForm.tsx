@@ -113,23 +113,53 @@ export interface InitialOrder {
   items: InitialOrderItem[];
 }
 
+/**
+ * An accepted quotation being converted (Sales & Marketing S4). Customer,
+ * buyer, the Style / design of each line, the price and the number of pieces
+ * come from the accepted revision; the user only splits each line by colour
+ * and size (and may adjust the dates / PO number).
+ */
+export interface QuotationConversion {
+  quotationId: string;
+  quotationNumber: string;
+  revisionNumber: number;
+  customerId: string;
+  buyerId: string | null;
+  customerPoNumber: string | null;
+  requiredShipDate: string | null;
+  chargesNotCarried: boolean;
+  lines: Array<{
+    quotationLineId: string;
+    lineNumber: number;
+    description: string;
+    colorSizeRemarks: string | null;
+    productId: string | null;
+    styleFixed: boolean;
+    sampleRequestId: string | null;
+    pieces: number;
+    unitPrice: number;
+  }>;
+}
+
 export function SalesOrderForm({
   initialOrder,
   presetCustomerId,
   originatingOpportunityId,
   originatingOpportunityNumber,
+  fromQuotation,
 }: {
   initialOrder?: InitialOrder;
   presetCustomerId?: string;
   originatingOpportunityId?: string;
   originatingOpportunityNumber?: string;
+  fromQuotation?: QuotationConversion;
 } = {}) {
   const router = useRouter();
-  const [customerId, setCustomerId] = useState(initialOrder?.customerId ?? presetCustomerId ?? "");
-  const [buyerId, setBuyerId] = useState(initialOrder?.buyerId ?? "");
+  const [customerId, setCustomerId] = useState(initialOrder?.customerId ?? fromQuotation?.customerId ?? presetCustomerId ?? "");
+  const [buyerId, setBuyerId] = useState(initialOrder?.buyerId ?? fromQuotation?.buyerId ?? "");
   const [orderDate, setOrderDate] = useState(initialOrder ? initialOrder.orderDate.slice(0, 10) : TODAY);
-  const [requiredShipDate, setRequiredShipDate] = useState(initialOrder?.requiredShipDate?.slice(0, 10) ?? "");
-  const [customerPoNumber, setCustomerPoNumber] = useState(initialOrder?.customerPoNumber ?? "");
+  const [requiredShipDate, setRequiredShipDate] = useState(initialOrder?.requiredShipDate?.slice(0, 10) ?? fromQuotation?.requiredShipDate ?? "");
+  const [customerPoNumber, setCustomerPoNumber] = useState(initialOrder?.customerPoNumber ?? fromQuotation?.customerPoNumber ?? "");
   const [customers, setCustomers] = useState<Option[]>([]);
   const [buyers, setBuyers] = useState<Option[]>([]);
   const [styles, setStyles] = useState<StyleOption[]>([]);
@@ -165,7 +195,14 @@ export function SalesOrderForm({
           quantities: Object.fromEntries(item.breakdown.map((b) => [b.productVariantId, String(b.orderedQuantity)])),
           salesOrderLineId: item.salesOrderLineId ?? undefined,
         }))
-      : [emptyLine()]
+      : fromQuotation
+        ? fromQuotation.lines.map((line) => ({
+            ...emptyLine(),
+            productId: line.productId ?? "",
+            sampleRequestId: line.sampleRequestId ?? "",
+            unitPrice: String(line.unitPrice),
+          }))
+        : [emptyLine()]
   );
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -389,6 +426,17 @@ export function SalesOrderForm({
     });
   }, [initialOrder]);
 
+  // Converting a quotation: lines whose Style comes from the quotation load
+  // that Style's variants straight away (the grid itself starts empty).
+  useEffect(() => {
+    fromQuotation?.lines.forEach((line, index) => {
+      if (!line.productId) return;
+      fetch(`/api/v1/products/${line.productId}`)
+        .then((res) => res.json())
+        .then((body) => updateItem(index, { variants: body.data?.variants ?? [] }));
+    });
+  }, [fromQuotation]);
+
   // "Last Order Price" — what this exact customer was actually charged the
   // last time they ordered this exact style, so a repeat order defaults to
   // real negotiated history instead of a generic sample-costing estimate.
@@ -471,7 +519,11 @@ export function SalesOrderForm({
       salesOrderLineId: item.salesOrderLineId,
     }));
 
-    const url = initialOrder ? `/api/v1/sales-orders/${initialOrder.id}` : "/api/v1/sales-orders";
+    const url = initialOrder
+      ? `/api/v1/sales-orders/${initialOrder.id}`
+      : fromQuotation
+        ? `/api/v1/sales-marketing/quotations/${fromQuotation.quotationId}/convert`
+        : "/api/v1/sales-orders";
     const res = await fetch(url, {
       method: initialOrder ? "PATCH" : "POST",
       headers: { "Content-Type": "application/json" },
@@ -484,6 +536,7 @@ export function SalesOrderForm({
         originatingOpportunityId: !initialOrder && originatingOpportunityId ? originatingOpportunityId : undefined,
         items: payloadItems,
         overrideReason: initialOrder && useOverride ? overrideReason : undefined,
+        quotationLineIds: fromQuotation ? fromQuotation.lines.map((l) => l.quotationLineId) : undefined,
       }),
     });
 
@@ -501,7 +554,7 @@ export function SalesOrderForm({
 
     setNeedsOverride(false);
     const { data } = await res.json();
-    router.push(`/sales-orders/${data.id}`);
+    router.push(`/sales-orders/${fromQuotation ? data.salesOrderId : data.id}`);
     router.refresh();
   };
 
@@ -517,6 +570,18 @@ export function SalesOrderForm({
           Creating this order from Opportunity {originatingOpportunityNumber ?? originatingOpportunityId} — the link will be recorded on the order.
         </p>
       )}
+      {fromQuotation && (
+        <div className="space-y-1 rounded-md bg-indigo-50 px-3 py-2 text-sm text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-300">
+          <p>
+            Converting quotation {fromQuotation.quotationNumber} (revision {fromQuotation.revisionNumber}). Customer, styles, designs, prices and
+            quantities come from the accepted revision — split each line by colour and size below.
+          </p>
+          <p className="text-xs">Prices are per piece, after discount and before GST (tax is added on the invoice).</p>
+          {fromQuotation.chargesNotCarried && (
+            <p className="text-xs">The quotation&apos;s freight / other charges are not carried — sales orders have no charge fields.</p>
+          )}
+        </div>
+      )}
       {/* One responsive grid for the header fields, so the full-width form
           puts them side by side on wide screens instead of stretching two
           columns across the page. */}
@@ -526,6 +591,7 @@ export function SalesOrderForm({
             id="customerId"
             required
             value={customerId}
+            disabled={Boolean(fromQuotation)}
             onChange={(next) => {
               setCustomerId(next);
               setBuyerId("");
@@ -543,7 +609,7 @@ export function SalesOrderForm({
             id="buyerId"
             value={buyerId}
             onChange={setBuyerId}
-            disabled={!customerId}
+            disabled={!customerId || Boolean(fromQuotation?.buyerId)}
             options={buyers.map((b) => ({ id: b.id, label: b.name ?? "" }))}
             placeholder="Search buyer…"
           />
@@ -592,11 +658,14 @@ export function SalesOrderForm({
             Any customer can order any approved design.
           </p>
         </div>
-        {items.map((item, index) => (
+        {items.map((item, index) => {
+          const qLine = fromQuotation?.lines[index];
+          const lineQty = Object.values(item.quantities).reduce((sum, v) => sum + (Number(v) || 0), 0);
+          return (
           <div key={index} className="space-y-3 rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium text-zinc-500">Line {index + 1}</span>
-              {items.length > 1 && (
+              {!fromQuotation && items.length > 1 && (
                 <button
                   type="button"
                   onClick={() => removeLine(index)}
@@ -607,6 +676,19 @@ export function SalesOrderForm({
               )}
             </div>
 
+            {qLine && (
+              <div className="rounded-md bg-zinc-50 px-3 py-2 text-xs text-zinc-600 dark:bg-zinc-800/50 dark:text-zinc-300">
+                <p>
+                  Quotation line {qLine.lineNumber}: {qLine.description}
+                  {qLine.colorSizeRemarks ? ` — ${qLine.colorSizeRemarks}` : ""}
+                </p>
+                <p className={lineQty === qLine.pieces ? "text-emerald-600 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400"}>
+                  {qLine.pieces} pieces to split — entered {lineQty}
+                  {!qLine.styleFixed && !item.productId ? " · pick the Style this line is made as" : ""}
+                </p>
+              </div>
+            )}
+
             {/* Style | Design and Unit Price | Notes sit in one row on wide screens. */}
             <div className="grid gap-3 xl:grid-cols-2">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -615,7 +697,11 @@ export function SalesOrderForm({
                   id={`style-${index}`}
                   required
                   value={item.productId}
-                  onChange={(next) => onStyleChange(index, next)}
+                  disabled={Boolean(qLine?.styleFixed)}
+                  onChange={(next) =>
+                    // A quotation line keeps its design when the Style is picked here.
+                    qLine ? (onStyleChange(index, next), updateItem(index, { sampleRequestId: qLine.sampleRequestId ?? "", unitPrice: String(qLine.unitPrice) })) : onStyleChange(index, next)
+                  }
                   options={styles.map((s) => ({
                     id: s.id,
                     label: s.styleName ?? "",
@@ -643,7 +729,7 @@ export function SalesOrderForm({
                       void applySampleVariantDefault(index, selected, item.variants, item.productId);
                     }
                   }}
-                  disabled={!item.productId}
+                  disabled={!item.productId || Boolean(qLine?.sampleRequestId)}
                   options={approvedSamples
                     .filter((s) => s.product?.id === item.productId)
                     .map((s) => ({ id: s.id, label: sampleDisplayLabel(s), sublabel: sampleSublabel(s, customerId) }))}
@@ -677,6 +763,7 @@ export function SalesOrderForm({
                   min={0}
                   step="0.01"
                   required
+                  readOnly={Boolean(qLine)}
                   value={item.unitPrice}
                   onChange={(e) => updateItem(index, { unitPrice: e.target.value })}
                   // A real datalist, not a forced picker — the field stays
@@ -701,6 +788,8 @@ export function SalesOrderForm({
               <FormField label="Notes" htmlFor={`notes-${index}`}>
                 <input
                   id={`notes-${index}`}
+                  readOnly={Boolean(qLine)}
+                  placeholder={qLine ? "Filled from the quotation line" : undefined}
                   value={item.notes}
                   onChange={(e) => updateItem(index, { notes: e.target.value })}
                   className={textInputClass()}
@@ -744,15 +833,18 @@ export function SalesOrderForm({
 
             <p className="text-xs text-zinc-500">Line Amount: {formatAmount(lineTotal(item))}</p>
           </div>
-        ))}
+          );
+        })}
 
-        <button
-          type="button"
-          onClick={addLine}
-          className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 dark:border-zinc-700 dark:text-zinc-200"
-        >
-          + Add Style Line
-        </button>
+        {!fromQuotation && (
+          <button
+            type="button"
+            onClick={addLine}
+            className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 dark:border-zinc-700 dark:text-zinc-200"
+          >
+            + Add Style Line
+          </button>
+        )}
       </div>
 
       <p className="text-sm font-medium text-zinc-900 dark:text-zinc-50">Order Amount: {formatAmount(orderTotal)}</p>
@@ -787,11 +879,13 @@ export function SalesOrderForm({
           disabled={isSubmitting}
           className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
         >
-          {isSubmitting ? "Saving…" : initialOrder ? "Save Changes" : "Create Sales Order"}
+          {isSubmitting ? "Saving…" : initialOrder ? "Save Changes" : fromQuotation ? "Create Sales Order from Quotation" : "Create Sales Order"}
         </button>
         <button
           type="button"
-          onClick={() => router.push(initialOrder ? `/sales-orders/${initialOrder.id}` : "/sales-orders")}
+          onClick={() =>
+            router.push(initialOrder ? `/sales-orders/${initialOrder.id}` : fromQuotation ? `/sales-marketing/quotations/${fromQuotation.quotationId}` : "/sales-orders")
+          }
           className="rounded-md border border-zinc-300 px-4 py-2 text-sm text-zinc-700 dark:border-zinc-700 dark:text-zinc-200"
         >
           Cancel
