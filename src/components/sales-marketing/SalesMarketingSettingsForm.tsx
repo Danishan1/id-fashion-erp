@@ -11,6 +11,7 @@ interface Settings {
   quotationApprovalMaxTotal: number;
   quotationDefaultValidityDays: number;
   quotationDefaultTerms: string | null;
+  pricingMaxRuleDiscountPercent?: number | null;
   updatedAt: string | null;
 }
 
@@ -20,6 +21,7 @@ export function SalesMarketingSettingsForm({ initial, canEdit }: { initial: Sett
     quotationApprovalMaxTotal: String(initial.quotationApprovalMaxTotal),
     quotationDefaultValidityDays: String(initial.quotationDefaultValidityDays),
     quotationDefaultTerms: initial.quotationDefaultTerms ?? "",
+    pricingMaxRuleDiscountPercent: initial.pricingMaxRuleDiscountPercent === null || initial.pricingMaxRuleDiscountPercent === undefined ? "" : String(initial.pricingMaxRuleDiscountPercent),
   });
   const [updatedAt, setUpdatedAt] = useState(initial.updatedAt);
   const [saving, setSaving] = useState(false);
@@ -57,6 +59,10 @@ export function SalesMarketingSettingsForm({ initial, canEdit }: { initial: Sett
       </FormField>
       <FormField label="Default terms & conditions" htmlFor="terms">
         <textarea id="terms" rows={5} maxLength={10000} disabled={!canEdit} value={v.quotationDefaultTerms} onChange={(e) => setV({ ...v, quotationDefaultTerms: e.target.value })} className={textInputClass()} />
+      </FormField>
+      <h2 className="pt-2 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Pricing</h2>
+      <FormField label="Max automatic (discount-rule) discount per line, % of list price — blank = no cap" htmlFor="ruleCap">
+        <input id="ruleCap" type="number" min={0} max={100} step="0.01" disabled={!canEdit} value={v.pricingMaxRuleDiscountPercent} onChange={(e) => setV({ ...v, pricingMaxRuleDiscountPercent: e.target.value })} className={`${textInputClass()} max-w-[10rem]`} />
       </FormField>
       {message && <p className={`text-sm ${message.ok ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>{message.text}</p>}
       <div className="flex items-center gap-3">

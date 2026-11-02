@@ -33,9 +33,9 @@ export const SALES_MARKETING_AREAS: { key: SalesMarketingArea; label: string }[]
 export const SALES_MARKETING_SECTIONS: readonly SalesMarketingSection[] = [
   { key: "enquiries", label: "Sales Enquiries", area: "SALES", phase: 2, status: "AVAILABLE", href: "/sales-marketing/enquiries", description: "Capture and qualify incoming sales enquiries." },
   { key: "quotations", label: "Quotations & Proposals", area: "SALES", phase: 2, status: "AVAILABLE", href: "/sales-marketing/quotations", description: "Prepare, revise and send quotations to customers." },
-  { key: "pricing", label: "Pricing & Price Lists", area: "SALES", phase: 3, status: "PLANNED", description: "Price lists per customer, channel and currency." },
-  { key: "discounts", label: "Discounts & Approvals", area: "SALES", phase: 3, status: "PLANNED", description: "Discount rules and approval limits." },
-  { key: "sales-orders", label: "Sales Order Integration", area: "SALES", phase: 4, status: "PLANNED", description: "Turn accepted quotations into ERP Sales Orders." },
+  { key: "pricing", label: "Pricing & Price Lists", area: "SALES", phase: 3, status: "AVAILABLE", href: "/sales-marketing/pricing", description: "Default and customer price lists with quantity breaks, versions and approval." },
+  { key: "discounts", label: "Discounts & Approvals", area: "SALES", phase: 3, status: "AVAILABLE", href: "/sales-marketing/pricing/discounts", description: "Discount rules and approval limits." },
+  { key: "sales-orders", label: "Sales Order Integration", area: "SALES", phase: 4, status: "AVAILABLE", href: "/sales-marketing/quotations", description: "Turn accepted quotations into ERP Sales Orders (Convert on an accepted quotation)." },
   { key: "targets", label: "Sales Targets", area: "SALES", phase: 5, status: "PLANNED", description: "Targets per person, team, territory and period." },
   { key: "territories", label: "Sales Territories", area: "SALES", phase: 5, status: "PLANNED", description: "Regions and customer assignment." },
   { key: "team-performance", label: "Sales Team Performance", area: "SALES", phase: 5, status: "PLANNED", description: "Achievement against targets." },

@@ -8085,3 +8085,12 @@ Doc: `docs/sales-marketing/S4_CONVERSION.md`.
 - UI is the existing `SalesOrderForm` in `fromQuotation` mode (locked customer/buyer/style/design/price, no add/remove line, per-line piece target) at `/sales-marketing/quotations/:id/convert`. The order page shows "From quotation …".
 - CRM's `QUOTATION` document type is now real (`crm-opportunity-erp.service.ts` provider, `module: sales_quotations`); `QUOTATION_NOT_AVAILABLE` / unavailable stage requirements removed.
 - Migration `20261029090000_sales_quotation_conversion_s4` (+ down script, run before S3's).
+
+## Sales & Marketing — Phase 03 Pricing, price lists, discount rules (2026-11-02)
+Doc: `docs/sales-marketing/PHASE_03_PRICING.md` (precedence, tiers, rule order, rounding — read before touching pricing).
+- Engine `src/modules/sales-marketing/pricing/pricing-engine.ts` is pure + decimal.js (Prisma.Decimal); rounds once to the paisa. `pricing.service.ts` `priceLines(actor, {date, customerId}, lines)` is the only entry point other modules should call (batched loads, no N+1); store `pricingSnapshot()` with the document and never re-price a finalised one.
+- Price lists: header + numbered versions (DRAFT → PENDING_APPROVAL → APPROVED | WITHDRAWN). Approved versions are frozen; "in force" is derived from dates (`versionInForce`, `versionTimings`), never stored. Partial unique indexes (in the migration only, not in schema.prisma): one open version per list, one approved version per start date, one active list per kind/customer/priority.
+- Discount rules: DRAFT → PENDING_APPROVAL → ACTIVE → INACTIVE; typed conditions only. Approvals use `canApprovePricing()` (self-approval guard over creator / last editor / submitter).
+- Quotation lines: `priceSource` PRICE_LIST / MANUAL / OVERRIDE + snapshot. `buildDraft` takes the customerId and prices lines (`applyPricing`); input `priceMode` AUTO|MANUAL (omitted = MANUAL, backward compatible). Override needs `sales_quotations.override` + reason; below-list override adds an approval reason. `revalidateDraft` refuses submit/issue when an auto price changed since the draft was saved.
+- Permission module `sales_pricing` (MANAGEMENT view/approve/reject/export; MERCHANDISER view/create/edit/export). `salesMarketingRoute` now also accepts an array of permissions (any one).
+- Migration `20261029120000_sales_pricing_phase3` (+ down script, run before S4's).

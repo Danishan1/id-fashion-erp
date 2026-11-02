@@ -50,6 +50,11 @@ interface QuotationLineView {
   product: { id: string; styleName: string; styleCode: string } | null;
   sampleRequest: { id: string; requestNumber: string; status: string } | null;
   uom: { code: string } | null;
+  /** Phase 03 pricing. */
+  priceSource?: "PRICE_LIST" | "MANUAL" | "OVERRIDE";
+  calculatedUnitPrice?: Num | null;
+  priceOverrideReason?: string | null;
+  pricing?: { source?: { priceListCode: string; versionNumber: number } | null; rules?: { code: string }[]; explanation?: string[] } | null;
 }
 
 export interface QuotationDetail {
@@ -561,6 +566,17 @@ export function QuotationDetailClient({ initialQuotation, permissions }: { initi
                           {l.customerReference && ` · Ref ${l.customerReference}`}
                           {l.requestedDeliveryDate && ` · Delivery ${formatDate(l.requestedDeliveryDate)}`}
                         </div>
+                        {l.priceSource === "PRICE_LIST" && l.pricing?.source && (
+                          <div className="text-xs text-zinc-500 dark:text-zinc-400" title={(l.pricing.explanation ?? []).join("\n")}>
+                            Price list {l.pricing.source.priceListCode} v{l.pricing.source.versionNumber}
+                            {l.pricing.rules?.length ? ` · rules ${l.pricing.rules.map((r) => r.code).join(", ")}` : ""}
+                          </div>
+                        )}
+                        {l.priceSource === "OVERRIDE" && (
+                          <div className="text-xs text-amber-700 dark:text-amber-400">
+                            Price overridden (list price {formatInr(l.calculatedUnitPrice ?? 0)}): {l.priceOverrideReason}
+                          </div>
+                        )}
                         {l.lineType === "FREE_TEXT" && !q.salesOrder && <div className="text-xs text-amber-700 dark:text-amber-400">The Style is picked when converting to a Sales Order</div>}
                       </td>
                       <td className="py-2 pr-3 text-right tabular-nums">

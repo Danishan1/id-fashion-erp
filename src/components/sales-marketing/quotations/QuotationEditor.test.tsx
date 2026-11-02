@@ -76,4 +76,52 @@ describe("QuotationEditor", () => {
     expect(screen.getByText(/Zenith Apparel — from enquiry/)).toBeTruthy();
     expect(screen.queryByLabelText(/Quote a prospect/)).toBeNull();
   });
+
+  it("takes the price-list price for a Style line, explains it, and needs a reason to change it", async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    const priced = {
+      status: "PRICED",
+      netUnitPrice: 90,
+      listUnitPrice: 100,
+      ruleDiscountAmount: 10,
+      message: null,
+      explanation: ["Default price list DEF (Default) v2, in force from 01/10/2026: ₹100.00 per PCS", "Net price ₹90.00 per PCS"],
+      source: { priceListCode: "DEF", versionNumber: 2, level: "DEFAULT" },
+      rules: [{ code: "P10" }],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ url, init });
+        if (url.includes("/options")) return new Response(JSON.stringify({ data: options }), { status: 200 });
+        if (url.includes("/pricing/calculate")) return new Response(JSON.stringify({ data: [priced] }), { status: 200 });
+        if (url.startsWith("/api/v1/products")) return new Response(JSON.stringify({ data: [{ id: "s1", styleName: "Polo", styleCode: "P1" }] }), { status: 200 });
+        if (init?.method === "POST") return new Response(JSON.stringify({ data: { id: "q9" } }), { status: 200 });
+        return new Response(JSON.stringify({ data: [] }), { status: 200 });
+      })
+    );
+    const v = initial();
+    v.lines = [{ ...emptyLine(), kind: "STYLE", productId: "s1", description: "Polo", quantity: "100", uomId: "pcs", unitPrice: "", taxRateId: "t5" }];
+    render(<QuotationEditor mode="create" enquiry={{ id: "e1", enquiryNumber: "ENQ-1", partyLabel: "Zenith" }} initial={v} canUseCrm={false} />);
+    const price = (await screen.findByLabelText(/Unit price/)) as HTMLInputElement;
+    await waitFor(() => expect(price.value).toBe("90"));
+    expect(price.readOnly).toBe(true);
+    expect(screen.getByText(/Price list DEF v2/)).toBeTruthy();
+    const calc = calls.find((c) => c.url.includes("/pricing/calculate"))!;
+    expect(JSON.parse(String(calc.init!.body))).toEqual({ date: "2026-10-28", customerId: "c1", lines: [{ productId: "s1", quantity: 100, uomId: "pcs" }] });
+    fireEvent.click(screen.getByRole("button", { name: "How?" }));
+    expect(screen.getByText("Net price ₹90.00 per PCS")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Change price" }));
+    fireEvent.change(price, { target: { value: "80" } });
+    expect(screen.getByText(/the quotation will need approval/)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText(/Why a different price/), { target: { value: "match competitor" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create draft quotation" }));
+    await waitFor(() => expect(push).toHaveBeenCalled());
+    const body = JSON.parse(String(calls.find((c) => c.init?.method === "POST" && c.url.endsWith("/quotations"))!.init!.body));
+    expect(body.lines[0]).toMatchObject({ productId: "s1", unitPrice: "80", priceMode: "MANUAL", priceOverrideReason: "match competitor" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Use list price" }));
+    await waitFor(() => expect(price.value).toBe("90"));
+  });
 });

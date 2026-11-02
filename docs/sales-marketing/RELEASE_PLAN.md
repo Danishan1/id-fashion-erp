@@ -108,4 +108,5 @@ Progress:
 - **S2 Quotations core** — built and verified in the sandbox (2026-10-28), see `S2_QUOTATIONS.md`. Decided before building: own permission module `sales_quotations`; quotations to prospects allowed (Customer needed to convert); GST shown as CGST + SGST / IGST. Colour × size split moved to conversion (S4) — the Sales Order form already captures it.
 - **S3 Issue, revise, approve, PDF, send, accept** — built and verified in the sandbox (2026-10-29), see `S3_QUOTATION_LIFECYCLE.md`. Approval limits live in the new Sales & Marketing → Settings (`sales_marketing_settings`).
 - **S4 Convert to Sales Order** — built and verified in the sandbox (2026-10-29), see `S4_CONVERSION.md`. The existing Sales Order form is reused in a locked "from quotation" mode; prices are net of discount and before GST; freight/other charges aren't carried (sales orders have no charge fields).
-- Next: S5 Price lists lite.
+- **Phase 03 / S5 Pricing** — built and verified in the sandbox (2026-11-02), see `PHASE_03_PRICING.md`. Scope widened from "lite" on 2026-10-29: price-list versions with approval, discount rules with simple stacking, pricing preview; customer groups skipped (no master).
+- Next: S6 Dashboard KPIs + 3 reports (closes Release 1), then Release 2 (Phase 05 targets / territories).

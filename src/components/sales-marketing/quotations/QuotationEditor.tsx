@@ -32,6 +32,21 @@ export interface QuotationLineDraft {
   taxRateId: string;
   requestedDeliveryDate: string;
   notes: string;
+  /** Phase 03: AUTO = use the price-list price when there is one; MANUAL = the typed price (an override if a list prices the line). */
+  priceMode: "AUTO" | "MANUAL";
+  priceOverrideReason: string;
+}
+
+/** What the pricing API returns for one line (subset used here). */
+interface LinePricing {
+  status: "PRICED" | "NO_PRICE" | "CONFLICT" | "INVALID";
+  netUnitPrice: number | null;
+  listUnitPrice: number | null;
+  ruleDiscountAmount: number | null;
+  message: string | null;
+  explanation: string[];
+  source: { priceListCode: string; versionNumber: number; level: string } | null;
+  rules: { code: string }[];
 }
 
 export interface QuotationDraftValues {
@@ -120,6 +135,8 @@ export function QuotationEditor({ mode, quotationId, quotationNumber, version, e
   const [designs, setDesigns] = useState<Option[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [pricing, setPricing] = useState<Record<string, LinePricing>>({});
+  const [openExplain, setOpenExplain] = useState<string | null>(null);
   const partyFixed = Boolean(enquiry);
 
   const set = (patch: Partial<QuotationDraftValues>) => setV((prev) => ({ ...prev, ...patch }));
@@ -151,6 +168,51 @@ export function QuotationEditor({ mode, quotationId, quotationNumber, version, e
       .then((res) => (res.ok ? res.json() : null))
       .then((body) => setBuyers(body?.data?.buyers ?? []));
   }, [v.customerId, partyFixed]);
+
+  // Phase 03: price every Style / design line with the shared pricing engine
+  // (quotation date + customer). AUTO lines take the price-list price; the
+  // server prices again on save, so this is only the preview.
+  const pricedProductId = (l: QuotationLineDraft) => (l.kind === "STYLE" ? l.productId : l.kind === "DESIGN" ? (designs.find((d) => d.id === l.sampleRequestId)?.product?.id ?? "") : "");
+  const pricingRequest = useMemo(() => {
+    const lines = v.lines
+      .map((l) => ({ key: l.key, productId: pricedProductId(l), quantity: num(l.quantity), uomId: l.uomId }))
+      .filter((l) => l.productId && l.quantity > 0);
+    if (!lines.length || !/^\d{4}-\d{2}-\d{2}$/.test(v.quotationDate)) return null;
+    return { date: v.quotationDate, customerId: isProspect ? null : v.customerId || null, lines };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [v.lines, v.quotationDate, v.customerId, isProspect, designs]);
+  const pricingKey = pricingRequest ? JSON.stringify(pricingRequest) : "";
+  useEffect(() => {
+    if (!pricingRequest) return;
+    const req = pricingRequest;
+    const timer = setTimeout(() => {
+      fetch("/api/v1/sales-marketing/pricing/calculate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-toast": "off" },
+        body: JSON.stringify({ date: req.date, customerId: req.customerId, lines: req.lines.map(({ productId, quantity, uomId }) => ({ productId, quantity, uomId })) }),
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((body) => {
+          if (!body?.data) return;
+          const byKey: Record<string, LinePricing> = Object.fromEntries(req.lines.map((l, i) => [l.key, body.data[i]]));
+          setPricing(byKey);
+          setV((prev) => ({
+            ...prev,
+            lines: prev.lines.map((l) => {
+              const r = byKey[l.key];
+              return r && l.priceMode === "AUTO" && r.status === "PRICED" && r.netUnitPrice !== null && num(l.unitPrice) !== r.netUnitPrice ? { ...l, unitPrice: String(r.netUnitPrice) } : l;
+            }),
+          }));
+        })
+        .catch(() => undefined);
+    }, 400);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pricingKey]);
+  const priced = (l: QuotationLineDraft) => {
+    const r = pricing[l.key];
+    return r && r.status === "PRICED" && r.netUnitPrice !== null && pricedProductId(l) ? r : null;
+  };
 
   const rateById = useMemo(() => new Map((options?.taxRates ?? []).map((t) => [t.id, t.rate])), [options]);
   const preview = useMemo(
@@ -211,6 +273,8 @@ export function QuotationEditor({ mode, quotationId, quotationNumber, version, e
         taxRateId: l.taxRateId,
         requestedDeliveryDate: l.requestedDeliveryDate,
         notes: l.notes,
+        priceMode: l.priceMode === "AUTO" && priced(l) ? "AUTO" : "MANUAL",
+        priceOverrideReason: l.priceMode === "MANUAL" && priced(l) ? l.priceOverrideReason : "",
       })),
       ...(mode === "edit" ? { version } : {}),
     };
@@ -444,7 +508,17 @@ export function QuotationEditor({ mode, quotationId, quotationNumber, version, e
                   </select>
                 </FormField>
                 <FormField label="Unit price (₹)" htmlFor={`price-${line.key}`} required>
-                  <input id={`price-${line.key}`} type="number" required min={0} step="0.01" value={line.unitPrice} onChange={(e) => setLine(line.key, { unitPrice: e.target.value })} className={textInputClass()} />
+                  <input
+                    id={`price-${line.key}`}
+                    type="number"
+                    required
+                    min={0}
+                    step="0.01"
+                    readOnly={line.priceMode === "AUTO" && Boolean(priced(line))}
+                    value={line.unitPrice}
+                    onChange={(e) => setLine(line.key, { unitPrice: e.target.value })}
+                    className={`${textInputClass()}${line.priceMode === "AUTO" && priced(line) ? " bg-zinc-50 dark:bg-zinc-800" : ""}`}
+                  />
                 </FormField>
                 <FormField label="Discount %" htmlFor={`disc-${line.key}`}>
                   <input id={`disc-${line.key}`} type="number" min={0} max={100} step="0.01" value={line.discountPercent} onChange={(e) => setLine(line.key, { discountPercent: e.target.value })} className={textInputClass()} />
@@ -456,6 +530,18 @@ export function QuotationEditor({ mode, quotationId, quotationNumber, version, e
                   <input id={`delivery-${line.key}`} type="date" value={line.requestedDeliveryDate} onChange={(e) => setLine(line.key, { requestedDeliveryDate: e.target.value })} className={textInputClass()} />
                 </FormField>
               </div>
+              <PriceInfo
+                line={line}
+                result={pricedProductId(line) ? pricing[line.key] : undefined}
+                open={openExplain === line.key}
+                onToggle={() => setOpenExplain(openExplain === line.key ? null : line.key)}
+                onManual={() => setLine(line.key, { priceMode: "MANUAL" })}
+                onAuto={() => {
+                  const r = priced(line);
+                  setLine(line.key, { priceMode: "AUTO", priceOverrideReason: "", ...(r ? { unitPrice: String(r.netUnitPrice) } : {}) });
+                }}
+                onReason={(priceOverrideReason) => setLine(line.key, { priceOverrideReason })}
+              />
               <div className="grid gap-3 sm:grid-cols-3">
                 <FormField label="Colour / size" htmlFor={`cs-${line.key}`}>
                   <input id={`cs-${line.key}`} maxLength={300} value={line.colorSizeRemarks} onChange={(e) => setLine(line.key, { colorSizeRemarks: e.target.value })} placeholder="e.g. Navy, Ecru · S–XL" className={textInputClass()} />
@@ -524,6 +610,70 @@ export function QuotationEditor({ mode, quotationId, quotationNumber, version, e
         {quotationNumber && <span className="self-center text-xs text-zinc-500">{quotationNumber}</span>}
       </div>
     </form>
+  );
+}
+
+/** Where the line's price comes from, with the engine's explanation and the override controls. */
+function PriceInfo({
+  line,
+  result,
+  open,
+  onToggle,
+  onManual,
+  onAuto,
+  onReason,
+}: {
+  line: QuotationLineDraft;
+  result: LinePricing | undefined;
+  open: boolean;
+  onToggle: () => void;
+  onManual: () => void;
+  onAuto: () => void;
+  onReason: (v: string) => void;
+}) {
+  if (line.kind === "FREE_TEXT") return null;
+  if (!result) return <p className="text-xs text-zinc-500">Price list: pick a Style and a quantity to look up the price.</p>;
+  if (result.status !== "PRICED" || result.netUnitPrice === null) {
+    return <p className="text-xs text-zinc-500">No price-list price — enter the price by hand. {result.message}</p>;
+  }
+  const list = `${result.source?.priceListCode} v${result.source?.versionNumber}`;
+  const differs = num(line.unitPrice) !== result.netUnitPrice;
+  return (
+    <div className="space-y-2 rounded-md bg-zinc-50 px-3 py-2 text-xs text-zinc-600 dark:bg-zinc-800/50 dark:text-zinc-300">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span>
+          Price list {list}: list {formatInr(result.listUnitPrice ?? 0)}
+          {result.ruleDiscountAmount ? ` · rules −${formatInr(result.ruleDiscountAmount)} (${result.rules.map((r) => r.code).join(", ")})` : ""} → <strong>{formatInr(result.netUnitPrice)}</strong>
+        </span>
+        <button type="button" onClick={onToggle} className="font-medium text-indigo-600 hover:underline dark:text-indigo-400">
+          {open ? "Hide how" : "How?"}
+        </button>
+        {line.priceMode === "AUTO" ? (
+          <button type="button" onClick={onManual} className="font-medium text-indigo-600 hover:underline dark:text-indigo-400">
+            Change price
+          </button>
+        ) : (
+          <button type="button" onClick={onAuto} className="font-medium text-indigo-600 hover:underline dark:text-indigo-400">
+            Use list price
+          </button>
+        )}
+      </div>
+      {open && (
+        <ul className="list-disc space-y-0.5 pl-4">
+          {result.explanation.map((e) => (
+            <li key={e}>{e}</li>
+          ))}
+        </ul>
+      )}
+      {line.priceMode === "MANUAL" && differs && (
+        <div className="space-y-1">
+          <FormField label="Why a different price? (required)" htmlFor={`override-${line.key}`} required>
+            <input id={`override-${line.key}`} required minLength={3} maxLength={500} value={line.priceOverrideReason} onChange={(e) => onReason(e.target.value)} className={textInputClass()} />
+          </FormField>
+          {num(line.unitPrice) < result.netUnitPrice && <p className="text-amber-700 dark:text-amber-400">Below the price-list price — the quotation will need approval.</p>}
+        </div>
+      )}
+    </div>
   );
 }
 

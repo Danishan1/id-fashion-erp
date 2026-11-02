@@ -17,6 +17,8 @@ export interface SalesMarketingPagePermissions {
   settings: { view: boolean; edit: boolean };
   /** The Sales Orders module (S4: convert an accepted quotation, open its order). */
   salesOrders: { view: boolean; create: boolean };
+  /** Phase 03 pricing (price lists, discount rules, preview). */
+  pricing: { view: boolean; create: boolean; edit: boolean; approve: boolean; reject: boolean };
 }
 
 /**
@@ -28,7 +30,7 @@ export async function getSalesMarketingPageContext(): Promise<{ actor: SalesActo
   const session = await auth();
   if (!session?.user?.id) notFound();
   const userId = session.user.id;
-  const [view, create, edit, viewAll, crmView, crmEdit, merchandisingView, qView, qCreate, qEdit, qCancel, qApprove, qReject, qPrint, sView, sEdit, soView, soCreate] = await Promise.all([
+  const [view, create, edit, viewAll, crmView, crmEdit, merchandisingView, qView, qCreate, qEdit, qCancel, qApprove, qReject, qPrint, sView, sEdit, soView, soCreate, pView, pCreate, pEdit, pApprove, pReject] = await Promise.all([
     PermissionService.can(userId, "sales_marketing", "view"),
     PermissionService.can(userId, "sales_marketing", "create"),
     PermissionService.can(userId, "sales_marketing", "edit"),
@@ -47,6 +49,11 @@ export async function getSalesMarketingPageContext(): Promise<{ actor: SalesActo
     PermissionService.can(userId, "sales_marketing_settings", "edit"),
     PermissionService.can(userId, "sales_orders", "view"),
     PermissionService.can(userId, "sales_orders", "create"),
+    PermissionService.can(userId, "sales_pricing", "view"),
+    PermissionService.can(userId, "sales_pricing", "create"),
+    PermissionService.can(userId, "sales_pricing", "edit"),
+    PermissionService.can(userId, "sales_pricing", "approve"),
+    PermissionService.can(userId, "sales_pricing", "reject"),
   ]);
   return {
     actor: { companyId: session.user.companyId, userId, branchId: session.user.defaultBranchId ?? null },
@@ -61,6 +68,7 @@ export async function getSalesMarketingPageContext(): Promise<{ actor: SalesActo
       quotations: { view: qView, create: qCreate, edit: qEdit, cancel: qCancel, approve: qApprove, reject: qReject, print: qPrint },
       settings: { view: sView, edit: sEdit },
       salesOrders: { view: soView, create: soCreate },
+      pricing: { view: pView, create: pCreate, edit: pEdit, approve: pApprove, reject: pReject },
     },
   };
 }

@@ -16,6 +16,9 @@ import {
   type SalesActor,
 } from "@/modules/sales-marketing/enquiries/sales-enquiry.service";
 import { calculateQuotation } from "./quotation-calc";
+import { round2 } from "@/lib/money";
+import { priceLines } from "@/modules/sales-marketing/pricing/pricing.service";
+import { pricingSnapshot } from "@/modules/sales-marketing/pricing/pricing-snapshot";
 import { OPEN_QUOTATION_STATUSES, QUOTATION_STATUS_KEYS, isQuotationExpired, type QuotationEventType, type QuotationSortField } from "./quotation-registry";
 import { approvalReasons } from "./quotation-approval";
 import { getSalesMarketingSettings } from "@/modules/sales-marketing/settings/sales-marketing-settings.service";
@@ -236,14 +239,60 @@ async function resolveLines(actor: SalesActor, lines: QuotationLineInput[], rate
 
 export type DraftBody = Omit<QuotationCreateInput, "buyerEnquiryId">;
 
+type ResolvedLine = Awaited<ReturnType<typeof resolveLines>>[number];
+
+/**
+ * Phase 03: prices every Style / design line with the shared pricing engine
+ * (quotation date, quotation customer) and decides each line's price source.
+ *   AUTO + price found   → PRICE_LIST, unit price = engine net price
+ *   AUTO + no price      → refused (enter the price by hand)
+ *   MANUAL, same price   → PRICE_LIST
+ *   MANUAL, other price  → OVERRIDE: needs sales_quotations.override and a reason
+ *   MANUAL, no list price→ MANUAL
+ * Free-text lines are always MANUAL. Stored with a snapshot of the result.
+ */
+async function applyPricing(actor: SalesActor, input: DraftBody, lines: ResolvedLine[], customerId: string | null) {
+  const priced = lines.map((l, i) => ({ l, i })).filter(({ l }) => l.productId);
+  const results = priced.length
+    ? await priceLines(actor, { date: input.quotationDate, customerId }, priced.map(({ l }) => ({ productId: l.productId!, quantity: l.quantity, uomId: l.uomId })))
+    : [];
+  const resultByIndex = new Map(priced.map(({ i }, k) => [i, results[k]]));
+  let canOverride: boolean | null = null;
+  const out = [];
+  for (const [i, line] of lines.entries()) {
+    const raw = input.lines[i];
+    const mode = raw.priceMode ?? "MANUAL";
+    const r = resultByIndex.get(i);
+    const at = (msg: string, field: string) => new BusinessRuleError("VALIDATION_ERROR", `Line ${i + 1}: ${msg}`, { fieldErrors: { [`lines.${i}.${field}`]: msg } });
+    const snapshot = r ? (pricingSnapshot(r) as unknown as Prisma.InputJsonValue) : Prisma.JsonNull;
+    const blankPricing = { listUnitPrice: null, ruleDiscountAmount: null, calculatedUnitPrice: null, priceOverrideReason: null };
+    if (!r || r.status !== "PRICED" || r.netUnitPrice === null) {
+      if (mode === "AUTO") throw at(`${r?.message ?? "no price list prices this line"} Enter the price by hand.`, "unitPrice");
+      out.push({ ...line, ...blankPricing, priceSource: "MANUAL" as const, pricing: snapshot });
+      continue;
+    }
+    const listFields = { listUnitPrice: r.listUnitPrice, ruleDiscountAmount: r.ruleDiscountAmount, calculatedUnitPrice: r.netUnitPrice };
+    if (mode === "AUTO" || round2(line.unitPrice) === r.netUnitPrice) {
+      out.push({ ...line, unitPrice: r.netUnitPrice, ...listFields, priceOverrideReason: null, priceSource: "PRICE_LIST" as const, pricing: snapshot });
+      continue;
+    }
+    const reason = (raw.priceOverrideReason ?? "").trim();
+    if (reason.length < 3) throw at(`the price list gives ₹${r.netUnitPrice.toFixed(2)} — say why you're using a different price.`, "priceOverrideReason");
+    canOverride ??= await PermissionService.can(actor.userId, "sales_quotations", "override");
+    if (!canOverride) throw new BusinessRuleError("PERMISSION_DENIED", `Line ${i + 1}: you can't change a price-list price (₹${r.netUnitPrice.toFixed(2)}). Use the list price or ask someone who can override prices.`);
+    out.push({ ...line, ...listFields, priceOverrideReason: reason, priceSource: "OVERRIDE" as const, pricing: snapshot });
+  }
+  return out;
+}
+
 /** Validates a full draft and computes every amount. Returns the revision data and line rows. */
-export async function buildDraft(actor: SalesActor, input: DraftBody, buyerEnquiryId: string | null) {
+export async function buildDraft(actor: SalesActor, input: DraftBody, buyerEnquiryId: string | null, customerId: string | null) {
   const [rates, company] = await Promise.all([effectiveTaxRates(actor.companyId, input.quotationDate), companyStateCode(actor.companyId)]);
   const rateMap: TaxRateMap = new Map(rates.map((r) => [r.id, Number(r.ratePercentage)]));
   for (const [field, id] of [["freightTaxRateId", input.freightTaxRateId], ["otherChargesTaxRateId", input.otherChargesTaxRateId]] as const) {
     if (id && !rateMap.has(id)) throw new BusinessRuleError("VALIDATION_ERROR", "GST rate is not active on the quotation date.", { fieldErrors: { [field]: "Not active." } });
   }
-  const lines = await resolveLines(actor, input.lines, rateMap, buyerEnquiryId);
+  const lines = await applyPricing(actor, input, await resolveLines(actor, input.lines, rateMap, buyerEnquiryId), customerId);
   const placeOfSupplyStateCode = input.placeOfSupplyStateCode || null;
   const freightGstRate = input.freightTaxRateId ? rateMap.get(input.freightTaxRateId)! : 0;
   const otherChargesGstRate = input.otherChargesTaxRateId ? rateMap.get(input.otherChargesTaxRateId)! : 0;
@@ -405,7 +454,7 @@ export async function createQuotation(actor: SalesActor, raw: unknown) {
   }
   const ownerUserId = input.ownerUserId || actor.userId;
   await assertOwner(actor, ownerUserId);
-  const { revision, lineRows } = await buildDraft(actor, input, enquiryId);
+  const { revision, lineRows } = await buildDraft(actor, input, enquiryId, party.customerId);
 
   // Company-wide numbering (branchId null): numbers are unique per company.
   const quotationNumber = await generateDocumentNumber({ companyId: actor.companyId, branchId: null, documentType: "QUOTATION" });
@@ -488,7 +537,7 @@ export async function updateQuotationDraft(actor: SalesActor, id: string, raw: u
   if (partyChanged) await assertParty(actor, party);
   const ownerUserId = input.ownerUserId || quotation.ownerUserId || actor.userId;
   if (ownerUserId !== quotation.ownerUserId) await assertOwner(actor, ownerUserId);
-  const { revision, lineRows } = await buildDraft(actor, input, quotation.buyerEnquiryId);
+  const { revision, lineRows } = await buildDraft(actor, input, quotation.buyerEnquiryId, party.customerId);
 
   await prisma.$transaction(async (tx) => {
     const { count } = await tx.quotationRevision.updateMany({
@@ -653,7 +702,16 @@ export async function getQuotation(actor: SalesActor, id: string, revisionNumber
   const approvalPreview =
     current.status === "DRAFT"
       ? approvalReasons(
-          { lines: current.lines.map((l) => ({ lineNumber: l.lineNumber, discountPercent: Number(l.discountPercent) })), grandTotal: Number(current.grandTotal) },
+          {
+            lines: current.lines.map((l) => ({
+              lineNumber: l.lineNumber,
+              discountPercent: Number(l.discountPercent),
+              priceSource: l.priceSource,
+              unitPrice: Number(l.unitPrice),
+              calculatedUnitPrice: l.calculatedUnitPrice === null ? null : Number(l.calculatedUnitPrice),
+            })),
+            grandTotal: Number(current.grandTotal),
+          },
           { maxDiscountPercent: settings.quotationApprovalMaxDiscountPercent, maxTotal: settings.quotationApprovalMaxTotal }
         )
       : null;

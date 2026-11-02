@@ -26,6 +26,12 @@ export const quotationLineSchema = z.object({
   taxRateId: optionalUuid,
   requestedDeliveryDate: optionalDate,
   notes: optionalText(1000),
+  // Phase 03 pricing. AUTO = take the price-list price (the server prices the
+  // line; unitPrice is ignored). MANUAL (default, also when omitted) = use
+  // unitPrice; if a price list prices the line differently that is an
+  // override and needs a reason.
+  priceMode: z.enum(["AUTO", "MANUAL"]).optional(),
+  priceOverrideReason: optionalText(500),
 });
 export type QuotationLineInput = z.infer<typeof quotationLineSchema>;
 

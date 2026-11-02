@@ -13,6 +13,8 @@ export const SALES_MARKETING_SETTING_DEFAULTS = {
   quotationApprovalMaxTotal: 500000,
   quotationDefaultValidityDays: 30,
   quotationDefaultTerms: null as string | null,
+  /** Phase 03: cap on the total rule discount per line, % of list price (null = no cap). */
+  pricingMaxRuleDiscountPercent: null as number | null,
 };
 
 export type SalesMarketingSettingsView = typeof SALES_MARKETING_SETTING_DEFAULTS & { updatedAt: Date | null };
@@ -25,6 +27,7 @@ export async function getSalesMarketingSettings(companyId: string): Promise<Sale
     quotationApprovalMaxTotal: Number(row.quotationApprovalMaxTotal),
     quotationDefaultValidityDays: row.quotationDefaultValidityDays,
     quotationDefaultTerms: row.quotationDefaultTerms,
+    pricingMaxRuleDiscountPercent: row.pricingMaxRuleDiscountPercent === null ? null : Number(row.pricingMaxRuleDiscountPercent),
     updatedAt: row.updatedAt,
   };
 }
@@ -35,13 +38,21 @@ export const salesMarketingSettingsSchema = z
     quotationApprovalMaxTotal: z.coerce.number().min(0).max(9_999_999_999),
     quotationDefaultValidityDays: z.coerce.number().int().min(1).max(365),
     quotationDefaultTerms: z.string().trim().max(10000).optional().or(z.literal("")).nullable(),
+    // Omitted = keep the current value; "" / null = no cap.
+    pricingMaxRuleDiscountPercent: z.union([z.literal(""), z.null(), z.coerce.number().min(0).max(100)]).optional(),
   })
   .strict();
 
 export async function updateSalesMarketingSettings(actor: { companyId: string; userId: string }, raw: unknown) {
   const input = salesMarketingSettingsSchema.parse(raw);
   const before = await getSalesMarketingSettings(actor.companyId);
-  const data = { ...input, quotationDefaultTerms: input.quotationDefaultTerms || null, updatedByUserId: actor.userId };
+  const { pricingMaxRuleDiscountPercent: cap, ...rest } = input;
+  const data = {
+    ...rest,
+    quotationDefaultTerms: input.quotationDefaultTerms || null,
+    ...(cap === undefined ? {} : { pricingMaxRuleDiscountPercent: cap === "" || cap === null ? null : cap }),
+    updatedByUserId: actor.userId,
+  };
   const row = await prisma.$transaction(async (tx) => {
     const saved = await tx.salesMarketingSettings.upsert({ where: { companyId: actor.companyId }, create: { companyId: actor.companyId, ...data }, update: data });
     await writeAuditLog(

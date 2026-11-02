@@ -283,6 +283,10 @@ model Company {
   quotationRevisions          QuotationRevision[]
   quotationEvents             QuotationEvent[]
   salesMarketingSettings      SalesMarketingSettings?
+  priceLists                  PriceList[]
+  priceListVersions           PriceListVersion[]
+  discountRules               DiscountRule[]
+  pricingEvents               PricingEvent[]
 
   @@map("companies")
 }
@@ -1101,6 +1105,16 @@ model User {
   quotationsCreated                  Quotation[]                  @relation("QuotationCreatedBy")
   quotationRevisionsCreated          QuotationRevision[]          @relation("QuotationRevisionCreatedBy")
   quotationEvents                    QuotationEvent[]             @relation("QuotationEventCreatedBy")
+  priceListsCreated                  PriceList[]                  @relation("PriceListCreatedBy")
+  priceListVersionsCreated           PriceListVersion[]           @relation("PriceListVersionCreatedBy")
+  priceListVersionsUpdated           PriceListVersion[]           @relation("PriceListVersionUpdatedBy")
+  priceListVersionsSubmitted         PriceListVersion[]           @relation("PriceListVersionSubmittedBy")
+  priceListVersionsApproved          PriceListVersion[]           @relation("PriceListVersionApprovedBy")
+  discountRulesCreated               DiscountRule[]               @relation("DiscountRuleCreatedBy")
+  discountRulesUpdated               DiscountRule[]               @relation("DiscountRuleUpdatedBy")
+  discountRulesSubmitted             DiscountRule[]               @relation("DiscountRuleSubmittedBy")
+  discountRulesApproved              DiscountRule[]               @relation("DiscountRuleApprovedBy")
+  pricingEvents                      PricingEvent[]               @relation("PricingEventCreatedBy")
 
   @@unique([companyId, supportForPlatformUserId])
   @@map("users")
@@ -1281,8 +1295,10 @@ model Customer {
   aiGarmentProjects AiGarmentProject[]
   customerReturns   CustomerReturn[]
 
-  crmCompany CrmCompany?
-  quotations Quotation[]
+  crmCompany    CrmCompany?
+  quotations    Quotation[]
+  priceLists    PriceList[]
+  discountRules DiscountRule[]
 
   @@unique([companyId, code])
   @@map("customers")
@@ -1852,6 +1868,8 @@ model Product {
 
   paymentRequestInvoiceLines PaymentRequestInvoiceLine[] @relation("PaymentRequestInvoiceLineProduct")
   quotationLines             QuotationLine[]
+  priceListEntries           PriceListEntry[]
+  discountRules              DiscountRule[]
 
   @@unique([companyId, styleCode])
   @@map("products")
@@ -1937,6 +1955,7 @@ model UnitOfMeasure {
 
   productionOrderColorFabrics ProductionOrderColorFabric[]
   quotationLines              QuotationLine[]
+  priceListEntries            PriceListEntry[]
 
   @@map("units_of_measure")
 }
@@ -2452,6 +2471,7 @@ model Category {
   updatedAt        DateTime @updatedAt @map("updated_at")
 
   company           Company            @relation(fields: [companyId], references: [id])
+  discountRules     DiscountRule[]
   parentCategory    Category?          @relation("CategoryHierarchy", fields: [parentCategoryId], references: [id])
   subCategories     Category[]         @relation("CategoryHierarchy")
   products          Product[]
@@ -14786,38 +14806,50 @@ model QuotationRevision {
 }
 
 model QuotationLine {
-  id                    String            @id @default(uuid()) @db.Uuid
-  revisionId            String            @map("revision_id") @db.Uuid
-  lineNumber            Int               @map("line_number")
-  lineType              QuotationLineType @map("line_type")
-  productId             String?           @map("product_id") @db.Uuid
-  sampleRequestId       String?           @map("sample_request_id") @db.Uuid
-  buyerEnquiryLineId    String?           @map("buyer_enquiry_line_id") @db.Uuid
+  id                    String               @id @default(uuid()) @db.Uuid
+  revisionId            String               @map("revision_id") @db.Uuid
+  lineNumber            Int                  @map("line_number")
+  lineType              QuotationLineType    @map("line_type")
+  productId             String?              @map("product_id") @db.Uuid
+  sampleRequestId       String?              @map("sample_request_id") @db.Uuid
+  buyerEnquiryLineId    String?              @map("buyer_enquiry_line_id") @db.Uuid
   description           String
   // Colour / size wording for the customer; the exact colour × size split is
   // entered on the Sales Order at conversion (S4).
-  colorSizeRemarks      String?           @map("color_size_remarks")
-  customerReference     String?           @map("customer_reference")
-  quantity              Decimal           @db.Decimal(18, 3)
-  uomId                 String?           @map("uom_id") @db.Uuid
-  unitPrice             Decimal           @map("unit_price") @db.Decimal(18, 2)
-  discountPercent       Decimal           @default(0) @map("discount_percent") @db.Decimal(5, 2)
-  taxRateId             String?           @map("tax_rate_id") @db.Uuid
-  gstRate               Decimal           @default(0) @map("gst_rate") @db.Decimal(5, 2)
-  grossAmount           Decimal           @map("gross_amount") @db.Decimal(18, 2)
-  discountAmount        Decimal           @map("discount_amount") @db.Decimal(18, 2)
-  taxableAmount         Decimal           @map("taxable_amount") @db.Decimal(18, 2)
-  cgstRate              Decimal           @default(0) @map("cgst_rate") @db.Decimal(5, 2)
-  cgstAmount            Decimal           @default(0) @map("cgst_amount") @db.Decimal(18, 2)
-  sgstRate              Decimal           @default(0) @map("sgst_rate") @db.Decimal(5, 2)
-  sgstAmount            Decimal           @default(0) @map("sgst_amount") @db.Decimal(18, 2)
-  igstRate              Decimal           @default(0) @map("igst_rate") @db.Decimal(5, 2)
-  igstAmount            Decimal           @default(0) @map("igst_amount") @db.Decimal(18, 2)
-  taxAmount             Decimal           @map("tax_amount") @db.Decimal(18, 2)
-  lineTotal             Decimal           @map("line_total") @db.Decimal(18, 2)
-  requestedDeliveryDate DateTime?         @map("requested_delivery_date") @db.Date
+  colorSizeRemarks      String?              @map("color_size_remarks")
+  customerReference     String?              @map("customer_reference")
+  quantity              Decimal              @db.Decimal(18, 3)
+  uomId                 String?              @map("uom_id") @db.Uuid
+  unitPrice             Decimal              @map("unit_price") @db.Decimal(18, 2)
+  discountPercent       Decimal              @default(0) @map("discount_percent") @db.Decimal(5, 2)
+  taxRateId             String?              @map("tax_rate_id") @db.Uuid
+  gstRate               Decimal              @default(0) @map("gst_rate") @db.Decimal(5, 2)
+  grossAmount           Decimal              @map("gross_amount") @db.Decimal(18, 2)
+  discountAmount        Decimal              @map("discount_amount") @db.Decimal(18, 2)
+  taxableAmount         Decimal              @map("taxable_amount") @db.Decimal(18, 2)
+  cgstRate              Decimal              @default(0) @map("cgst_rate") @db.Decimal(5, 2)
+  cgstAmount            Decimal              @default(0) @map("cgst_amount") @db.Decimal(18, 2)
+  sgstRate              Decimal              @default(0) @map("sgst_rate") @db.Decimal(5, 2)
+  sgstAmount            Decimal              @default(0) @map("sgst_amount") @db.Decimal(18, 2)
+  igstRate              Decimal              @default(0) @map("igst_rate") @db.Decimal(5, 2)
+  igstAmount            Decimal              @default(0) @map("igst_amount") @db.Decimal(18, 2)
+  taxAmount             Decimal              @map("tax_amount") @db.Decimal(18, 2)
+  lineTotal             Decimal              @map("line_total") @db.Decimal(18, 2)
+  requestedDeliveryDate DateTime?            @map("requested_delivery_date") @db.Date
   notes                 String?
-  createdAt             DateTime          @default(now()) @map("created_at")
+  // Phase 03 pricing (2026-10-29): where the unit price came from.
+  // PRICE_LIST = engine price (list price - rule discounts), recalculated on
+  // every draft save; MANUAL = no list prices the line, typed by hand;
+  // OVERRIDE = a list prices it but the salesperson typed another price
+  // (reason required, below the list price needs approval). Frozen once issued.
+  priceSource           QuotationPriceSource @default(MANUAL) @map("price_source")
+  listUnitPrice         Decimal?             @map("list_unit_price") @db.Decimal(18, 2)
+  ruleDiscountAmount    Decimal?             @map("rule_discount_amount") @db.Decimal(18, 2)
+  calculatedUnitPrice   Decimal?             @map("calculated_unit_price") @db.Decimal(18, 2)
+  priceOverrideReason   String?              @map("price_override_reason")
+  // Explanation snapshot: list / version / entry / break / unit conversion / rules.
+  pricing               Json?
+  createdAt             DateTime             @default(now()) @map("created_at")
 
   revision         QuotationRevision @relation(fields: [revisionId], references: [id], onDelete: Cascade)
   product          Product?          @relation(fields: [productId], references: [id])
@@ -14867,6 +14899,9 @@ model SalesMarketingSettings {
   quotationApprovalMaxTotal           Decimal  @default(500000) @map("quotation_approval_max_total") @db.Decimal(18, 2)
   quotationDefaultValidityDays        Int      @default(30) @map("quotation_default_validity_days")
   quotationDefaultTerms               String?  @map("quotation_default_terms")
+  // Phase 03: cap on the total automatic (rule) discount per line, % of the
+  // list price. Null = no cap.
+  pricingMaxRuleDiscountPercent       Decimal? @map("pricing_max_rule_discount_percent") @db.Decimal(5, 2)
   updatedByUserId                     String?  @map("updated_by_user_id") @db.Uuid
   createdAt                           DateTime @default(now()) @map("created_at")
   updatedAt                           DateTime @updatedAt @map("updated_at")
@@ -14874,4 +14909,200 @@ model SalesMarketingSettings {
   company Company @relation(fields: [companyId], references: [id])
 
   @@map("sales_marketing_settings")
+}
+
+// ── Sales & Marketing Phase 03: pricing (2026-10-29) ─────────────
+// docs/sales-marketing/PHASE_03_PRICING.md
+
+enum QuotationPriceSource {
+  PRICE_LIST
+  MANUAL
+  OVERRIDE
+}
+
+enum PriceListKind {
+  DEFAULT
+  CUSTOMER
+}
+
+enum PriceListVersionStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  WITHDRAWN
+}
+
+enum DiscountRuleStatus {
+  DRAFT
+  PENDING_APPROVAL
+  ACTIVE
+  INACTIVE
+}
+
+enum DiscountRuleType {
+  PERCENT
+  AMOUNT_PER_UNIT
+}
+
+enum DiscountStacking {
+  EXCLUSIVE
+  STACKABLE
+}
+
+/// A price list: Default or for one Customer. Prices live in its versions.
+/// Two active lists of the same kind (and customer) can't share a priority
+/// (partial unique index in the migration).
+model PriceList {
+  id              String        @id @default(uuid()) @db.Uuid
+  companyId       String        @map("company_id") @db.Uuid
+  code            String
+  name            String
+  description     String?
+  kind            PriceListKind
+  customerId      String?       @map("customer_id") @db.Uuid
+  currencyCode    String        @map("currency_code") @db.Char(3)
+  priority        Int           @default(0)
+  isActive        Boolean       @default(true) @map("is_active")
+  createdByUserId String        @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  company       Company            @relation(fields: [companyId], references: [id])
+  customer      Customer?          @relation(fields: [customerId], references: [id])
+  createdBy     User               @relation("PriceListCreatedBy", fields: [createdByUserId], references: [id])
+  versions      PriceListVersion[]
+  discountRules DiscountRule[]
+
+  @@unique([companyId, code])
+  @@index([companyId, kind, isActive])
+  @@index([customerId])
+  @@map("price_lists")
+}
+
+/// Numbered version of a price list. Only DRAFT is editable; APPROVED is
+/// frozen (a change is a new version). In force on date d: the APPROVED
+/// version with the latest effectiveFrom <= d (unless its effectiveTo < d).
+/// One open (DRAFT / PENDING_APPROVAL) version per list and one APPROVED
+/// version per start date (partial unique indexes in the migration).
+model PriceListVersion {
+  id                String                 @id @default(uuid()) @db.Uuid
+  companyId         String                 @map("company_id") @db.Uuid
+  priceListId       String                 @map("price_list_id") @db.Uuid
+  versionNumber     Int                    @map("version_number")
+  status            PriceListVersionStatus @default(DRAFT)
+  effectiveFrom     DateTime               @map("effective_from") @db.Date
+  effectiveTo       DateTime?              @map("effective_to") @db.Date
+  changeNote        String?                @map("change_note")
+  createdByUserId   String                 @map("created_by_user_id") @db.Uuid
+  updatedByUserId   String?                @map("updated_by_user_id") @db.Uuid
+  submittedByUserId String?                @map("submitted_by_user_id") @db.Uuid
+  submittedAt       DateTime?              @map("submitted_at")
+  approvedByUserId  String?                @map("approved_by_user_id") @db.Uuid
+  approvedAt        DateTime?              @map("approved_at")
+  approvalComment   String?                @map("approval_comment")
+  withdrawnAt       DateTime?              @map("withdrawn_at")
+  // Optimistic lock for draft saves.
+  version           Int                    @default(1)
+  createdAt         DateTime               @default(now()) @map("created_at")
+  updatedAt         DateTime               @updatedAt @map("updated_at")
+
+  company     Company          @relation(fields: [companyId], references: [id])
+  priceList   PriceList        @relation(fields: [priceListId], references: [id], onDelete: Cascade)
+  createdBy   User             @relation("PriceListVersionCreatedBy", fields: [createdByUserId], references: [id])
+  updatedBy   User?            @relation("PriceListVersionUpdatedBy", fields: [updatedByUserId], references: [id])
+  submittedBy User?            @relation("PriceListVersionSubmittedBy", fields: [submittedByUserId], references: [id])
+  approvedBy  User?            @relation("PriceListVersionApprovedBy", fields: [approvedByUserId], references: [id])
+  entries     PriceListEntry[]
+
+  @@unique([priceListId, versionNumber])
+  @@index([companyId, status])
+  @@map("price_list_versions")
+}
+
+/// One price: Style + unit + from-quantity (all-units quantity break).
+model PriceListEntry {
+  id          String   @id @default(uuid()) @db.Uuid
+  versionId   String   @map("version_id") @db.Uuid
+  productId   String   @map("product_id") @db.Uuid
+  uomId       String   @map("uom_id") @db.Uuid
+  minQuantity Decimal  @default(0) @map("min_quantity") @db.Decimal(18, 3)
+  unitPrice   Decimal  @map("unit_price") @db.Decimal(18, 2)
+  notes       String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  version PriceListVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  product Product          @relation(fields: [productId], references: [id])
+  uom     UnitOfMeasure    @relation(fields: [uomId], references: [id])
+
+  @@unique([versionId, productId, uomId, minQuantity], map: "price_list_entries_version_product_uom_min_key")
+  @@index([productId])
+  @@map("price_list_entries")
+}
+
+/// Automatic line discount. Conditions are optional and combined with AND.
+/// AMOUNT_PER_UNIT and minQuantity are in the Style's base unit.
+model DiscountRule {
+  id                String             @id @default(uuid()) @db.Uuid
+  companyId         String             @map("company_id") @db.Uuid
+  code              String
+  name              String
+  description       String?
+  status            DiscountRuleStatus @default(DRAFT)
+  discountType      DiscountRuleType   @map("discount_type")
+  value             Decimal            @db.Decimal(18, 2)
+  stacking          DiscountStacking   @default(EXCLUSIVE)
+  priority          Int                @default(0)
+  productId         String?            @map("product_id") @db.Uuid
+  categoryId        String?            @map("category_id") @db.Uuid
+  customerId        String?            @map("customer_id") @db.Uuid
+  priceListId       String?            @map("price_list_id") @db.Uuid
+  minQuantity       Decimal?           @map("min_quantity") @db.Decimal(18, 3)
+  validFrom         DateTime           @map("valid_from") @db.Date
+  validTo           DateTime?          @map("valid_to") @db.Date
+  createdByUserId   String             @map("created_by_user_id") @db.Uuid
+  updatedByUserId   String?            @map("updated_by_user_id") @db.Uuid
+  submittedByUserId String?            @map("submitted_by_user_id") @db.Uuid
+  submittedAt       DateTime?          @map("submitted_at")
+  approvedByUserId  String?            @map("approved_by_user_id") @db.Uuid
+  approvedAt        DateTime?          @map("approved_at")
+  approvalComment   String?            @map("approval_comment")
+  deactivatedAt     DateTime?          @map("deactivated_at")
+  version           Int                @default(1)
+  createdAt         DateTime           @default(now()) @map("created_at")
+  updatedAt         DateTime           @updatedAt @map("updated_at")
+
+  company     Company    @relation(fields: [companyId], references: [id])
+  product     Product?   @relation(fields: [productId], references: [id])
+  category    Category?  @relation(fields: [categoryId], references: [id])
+  customer    Customer?  @relation(fields: [customerId], references: [id])
+  priceList   PriceList? @relation(fields: [priceListId], references: [id])
+  createdBy   User       @relation("DiscountRuleCreatedBy", fields: [createdByUserId], references: [id])
+  updatedBy   User?      @relation("DiscountRuleUpdatedBy", fields: [updatedByUserId], references: [id])
+  submittedBy User?      @relation("DiscountRuleSubmittedBy", fields: [submittedByUserId], references: [id])
+  approvedBy  User?      @relation("DiscountRuleApprovedBy", fields: [approvedByUserId], references: [id])
+
+  @@unique([companyId, code])
+  @@index([companyId, status])
+  @@map("discount_rules")
+}
+
+/// History of price lists and discount rules (types validated in code, like quotation_events).
+model PricingEvent {
+  id              String   @id @default(uuid()) @db.Uuid
+  companyId       String   @map("company_id") @db.Uuid
+  // PRICE_LIST | DISCOUNT_RULE
+  entityType      String   @map("entity_type")
+  entityId        String   @map("entity_id") @db.Uuid
+  versionNumber   Int?     @map("version_number")
+  type            String
+  comment         String?
+  metadata        Json     @default("{}")
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  company   Company @relation(fields: [companyId], references: [id])
+  createdBy User    @relation("PricingEventCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@index([entityType, entityId, createdAt])
+  @@map("pricing_events")
 }

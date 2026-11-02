@@ -24,6 +24,9 @@ interface LineLike {
   taxRateId?: string | null;
   requestedDeliveryDate?: unknown;
   notes?: string | null;
+  priceSource?: string | null;
+  priceMode?: string | null;
+  priceOverrideReason?: string | null;
 }
 
 export function toLineDraft(l: LineLike): QuotationLineDraft {
@@ -43,6 +46,10 @@ export function toLineDraft(l: LineLike): QuotationLineDraft {
     taxRateId: s(l.taxRateId),
     requestedDeliveryDate: d(l.requestedDeliveryDate),
     notes: s(l.notes),
+    // Phase 03: a hand-entered override stays manual; anything else follows the
+    // price list when one prices the line (falls back to the typed price).
+    priceMode: l.priceSource === "OVERRIDE" || l.priceMode === "MANUAL" ? "MANUAL" : "AUTO",
+    priceOverrideReason: s(l.priceOverrideReason),
   };
 }
 
@@ -96,5 +103,7 @@ export function emptyLine(): QuotationLineDraft {
     taxRateId: "",
     requestedDeliveryDate: "",
     notes: "",
+    priceMode: "AUTO",
+    priceOverrideReason: "",
   };
 }

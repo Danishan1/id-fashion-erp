@@ -103,6 +103,7 @@ const perms = {
   quotations: { view: true, create: true, edit: true, cancel: true, approve: true, reject: true, print: true },
   settings: { view: false, edit: false },
   salesOrders: { view: true, create: true },
+  pricing: { view: true, create: true, edit: true, approve: false, reject: false },
 };
 const withStatus = (status: string, extra: Partial<Detail> = {}) => ({ ...base, status, current: { ...rev, status }, ...extra }) as Detail;
 const buttons = () => screen.queryAllByRole("button").map((b) => b.textContent);

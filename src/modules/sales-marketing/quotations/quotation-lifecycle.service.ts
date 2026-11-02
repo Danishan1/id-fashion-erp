@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Prisma, Quotation, QuotationLine, QuotationRevision, QuotationRevisionStatus, QuotationStatus } from "@prisma/client";
+import { Prisma, type Quotation, type QuotationLine, type QuotationRevision, type QuotationRevisionStatus, type QuotationStatus } from "@prisma/client";
 import { prisma } from "@/core/db/client";
 import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
@@ -7,6 +7,7 @@ import { createNotification } from "@/core/notifications/NotificationService";
 import { PermissionService } from "@/core/rbac/PermissionService";
 import { getCompanyHeaderLines } from "@/core/documents/company-header";
 import { todayIsoDate, toIsoDate } from "@/lib/date";
+import { round2 } from "@/lib/money";
 import { markEnquiryQuoted, releaseEnquiryQuotation, type SalesActor } from "@/modules/sales-marketing/enquiries/sales-enquiry.service";
 import { getSalesMarketingSettings } from "@/modules/sales-marketing/settings/sales-marketing-settings.service";
 import { approvalReasons } from "./quotation-approval";
@@ -167,6 +168,8 @@ function draftBodyFromRevision(quotation: Quotation, r: RevisionWithLines): Draf
       taxRateId: s(l.taxRateId),
       requestedDeliveryDate: l.requestedDeliveryDate ? toIsoDate(l.requestedDeliveryDate) : "",
       notes: s(l.notes),
+      priceMode: l.priceSource === "PRICE_LIST" ? ("AUTO" as const) : ("MANUAL" as const),
+      priceOverrideReason: s(l.priceOverrideReason),
     })),
   };
 }
@@ -181,10 +184,23 @@ async function revalidateDraft(actor: SalesActor, quotation: Quotation, revision
   if (toIsoDate(revision.validUntil) < todayIsoDate()) {
     throw new BusinessRuleError("VALIDATION_ERROR", "The valid-until date has passed. Edit the draft and set a new date.", { fieldErrors: { validUntil: "In the past." } });
   }
-  const { revision: values, lineRows } = await buildDraft(actor, draftBodyFromRevision(quotation, revision), quotation.buyerEnquiryId);
+  const { revision: values, lineRows } = await buildDraft(actor, draftBodyFromRevision(quotation, revision), quotation.buyerEnquiryId, quotation.customerId);
+  // Phase 03: never let a price change that nobody saw slip into an issued
+  // quotation — if a price list or rule changed since the draft was saved,
+  // the draft must be saved again (the editor shows the new prices).
+  const changed = revision.lines
+    .map((l, i) => ({ l, r: lineRows[i] }))
+    .filter(({ l, r }) => l.priceSource === "PRICE_LIST" && r && (r.priceSource !== "PRICE_LIST" || round2(Number(l.unitPrice)) !== round2(r.unitPrice)));
+  if (changed.length) {
+    const detail = changed.map(({ l, r }) => `line ${l.lineNumber}: ₹${Number(l.unitPrice).toFixed(2)} → ₹${r.unitPrice.toFixed(2)}`).join(", ");
+    throw new BusinessRuleError("VALIDATION_ERROR", `Price-list prices changed since this draft was saved (${detail}). Open the draft and save it to take the new prices.`);
+  }
   const settings = await getSalesMarketingSettings(actor.companyId);
   const reasons = approvalReasons(
-    { lines: lineRows.map((l) => ({ lineNumber: l.lineNumber, discountPercent: l.discountPercent })), grandTotal: values.grandTotal },
+    {
+      lines: lineRows.map((l) => ({ lineNumber: l.lineNumber, discountPercent: l.discountPercent, priceSource: l.priceSource, unitPrice: l.unitPrice, calculatedUnitPrice: l.calculatedUnitPrice })),
+      grandTotal: values.grandTotal,
+    },
     { maxDiscountPercent: settings.quotationApprovalMaxDiscountPercent, maxTotal: settings.quotationApprovalMaxTotal }
   );
   return { values, lineRows, reasons };
@@ -492,8 +508,9 @@ export async function reviseQuotation(actor: SalesActor, id: string, raw: unknow
         lines: {
           create: revision.lines.map((l) => {
             // eslint-disable-next-line @typescript-eslint/no-unused-vars
-            const { id: _id, revisionId: _rev, createdAt: _c, ...rest } = l;
-            return rest;
+            const { id: _id, revisionId: _rev, createdAt: _c, pricing, ...rest } = l;
+            // The pricing snapshot travels with the line; auto-priced lines are re-priced when the new draft is saved.
+            return { ...rest, pricing: pricing ?? Prisma.JsonNull };
           }),
         },
       },
