@@ -25,3 +25,4 @@ import "./page-meta/production-planning.page-meta";
 import "./page-meta/material-consumption.page-meta";
 import "./page-meta/business-performance.page-meta";
 import "./page-meta/sales-marketing.page-meta";
+import "./page-meta/sales-performance.page-meta";

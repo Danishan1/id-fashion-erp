@@ -16,6 +16,7 @@ import { CompanyRepository, SalesOrderRepository } from "./sales-order.repositor
 import { buildReconciledItemPlan, snapshotUnsnapshottedLinesInTx } from "./sales-order-bom.service";
 import { releaseActiveReservationsForSalesOrderInTx } from "@/modules/finished-goods-inventory/finished-goods-reservation.service";
 import { SalesOrderStatus, type Prisma } from "@prisma/client";
+import { creditAfterCustomerChange, resolveDefaultSalesCredit } from "@/modules/sales-marketing/performance/sales-credit.service";
 
 interface ActorContext {
   companyId: string;
@@ -279,6 +280,15 @@ export async function createSalesOrder(actor: ActorContext, input: SalesOrderInp
     return orderSum + item.unitPrice * itemQty;
   }, 0);
 
+  // Sales credit (Sales & Marketing Phase 05): stored on the order so later
+  // owner / territory changes never rewrite history (PHASE_05_PERFORMANCE §3).
+  const credit = await resolveDefaultSalesCredit(prisma, actor.companyId, {
+    customerId: input.customerId,
+    orderDate: input.orderDate,
+    sourceQuotationRevisionId: origin.sourceQuotationRevisionId ?? null,
+    creatorUserId: actor.userId,
+  });
+
   // Bare header first — createHeader() has no items yet, so
   // buildReconciledItemPlan() below (called against this real order id with
   // zero existing SalesOrderLines) correctly treats every submitted item as
@@ -302,6 +312,9 @@ export async function createSalesOrder(actor: ActorContext, input: SalesOrderInp
     totalAmount,
     baseTotalAmount: totalAmount,
     requestedByUserId: actor.userId,
+    salesRepUserId: credit.salesRepUserId,
+    salesTerritoryId: credit.salesTerritoryId,
+    salesCreditSource: credit.salesCreditSource,
   });
 
   // A brand-new order always starts DRAFT — isConfirmed: false, so no line
@@ -433,10 +446,17 @@ export async function updateSalesOrder(actor: ActorContext, id: string, input: U
     }))
   );
 
+  // Sales credit follows a changed customer unless it was set by hand (PHASE_05 §3).
+  const credit =
+    existing.customerId !== input.customerId
+      ? await creditAfterCustomerChange(prisma, actor.companyId, existing, { customerId: input.customerId, orderDate: input.orderDate })
+      : null;
+
   const updated = await SalesOrderRepository.replaceItems(
     actor.companyId,
     id,
     {
+      ...(credit ?? {}),
       customerId: input.customerId,
       buyerId: input.buyerId || null,
       orderDate: new Date(input.orderDate),

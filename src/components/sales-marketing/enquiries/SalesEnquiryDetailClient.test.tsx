@@ -79,6 +79,7 @@ const allow = {
   settings: { view: false, edit: false },
   salesOrders: { view: true, create: true },
   pricing: { view: true, create: true, edit: true, approve: false, reject: false },
+  performance: { view: true, viewAll: false, create: false, edit: false, approve: false, reject: false, export: false },
 };
 
 beforeEach(() => push.mockReset());

@@ -287,6 +287,10 @@ model Company {
   priceListVersions           PriceListVersion[]
   discountRules               DiscountRule[]
   pricingEvents               PricingEvent[]
+  salesTerritories            SalesTerritory[]
+  salesTerritoryAssignments   SalesTerritoryAssignment[]
+  salesTargets                SalesTarget[]
+  salesPerformanceEvents      SalesPerformanceEvent[]
 
   @@map("companies")
 }
@@ -1110,6 +1114,19 @@ model User {
   priceListVersionsUpdated           PriceListVersion[]           @relation("PriceListVersionUpdatedBy")
   priceListVersionsSubmitted         PriceListVersion[]           @relation("PriceListVersionSubmittedBy")
   priceListVersionsApproved          PriceListVersion[]           @relation("PriceListVersionApprovedBy")
+  salesTerritoriesCreated            SalesTerritory[]             @relation("SalesTerritoryCreatedBy")
+  salesTerritoryAssignments          SalesTerritoryAssignment[]   @relation("SalesTerritoryAssignmentUser")
+  salesTerritoryAssignmentsCreated   SalesTerritoryAssignment[]   @relation("SalesTerritoryAssignmentCreatedBy")
+  salesTargets                       SalesTarget[]                @relation("SalesTargetUser")
+  salesTargetsArchived               SalesTarget[]                @relation("SalesTargetArchivedBy")
+  salesTargetsCreated                SalesTarget[]                @relation("SalesTargetCreatedBy")
+  salesTargetRevisionsCreated        SalesTargetRevision[]        @relation("SalesTargetRevisionCreatedBy")
+  salesTargetRevisionsUpdated        SalesTargetRevision[]        @relation("SalesTargetRevisionUpdatedBy")
+  salesTargetRevisionsSubmitted      SalesTargetRevision[]        @relation("SalesTargetRevisionSubmittedBy")
+  salesTargetRevisionsApproved       SalesTargetRevision[]        @relation("SalesTargetRevisionApprovedBy")
+  salesPerformanceEvents             SalesPerformanceEvent[]      @relation("SalesPerformanceEventCreatedBy")
+  salesOrdersCredited                SalesOrder[]                 @relation("SalesOrderSalesRep")
+  salesOrderCreditsChanged           SalesOrder[]                 @relation("SalesOrderCreditChangedBy")
   discountRulesCreated               DiscountRule[]               @relation("DiscountRuleCreatedBy")
   discountRulesUpdated               DiscountRule[]               @relation("DiscountRuleUpdatedBy")
   discountRulesSubmitted             DiscountRule[]               @relation("DiscountRuleSubmittedBy")
@@ -1277,6 +1294,8 @@ model Customer {
   paymentTermsDays    Int?      @map("payment_terms_days")
   creditLimit         Decimal?  @map("credit_limit") @db.Decimal(18, 2)
   defaultCurrencyCode String?   @map("default_currency_code") @db.Char(3)
+  // Sales & Marketing Phase 05: the customer's sales territory (one at most).
+  salesTerritoryId    String?   @map("sales_territory_id") @db.Uuid
   isActive            Boolean   @default(true) @map("is_active")
   deletedAt           DateTime? @map("deleted_at")
   createdAt           DateTime  @default(now()) @map("created_at")
@@ -1284,6 +1303,7 @@ model Customer {
 
   company           Company            @relation(fields: [companyId], references: [id])
   buyers            Buyer[]
+  salesTerritory    SalesTerritory?    @relation(fields: [salesTerritoryId], references: [id])
   products          Product[]
   sampleRequests    SampleRequest[]
   buyerEnquiries    BuyerEnquiry[]
@@ -4296,41 +4316,49 @@ enum SalesOrderStatus {
 }
 
 model SalesOrder {
-  id                        String            @id @default(uuid()) @db.Uuid
-  companyId                 String            @map("company_id") @db.Uuid
-  branchId                  String?           @map("branch_id") @db.Uuid
-  orderNumber               String            @map("order_number")
-  customerId                String            @map("customer_id") @db.Uuid
-  buyerId                   String?           @map("buyer_id") @db.Uuid
-  orderDate                 DateTime          @map("order_date") @db.Date
-  requiredShipDate          DateTime?         @map("required_ship_date") @db.Date
+  id                        String             @id @default(uuid()) @db.Uuid
+  companyId                 String             @map("company_id") @db.Uuid
+  branchId                  String?            @map("branch_id") @db.Uuid
+  orderNumber               String             @map("order_number")
+  customerId                String             @map("customer_id") @db.Uuid
+  buyerId                   String?            @map("buyer_id") @db.Uuid
+  orderDate                 DateTime           @map("order_date") @db.Date
+  requiredShipDate          DateTime?          @map("required_ship_date") @db.Date
   // The buyer's own PO reference number, free text — this app's real
   // ORD-2026-00001 numbering is unrelated and unaffected; a buyer's PO
   // document (the file itself) attaches via the existing generic Attachment
   // mechanism (RelatedModule.SALES_ORDER), not a dedicated column here.
-  customerPoNumber          String?           @map("customer_po_number")
-  status                    SalesOrderStatus  @default(DRAFT)
-  statusBeforeHold          SalesOrderStatus? @map("status_before_hold")
+  customerPoNumber          String?            @map("customer_po_number")
+  status                    SalesOrderStatus   @default(DRAFT)
+  statusBeforeHold          SalesOrderStatus?  @map("status_before_hold")
   // Frozen at creation (no live FX picker — multi-currency UI is deferred
   // project-wide); base amounts are stored, not computed live, so historical
   // totals never drift if a rate source changes later.
-  currencyCode              String            @map("currency_code") @db.Char(3)
-  exchangeRate              Decimal           @default(1) @map("exchange_rate") @db.Decimal(18, 6)
-  baseCurrencyCode          String            @map("base_currency_code") @db.Char(3)
-  totalAmount               Decimal           @default(0) @map("total_amount") @db.Decimal(18, 2)
-  baseTotalAmount           Decimal           @default(0) @map("base_total_amount") @db.Decimal(18, 2)
-  requestedByUserId         String            @map("requested_by_user_id") @db.Uuid
+  currencyCode              String             @map("currency_code") @db.Char(3)
+  exchangeRate              Decimal            @default(1) @map("exchange_rate") @db.Decimal(18, 6)
+  baseCurrencyCode          String             @map("base_currency_code") @db.Char(3)
+  totalAmount               Decimal            @default(0) @map("total_amount") @db.Decimal(18, 2)
+  baseTotalAmount           Decimal            @default(0) @map("base_total_amount") @db.Decimal(18, 2)
+  requestedByUserId         String             @map("requested_by_user_id") @db.Uuid
   // CRM traceability (2026-10-09, CRM Replacement) — which Opportunity this
   // order came from, if any; optional, set manually on the New Sales Order
   // form, never auto-populated. Was originatingDealId against the legacy
   // CRM's Deal model before the replacement.
-  originatingOpportunityId  String?           @map("originating_opportunity_id") @db.Uuid
+  originatingOpportunityId  String?            @map("originating_opportunity_id") @db.Uuid
   // Sales & Marketing S4 (2026-10-29): the accepted quotation revision this
   // order was converted from. Unique — one order per revision, so a retried
   // or concurrent conversion can never create a second order.
-  sourceQuotationRevisionId String?           @unique @map("source_quotation_revision_id") @db.Uuid
-  createdAt                 DateTime          @default(now()) @map("created_at")
-  updatedAt                 DateTime          @updatedAt @map("updated_at")
+  sourceQuotationRevisionId String?            @unique @map("source_quotation_revision_id") @db.Uuid
+  // Sales & Marketing Phase 05: who gets the sales credit, stored so history
+  // never moves when owners or territories change (PHASE_05 §3).
+  salesRepUserId            String?            @map("sales_rep_user_id") @db.Uuid
+  salesTerritoryId          String?            @map("sales_territory_id") @db.Uuid
+  salesCreditSource         SalesCreditSource? @map("sales_credit_source")
+  salesCreditChangedAt      DateTime?          @map("sales_credit_changed_at")
+  salesCreditChangedById    String?            @map("sales_credit_changed_by_id") @db.Uuid
+  salesCreditReason         String?            @map("sales_credit_reason")
+  createdAt                 DateTime           @default(now()) @map("created_at")
+  updatedAt                 DateTime           @updatedAt @map("updated_at")
 
   company                 Company            @relation(fields: [companyId], references: [id])
   branch                  Branch?            @relation(fields: [branchId], references: [id])
@@ -4339,6 +4367,9 @@ model SalesOrder {
   requestedBy             User               @relation("SalesOrderRequestedBy", fields: [requestedByUserId], references: [id])
   originatingOpportunity  CrmOpportunity?    @relation(fields: [originatingOpportunityId], references: [id])
   sourceQuotationRevision QuotationRevision? @relation(fields: [sourceQuotationRevisionId], references: [id])
+  salesRep                User?              @relation("SalesOrderSalesRep", fields: [salesRepUserId], references: [id])
+  salesTerritory          SalesTerritory?    @relation(fields: [salesTerritoryId], references: [id])
+  salesCreditChangedBy    User?              @relation("SalesOrderCreditChangedBy", fields: [salesCreditChangedById], references: [id])
   items                   SalesOrderItem[]
   salesOrderLines         SalesOrderLine[]
   materialRequests        MaterialRequest[]
@@ -4353,6 +4384,8 @@ model SalesOrder {
   aiGarmentProject        AiGarmentProject?
 
   @@unique([companyId, orderNumber])
+  @@index([companyId, salesRepUserId, orderDate])
+  @@index([companyId, salesTerritoryId, orderDate])
   @@map("sales_orders")
 }
 
@@ -15105,4 +15138,180 @@ model PricingEvent {
 
   @@index([entityType, entityId, createdAt])
   @@map("pricing_events")
+}
+
+// ── Sales & Marketing Phase 05 (2026-11-03): territories, sales credit, targets.
+// docs/sales-marketing/PHASE_05_PERFORMANCE.md
+
+enum SalesTargetScope {
+  REP
+  TEAM
+  TERRITORY
+  COMPANY
+}
+
+enum SalesTargetMetric {
+  BOOKED_ORDER_VALUE
+  BOOKED_ORDER_COUNT
+  BOOKED_QUANTITY
+  ACCEPTED_QUOTATION_VALUE
+  ACCEPTED_QUOTATION_COUNT
+  INVOICED_VALUE
+}
+
+enum SalesTargetPeriodType {
+  MONTH
+  QUARTER
+  YEAR
+}
+
+enum SalesTargetRevisionStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  SUPERSEDED
+}
+
+/// How a Sales Order's sales credit was set (PHASE_05 §3).
+enum SalesCreditSource {
+  QUOTATION_OWNER
+  CRM_OWNER
+  TERRITORY_PRIMARY
+  CREATOR
+  MANUAL
+  BACKFILL
+}
+
+/// Flat sales territory. Deactivated, never deleted (orders keep pointing at it).
+model SalesTerritory {
+  id              String   @id @default(uuid()) @db.Uuid
+  companyId       String   @map("company_id") @db.Uuid
+  code            String
+  name            String
+  description     String?
+  isActive        Boolean  @default(true) @map("is_active")
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  company     Company                    @relation(fields: [companyId], references: [id])
+  createdBy   User                       @relation("SalesTerritoryCreatedBy", fields: [createdByUserId], references: [id])
+  customers   Customer[]
+  assignments SalesTerritoryAssignment[]
+  salesOrders SalesOrder[]
+  targets     SalesTarget[]
+
+  @@unique([companyId, code])
+  @@map("sales_territories")
+}
+
+/// A rep covering a territory for a date range. Overlap rules live in the
+/// service (same user twice, two primaries) — see PHASE_05 §2.
+model SalesTerritoryAssignment {
+  id              String    @id @default(uuid()) @db.Uuid
+  companyId       String    @map("company_id") @db.Uuid
+  territoryId     String    @map("territory_id") @db.Uuid
+  userId          String    @map("user_id") @db.Uuid
+  isPrimary       Boolean   @default(false) @map("is_primary")
+  startDate       DateTime  @map("start_date") @db.Date
+  endDate         DateTime? @map("end_date") @db.Date
+  createdByUserId String    @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  company   Company        @relation(fields: [companyId], references: [id])
+  territory SalesTerritory @relation(fields: [territoryId], references: [id])
+  user      User           @relation("SalesTerritoryAssignmentUser", fields: [userId], references: [id])
+  createdBy User           @relation("SalesTerritoryAssignmentCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@index([territoryId, startDate])
+  @@index([companyId, userId])
+  @@map("sales_territory_assignments")
+}
+
+/// What is measured: scope + subject + metric + one whole period. The value
+/// lives on revisions. One live target per scope/subject/metric/period
+/// (partial unique index in SQL).
+model SalesTarget {
+  id               String                @id @default(uuid()) @db.Uuid
+  companyId        String                @map("company_id") @db.Uuid
+  scope            SalesTargetScope
+  // REP: the rep. TEAM: the manager. Null for TERRITORY / COMPANY.
+  userId           String?               @map("user_id") @db.Uuid
+  territoryId      String?               @map("territory_id") @db.Uuid
+  metric           SalesTargetMetric
+  periodType       SalesTargetPeriodType @map("period_type")
+  periodStart      DateTime              @map("period_start") @db.Date
+  periodEnd        DateTime              @map("period_end") @db.Date
+  currencyCode     String                @map("currency_code") @db.Char(3)
+  name             String?
+  isArchived       Boolean               @default(false) @map("is_archived")
+  archivedAt       DateTime?             @map("archived_at")
+  archivedByUserId String?               @map("archived_by_user_id") @db.Uuid
+  archiveReason    String?               @map("archive_reason")
+  createdByUserId  String                @map("created_by_user_id") @db.Uuid
+  createdAt        DateTime              @default(now()) @map("created_at")
+  updatedAt        DateTime              @updatedAt @map("updated_at")
+
+  company    Company               @relation(fields: [companyId], references: [id])
+  user       User?                 @relation("SalesTargetUser", fields: [userId], references: [id])
+  territory  SalesTerritory?       @relation(fields: [territoryId], references: [id])
+  archivedBy User?                 @relation("SalesTargetArchivedBy", fields: [archivedByUserId], references: [id])
+  createdBy  User                  @relation("SalesTargetCreatedBy", fields: [createdByUserId], references: [id])
+  revisions  SalesTargetRevision[]
+
+  @@index([companyId, periodStart, metric])
+  @@map("sales_targets")
+}
+
+/// A target value. Draft → Pending approval → Approved → Superseded.
+/// Approved revisions are never edited.
+model SalesTargetRevision {
+  id                String                    @id @default(uuid()) @db.Uuid
+  targetId          String                    @map("target_id") @db.Uuid
+  revisionNumber    Int                       @map("revision_number")
+  status            SalesTargetRevisionStatus @default(DRAFT)
+  targetValue       Decimal                   @map("target_value") @db.Decimal(18, 2)
+  notes             String?
+  // Optimistic lock for draft saves and status moves.
+  version           Int                       @default(1)
+  createdByUserId   String                    @map("created_by_user_id") @db.Uuid
+  updatedByUserId   String                    @map("updated_by_user_id") @db.Uuid
+  submittedByUserId String?                   @map("submitted_by_user_id") @db.Uuid
+  submittedAt       DateTime?                 @map("submitted_at")
+  approvedByUserId  String?                   @map("approved_by_user_id") @db.Uuid
+  approvedAt        DateTime?                 @map("approved_at")
+  decisionComment   String?                   @map("decision_comment")
+  supersededAt      DateTime?                 @map("superseded_at")
+  createdAt         DateTime                  @default(now()) @map("created_at")
+  updatedAt         DateTime                  @updatedAt @map("updated_at")
+
+  target      SalesTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  createdBy   User        @relation("SalesTargetRevisionCreatedBy", fields: [createdByUserId], references: [id])
+  updatedBy   User        @relation("SalesTargetRevisionUpdatedBy", fields: [updatedByUserId], references: [id])
+  submittedBy User?       @relation("SalesTargetRevisionSubmittedBy", fields: [submittedByUserId], references: [id])
+  approvedBy  User?       @relation("SalesTargetRevisionApprovedBy", fields: [approvedByUserId], references: [id])
+
+  @@unique([targetId, revisionNumber])
+  @@map("sales_target_revisions")
+}
+
+/// Activity log for territories, targets and sales-credit changes.
+model SalesPerformanceEvent {
+  id              String   @id @default(uuid()) @db.Uuid
+  companyId       String   @map("company_id") @db.Uuid
+  // TERRITORY | TARGET | SALES_ORDER
+  entityType      String   @map("entity_type")
+  entityId        String   @map("entity_id") @db.Uuid
+  type            String
+  comment         String?
+  metadata        Json     @default("{}")
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  company   Company @relation(fields: [companyId], references: [id])
+  createdBy User    @relation("SalesPerformanceEventCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@index([entityType, entityId, createdAt])
+  @@map("sales_performance_events")
 }

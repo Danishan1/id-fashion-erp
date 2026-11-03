@@ -8,6 +8,8 @@ import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Barcode } from "@/components/ui/Barcode";
 import { formatDate } from "@/lib/date-format";
 import { SalesOrderWorkflowPanel } from "../SalesOrderWorkflowPanel";
+import { SalesCreditPanel } from "@/components/sales-marketing/performance/SalesCreditPanel";
+import { getSalesCredit } from "@/modules/sales-marketing/performance/sales-credit.service";
 
 export default async function SalesOrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -23,6 +25,9 @@ export default async function SalesOrderDetailPage({ params }: { params: Promise
   });
   const fromQuotation = source?.sourceQuotationRevision ?? null;
   const canViewQuotations = fromQuotation ? await PermissionService.can(session!.user.id, "sales_quotations", "view") : false;
+  // Sales credit (Sales & Marketing Phase 05): readable by anyone who can open the order.
+  const actor = { companyId: session!.user.companyId, userId: session!.user.id, branchId: session!.user.defaultBranchId ?? null };
+  const [salesCredit, canChangeCredit] = await Promise.all([getSalesCredit(actor, id), PermissionService.can(session!.user.id, "sales_performance", "edit")]);
 
   return (
     <div className="space-y-6">
@@ -68,6 +73,8 @@ export default async function SalesOrderDetailPage({ params }: { params: Promise
           Sampling's detail page. `key={id}` forces a remount on client-side
           navigation between two different orders — same stale-data fix
           applied project-wide after the Sampling bug. */}
+      <SalesCreditPanel key={`credit-${id}`} orderId={id} initial={salesCredit} canChange={canChangeCredit} />
+
       <SalesOrderWorkflowPanel key={id} salesOrderId={id} initialOrder={JSON.parse(JSON.stringify(order))} />
     </div>
   );

@@ -112,7 +112,7 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     label: "Sales & Marketing",
     href: "/sales-marketing",
-    modules: ["sales_marketing", "sales_quotations", "sales_marketing_settings", "sales_pricing"],
+    modules: ["sales_marketing", "sales_quotations", "sales_marketing_settings", "sales_pricing", "sales_performance"],
     children: [
       { label: "Dashboard", href: "/sales-marketing", modules: ["sales_marketing"] },
       { label: "Enquiries", href: "/sales-marketing/enquiries", modules: ["sales_marketing"] },
@@ -120,6 +120,9 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Price Lists", href: "/sales-marketing/pricing", modules: ["sales_pricing"] },
       { label: "Discount Rules", href: "/sales-marketing/pricing/discounts", modules: ["sales_pricing"] },
       { label: "Pricing Preview", href: "/sales-marketing/pricing/preview", modules: ["sales_pricing"] },
+      { label: "Team Performance", href: "/sales-marketing/performance", modules: ["sales_performance"] },
+      { label: "Sales Targets", href: "/sales-marketing/targets", modules: ["sales_performance"] },
+      { label: "Territories", href: "/sales-marketing/territories", modules: ["sales_performance"] },
       { label: "Settings", href: "/sales-marketing/settings", modules: ["sales_marketing_settings"] },
     ],
   },
