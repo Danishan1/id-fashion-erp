@@ -37,7 +37,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ cate
     const filters = filtersFromSearchParams(req.nextUrl.searchParams);
     // Same descriptor-builder function as the on-screen view route — the
     // mechanism that guarantees an export can never disagree with the screen.
-    const descriptor = await config.buildDescriptor(session.user.companyId, session.user.name ?? "Unknown", filters);
+    const descriptor = await config.buildDescriptor(session.user.companyId, session.user.name ?? "Unknown", filters, { userId: session.user.id });
 
     const fileBaseName = slugify(config.title);
 

@@ -8,6 +8,7 @@ import {
   type SalesMarketingSection,
 } from "@/modules/sales-marketing/sales-marketing-sections";
 import type { SalesMarketingOverview } from "@/modules/sales-marketing/sales-marketing-overview.service";
+import { SalesMarketingKpis } from "./SalesMarketingKpis";
 
 type LoadState = { status: "loading" } | { status: "error"; message: string } | { status: "ready"; data: SalesMarketingOverview };
 
@@ -50,17 +51,7 @@ export function SalesMarketingDashboardClient() {
 
   return (
     <div className="space-y-6">
-      <section className={panelClass} aria-labelledby="sm-kpis">
-        <h2 id="sm-kpis" className={headingClass}>
-          Sales &amp; marketing KPIs
-        </h2>
-        <div className="mt-3">
-          <EmptyState
-            title="Not available yet"
-            description="Enquiry, quotation, conversion and campaign figures will appear here once Sales Enquiries and Quotations are built (Phase 02). Nothing is shown until there is real data."
-          />
-        </div>
-      </section>
+      <SalesMarketingKpis />
 
       <section className={panelClass} aria-labelledby="sm-sources">
         <h2 id="sm-sources" className={headingClass}>

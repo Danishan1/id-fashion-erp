@@ -24,3 +24,4 @@ import "./warehouse.reports";
 import "./production-planning.reports";
 import "./material-consumption.reports";
 import "./business-performance.reports";
+import "./sales-marketing.reports";

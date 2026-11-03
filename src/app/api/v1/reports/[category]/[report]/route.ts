@@ -24,7 +24,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ cate
     await assertReportAccess(session.user.id, config.category, "view");
 
     const filters = filtersFromSearchParams(req.nextUrl.searchParams);
-    const descriptor = await config.buildDescriptor(session.user.companyId, session.user.name ?? "Unknown", filters);
+    const descriptor = await config.buildDescriptor(session.user.companyId, session.user.name ?? "Unknown", filters, { userId: session.user.id });
 
     return NextResponse.json({ descriptor });
   } catch (error) {

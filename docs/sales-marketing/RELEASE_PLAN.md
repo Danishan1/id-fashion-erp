@@ -109,4 +109,5 @@ Progress:
 - **S3 Issue, revise, approve, PDF, send, accept** — built and verified in the sandbox (2026-10-29), see `S3_QUOTATION_LIFECYCLE.md`. Approval limits live in the new Sales & Marketing → Settings (`sales_marketing_settings`).
 - **S4 Convert to Sales Order** — built and verified in the sandbox (2026-10-29), see `S4_CONVERSION.md`. The existing Sales Order form is reused in a locked "from quotation" mode; prices are net of discount and before GST; freight/other charges aren't carried (sales orders have no charge fields).
 - **Phase 03 / S5 Pricing** — built and verified in the sandbox (2026-11-02), see `PHASE_03_PRICING.md`. Scope widened from "lite" on 2026-10-29: price-list versions with approval, discount rules with simple stacking, pricing preview; customer groups skipped (no master).
-- Next: S6 Dashboard KPIs + 3 reports (closes Release 1), then Release 2 (Phase 05 targets / territories).
+- **S6 Dashboard & reports** — built and verified in the sandbox (2026-11-02), see `S6_DASHBOARD_REPORTS.md`. Release 1 (Quote-to-Order) is complete in the sandbox; still to do on the live DB: one real enquiry all the way to a confirmed Sales Order (the Release 1 "done" test).
+- Next: Release 2 — Phase 05 (targets, territories, team performance).

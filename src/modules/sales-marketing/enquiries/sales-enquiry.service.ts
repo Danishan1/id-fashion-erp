@@ -82,7 +82,8 @@ export async function getSalesEnquiryScope(actor: SalesActor): Promise<SalesEnqu
   return { record, branch: branchScopeWhere(allowedBranches) };
 }
 
-function scopedWhere(actor: SalesActor, scope: SalesEnquiryScope, extra: Prisma.BuyerEnquiryWhereInput = {}): Prisma.BuyerEnquiryWhereInput {
+/** Enquiries the actor may see (CRM owner/team rule + branch access). Used by lists, dashboard metrics and reports. */
+export function scopedWhere(actor: SalesActor, scope: SalesEnquiryScope, extra: Prisma.BuyerEnquiryWhereInput = {}): Prisma.BuyerEnquiryWhereInput {
   return {
     AND: [{ companyId: actor.companyId }, scope.branch, crmOwnerWhere(scope.record, OWNER_FIELDS) as Prisma.BuyerEnquiryWhereInput, extra],
   };

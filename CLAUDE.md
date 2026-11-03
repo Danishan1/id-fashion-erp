@@ -8094,3 +8094,8 @@ Doc: `docs/sales-marketing/PHASE_03_PRICING.md` (precedence, tiers, rule order, 
 - Quotation lines: `priceSource` PRICE_LIST / MANUAL / OVERRIDE + snapshot. `buildDraft` takes the customerId and prices lines (`applyPricing`); input `priceMode` AUTO|MANUAL (omitted = MANUAL, backward compatible). Override needs `sales_quotations.override` + reason; below-list override adds an approval reason. `revalidateDraft` refuses submit/issue when an auto price changed since the draft was saved.
 - Permission module `sales_pricing` (MANAGEMENT view/approve/reject/export; MERCHANDISER view/create/edit/export). `salesMarketingRoute` now also accepts an array of permissions (any one).
 - Migration `20261029120000_sales_pricing_phase3` (+ down script, run before S4's).
+
+## Sales & Marketing — Release 1 / S6 Dashboard KPIs and reports (2026-11-02)
+Doc: `docs/sales-marketing/S6_DASHBOARD_REPORTS.md`. Release 1 (Quote-to-Order) complete.
+- KPIs: `sales-marketing-metrics.service.ts` via `GET /api/v1/sales-marketing/metrics?days=30|90|365`, always in the viewer's own record scope (exported `scopedWhere` from the enquiry and quotation services). Definitions are in the service header and on the dashboard.
+- Report Center: category `sales-marketing` (`src/modules/reports/sales-marketing.reports.ts` + page-meta). `ReportConfig.buildDescriptor` now gets a 4th `viewer` argument (`{ userId }`) from both report routes — use it whenever a report's records have per-user visibility.

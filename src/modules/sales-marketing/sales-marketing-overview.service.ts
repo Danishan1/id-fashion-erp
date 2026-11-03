@@ -5,10 +5,9 @@ import { branchScopeWhere } from "@/lib/branch-access";
 import { SALES_MARKETING_SECTIONS, type SalesMarketingSection } from "./sales-marketing-sections";
 
 /**
- * Sales & Marketing dashboard data (Phase 01).
- *
- * Phase 01 has no Sales & Marketing records of its own yet, so it returns no
- * sales or marketing KPIs at all — never placeholder numbers. It returns:
+ * Sales & Marketing dashboard data (Phase 01; KPIs added in S6 — see
+ * sales-marketing-metrics.service.ts, served by /api/v1/sales-marketing/metrics).
+ * This part returns:
  *  - the module map (which sections exist and which phase builds the rest);
  *  - real counts from existing ERP modules this module will build on, each
  *    only when the viewer can view that module, using the same rules as that
@@ -50,7 +49,7 @@ export async function getSalesMarketingOverview(actor: SalesMarketingActor): Pro
         .then((active) => ({
           key: "customers" as const,
           label: "Customers",
-          description: "The ERP customer master. Quotations and campaigns will use it, never a copy.",
+          description: "The ERP customer master. Enquiries, quotations and price lists use it, never a copy.",
           href: "/masters/customers",
           metrics: [{ label: "Active customers", value: active }],
         }))
@@ -64,7 +63,7 @@ export async function getSalesMarketingOverview(actor: SalesMarketingActor): Pro
         .then((open) => ({
           key: "buyerEnquiries" as const,
           label: "Buyer Enquiries",
-          description: "Existing merchandising enquiries. Phase 02 decides how Sales Enquiries relate to them.",
+          description: "Sales Enquiries are these same records, worked from Sales & Marketing → Enquiries; Merchandising turns their lines into samples.",
           href: "/buyer-enquiries",
           metrics: [{ label: "Open enquiries", value: open }],
         }))
@@ -83,7 +82,7 @@ export async function getSalesMarketingOverview(actor: SalesMarketingActor): Pro
         return {
           key: "salesOrders" as const,
           label: "Sales Orders",
-          description: "The existing order module. Accepted quotations will become Sales Orders here (Phase 04).",
+          description: "The existing order module. Accepted quotations are converted into Sales Orders here.",
           href: "/sales-orders",
           metrics: [
             { label: "Draft", value: draft },

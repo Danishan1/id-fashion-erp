@@ -33,6 +33,8 @@ export const REPORT_CATEGORY_MODULES = {
   attendance: ["hrms_attendance_records"],
   payroll: ["hrms_attendance_salary"],
   audit: ["administration_settings"],
+  // Sales & Marketing (S6): enquiry and quotation reports, each in the viewer's own record scope.
+  "sales-marketing": ["sales_marketing", "sales_quotations"],
   dashboard: [],
   mis: [],
   "business-performance": ["financial_reports"],
