@@ -121,6 +121,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Discount Rules", href: "/sales-marketing/pricing/discounts", modules: ["sales_pricing"] },
       { label: "Pricing Preview", href: "/sales-marketing/pricing/preview", modules: ["sales_pricing"] },
       { label: "Team Performance", href: "/sales-marketing/performance", modules: ["sales_performance"] },
+      { label: "Forecast", href: "/sales-marketing/forecast", modules: ["sales_performance"] },
       { label: "Sales Targets", href: "/sales-marketing/targets", modules: ["sales_performance"] },
       { label: "Territories", href: "/sales-marketing/territories", modules: ["sales_performance"] },
       { label: "Settings", href: "/sales-marketing/settings", modules: ["sales_marketing_settings"] },

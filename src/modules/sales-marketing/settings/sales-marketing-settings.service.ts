@@ -15,6 +15,14 @@ export const SALES_MARKETING_SETTING_DEFAULTS = {
   quotationDefaultTerms: null as string | null,
   /** Phase 03: cap on the total rule discount per line, % of list price (null = no cap). */
   pricingMaxRuleDiscountPercent: null as number | null,
+  /** Phase 06 forecast: default probabilities (%) for open quotations — defaults, not measured. */
+  forecastProbabilityApproved: 30,
+  forecastProbabilityIssued: 50,
+  forecastProbabilityAccepted: 90,
+  /** Complete periods averaged by the trend method. */
+  forecastTrendLookback: 3,
+  /** Opportunities not updated for this many days are flagged as stale. */
+  forecastStaleDays: 60,
 };
 
 export type SalesMarketingSettingsView = typeof SALES_MARKETING_SETTING_DEFAULTS & { updatedAt: Date | null };
@@ -28,6 +36,11 @@ export async function getSalesMarketingSettings(companyId: string): Promise<Sale
     quotationDefaultValidityDays: row.quotationDefaultValidityDays,
     quotationDefaultTerms: row.quotationDefaultTerms,
     pricingMaxRuleDiscountPercent: row.pricingMaxRuleDiscountPercent === null ? null : Number(row.pricingMaxRuleDiscountPercent),
+    forecastProbabilityApproved: row.forecastProbabilityApproved,
+    forecastProbabilityIssued: row.forecastProbabilityIssued,
+    forecastProbabilityAccepted: row.forecastProbabilityAccepted,
+    forecastTrendLookback: row.forecastTrendLookback,
+    forecastStaleDays: row.forecastStaleDays,
     updatedAt: row.updatedAt,
   };
 }
@@ -40,6 +53,12 @@ export const salesMarketingSettingsSchema = z
     quotationDefaultTerms: z.string().trim().max(10000).optional().or(z.literal("")).nullable(),
     // Omitted = keep the current value; "" / null = no cap.
     pricingMaxRuleDiscountPercent: z.union([z.literal(""), z.null(), z.coerce.number().min(0).max(100)]).optional(),
+    // Phase 06 forecast settings — omitted = keep the current value.
+    forecastProbabilityApproved: z.coerce.number().int().min(0).max(100).optional(),
+    forecastProbabilityIssued: z.coerce.number().int().min(0).max(100).optional(),
+    forecastProbabilityAccepted: z.coerce.number().int().min(0).max(100).optional(),
+    forecastTrendLookback: z.coerce.number().int().min(1).max(24).optional(),
+    forecastStaleDays: z.coerce.number().int().min(1).max(3650).optional(),
   })
   .strict();
 

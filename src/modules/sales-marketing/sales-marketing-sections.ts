@@ -39,7 +39,7 @@ export const SALES_MARKETING_SECTIONS: readonly SalesMarketingSection[] = [
   { key: "targets", label: "Sales Targets", area: "SALES", phase: 5, status: "AVAILABLE", href: "/sales-marketing/targets", description: "Approved targets per rep, team, territory and period, with live attainment." },
   { key: "territories", label: "Sales Territories", area: "SALES", phase: 5, status: "AVAILABLE", href: "/sales-marketing/territories", description: "Regions, rep assignments and customer assignment." },
   { key: "team-performance", label: "Sales Team Performance", area: "SALES", phase: 5, status: "AVAILABLE", href: "/sales-marketing/performance", description: "Rep, team and territory results against targets, with drill-down." },
-  { key: "forecasting", label: "Sales Forecasting", area: "SALES", phase: 6, status: "PLANNED", description: "Forecast from pipeline, quotations and history." },
+  { key: "forecasting", label: "Sales Forecasting", area: "SALES", phase: 6, status: "AVAILABLE", href: "/sales-marketing/forecast", description: "Booked + weighted pipeline and trend vs target, snapshots with accuracy, what-if scenarios." },
   { key: "channels", label: "Sales Channels", area: "SALES", phase: 7, status: "PLANNED", description: "Export, domestic, retail and online channels." },
   { key: "commissions", label: "Commissions & Incentives", area: "SALES", phase: 7, status: "PLANNED", description: "Commission rules for sales agents and staff." },
   { key: "campaigns", label: "Campaigns & Calendar", area: "MARKETING", phase: 8, status: "PLANNED", description: "Plan, run and schedule marketing campaigns." },

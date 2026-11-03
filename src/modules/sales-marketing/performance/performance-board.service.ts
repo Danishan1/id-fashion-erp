@@ -49,7 +49,7 @@ async function approvedTargets(companyId: string, metric: SalesTargetMetricKey, 
 }
 
 /** Each user with people below them in the CRM tree → that team's login user ids (manager included). */
-async function teamsByManager(companyId: string) {
+export async function teamsByManager(companyId: string) {
   const [managers, users] = await Promise.all([
     loadManagerMap(companyId, "CRM"),
     prisma.user.findMany({ where: { companyId, employeeId: { not: null } }, select: { id: true, employeeId: true, fullName: true, status: true } }),

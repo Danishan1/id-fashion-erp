@@ -12,6 +12,11 @@ interface Settings {
   quotationDefaultValidityDays: number;
   quotationDefaultTerms: string | null;
   pricingMaxRuleDiscountPercent?: number | null;
+  forecastProbabilityApproved?: number;
+  forecastProbabilityIssued?: number;
+  forecastProbabilityAccepted?: number;
+  forecastTrendLookback?: number;
+  forecastStaleDays?: number;
   updatedAt: string | null;
 }
 
@@ -22,6 +27,11 @@ export function SalesMarketingSettingsForm({ initial, canEdit }: { initial: Sett
     quotationDefaultValidityDays: String(initial.quotationDefaultValidityDays),
     quotationDefaultTerms: initial.quotationDefaultTerms ?? "",
     pricingMaxRuleDiscountPercent: initial.pricingMaxRuleDiscountPercent === null || initial.pricingMaxRuleDiscountPercent === undefined ? "" : String(initial.pricingMaxRuleDiscountPercent),
+    forecastProbabilityApproved: String(initial.forecastProbabilityApproved ?? 30),
+    forecastProbabilityIssued: String(initial.forecastProbabilityIssued ?? 50),
+    forecastProbabilityAccepted: String(initial.forecastProbabilityAccepted ?? 90),
+    forecastTrendLookback: String(initial.forecastTrendLookback ?? 3),
+    forecastStaleDays: String(initial.forecastStaleDays ?? 60),
   });
   const [updatedAt, setUpdatedAt] = useState(initial.updatedAt);
   const [saving, setSaving] = useState(false);
@@ -64,6 +74,30 @@ export function SalesMarketingSettingsForm({ initial, canEdit }: { initial: Sett
       <FormField label="Max automatic (discount-rule) discount per line, % of list price — blank = no cap" htmlFor="ruleCap">
         <input id="ruleCap" type="number" min={0} max={100} step="0.01" disabled={!canEdit} value={v.pricingMaxRuleDiscountPercent} onChange={(e) => setV({ ...v, pricingMaxRuleDiscountPercent: e.target.value })} className={`${textInputClass()} max-w-[10rem]`} />
       </FormField>
+      <h2 className="pt-2 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Forecast</h2>
+      <p className="text-sm text-zinc-600 dark:text-zinc-300">
+        Chance (%) that an open quotation becomes an order, used when it has no linked CRM opportunity with its own probability. These are defaults you choose, not measured rates —
+        the forecast page says so.
+      </p>
+      <div className="grid gap-4 sm:grid-cols-3">
+        {(
+          [
+            ["forecastProbabilityApproved", "Approved, not issued (%)"],
+            ["forecastProbabilityIssued", "Issued, awaiting decision (%)"],
+            ["forecastProbabilityAccepted", "Accepted, not yet ordered (%)"],
+          ] as const
+        ).map(([key, label]) => (
+          <FormField key={key} label={label} htmlFor={key} required>
+            <input id={key} type="number" min={0} max={100} step={1} required disabled={!canEdit} value={v[key]} onChange={(e) => setV({ ...v, [key]: e.target.value })} className={textInputClass()} />
+          </FormField>
+        ))}
+        <FormField label="Trend: periods averaged" htmlFor="trendLookback" required>
+          <input id="trendLookback" type="number" min={1} max={24} step={1} required disabled={!canEdit} value={v.forecastTrendLookback} onChange={(e) => setV({ ...v, forecastTrendLookback: e.target.value })} className={textInputClass()} />
+        </FormField>
+        <FormField label="Flag opportunities not updated for (days)" htmlFor="staleDays" required>
+          <input id="staleDays" type="number" min={1} max={3650} step={1} required disabled={!canEdit} value={v.forecastStaleDays} onChange={(e) => setV({ ...v, forecastStaleDays: e.target.value })} className={textInputClass()} />
+        </FormField>
+      </div>
       {message && <p className={`text-sm ${message.ok ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>{message.text}</p>}
       <div className="flex items-center gap-3">
         {canEdit && (
