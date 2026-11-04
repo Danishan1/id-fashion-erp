@@ -50,6 +50,7 @@ const MODULE_LABELS: Record<string, string> = {
   sales_marketing_settings: "Sales & Marketing Settings",
   sales_pricing: "Sales Pricing (price lists & discounts)",
   sales_performance: "Sales Performance (targets & territories)",
+  sales_commissions: "Sales Commissions & Incentives",
   payment_requests: "Payment Requests",
   payment_request_settings: "Payment Approval Matrix",
 };

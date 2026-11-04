@@ -14,13 +14,13 @@ import { BOOKED_ORDER_STATUSES, INVOICED_STATUSES, metricDefinition, type SalesT
  * Invoices); nothing is copied or cached.
  */
 
-export type Grouping = "REP" | "TERRITORY" | "TOTAL";
+export type Grouping = "REP" | "TERRITORY" | "CHANNEL" | "TOTAL";
 export interface MetricTotal {
   value: number;
   /** Number of source documents behind the value. */
   documents: number;
 }
-/** Key = rep user id / territory id / "TOTAL"; "" = no rep / no territory. */
+/** Key = rep user id / territory id / channel id (Phase 07) / "TOTAL"; "" = none. */
 export type MetricTotals = Map<string, MetricTotal>;
 
 const bookedOrderSql = (alias: string) =>
@@ -46,7 +46,13 @@ export async function metricTotals(companyId: string, metric: SalesTargetMetricK
 
   if (source === "SALES_ORDER") {
     const key =
-      grouping === "REP" ? Prisma.sql`so.sales_rep_user_id::text` : grouping === "TERRITORY" ? Prisma.sql`so.sales_territory_id::text` : Prisma.sql`'TOTAL'`;
+      grouping === "REP"
+        ? Prisma.sql`so.sales_rep_user_id::text`
+        : grouping === "TERRITORY"
+          ? Prisma.sql`so.sales_territory_id::text`
+          : grouping === "CHANNEL"
+            ? Prisma.sql`so.sales_channel_id::text`
+            : Prisma.sql`'TOTAL'`;
     const value =
       metric === "BOOKED_ORDER_VALUE"
         ? Prisma.sql`SUM(so.base_total_amount)`
@@ -66,7 +72,9 @@ export async function metricTotals(companyId: string, metric: SalesTargetMetricK
         ? Prisma.sql`COALESCE(q.owner_user_id, q.created_by_user_id)::text`
         : grouping === "TERRITORY"
           ? Prisma.sql`c.sales_territory_id::text`
-          : Prisma.sql`'TOTAL'`;
+          : grouping === "CHANNEL"
+            ? Prisma.sql`q.sales_channel_id::text`
+            : Prisma.sql`'TOTAL'`;
     const value = metric === "ACCEPTED_QUOTATION_VALUE" ? Prisma.sql`SUM(qr.taxable_total)` : Prisma.sql`COUNT(*)`;
     const range = decisionRange(from, to);
     rows = await prisma.$queryRaw`
@@ -80,7 +88,13 @@ export async function metricTotals(companyId: string, metric: SalesTargetMetricK
       GROUP BY 1`;
   } else {
     const key =
-      grouping === "REP" ? Prisma.sql`so.sales_rep_user_id::text` : grouping === "TERRITORY" ? Prisma.sql`so.sales_territory_id::text` : Prisma.sql`'TOTAL'`;
+      grouping === "REP"
+        ? Prisma.sql`so.sales_rep_user_id::text`
+        : grouping === "TERRITORY"
+          ? Prisma.sql`so.sales_territory_id::text`
+          : grouping === "CHANNEL"
+            ? Prisma.sql`so.sales_channel_id::text`
+            : Prisma.sql`'TOTAL'`;
     rows = await prisma.$queryRaw`
       SELECT ${key} AS key, SUM(ROUND(si.subtotal_amount * si.exchange_rate, 2)) AS value, COUNT(*) AS documents
       FROM sales_invoices si

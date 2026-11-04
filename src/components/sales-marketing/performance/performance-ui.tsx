@@ -123,6 +123,11 @@ function eventDetail(e: PerformanceEvent): string | null {
   if (e.type === "CUSTOMER_ASSIGNED") return String(m.customer ?? "");
   if (e.type === "CUSTOMER_MOVED") return `${m.customer}${m.from ? ` (from ${m.from})` : ""}`;
   if (e.type === "CUSTOMER_REMOVED") return `${m.customer}${m.movedTo ? ` (moved to ${m.movedTo})` : ""}`;
+  if (e.type === "CHANNEL_CHANGED") {
+    const b = (m.before ?? {}) as Record<string, string | null>;
+    const a = (m.after ?? {}) as Record<string, string | null>;
+    return `${b.channel ?? "no channel"} / ${b.agent ?? "no agent"} → ${a.channel ?? "no channel"} / ${a.agent ?? "no agent"}`;
+  }
   if (e.type === "SALES_CREDIT_CHANGED") {
     const b = (m.before ?? {}) as Record<string, string | null>;
     const a = (m.after ?? {}) as Record<string, string | null>;

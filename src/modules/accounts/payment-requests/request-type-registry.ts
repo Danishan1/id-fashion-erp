@@ -29,6 +29,7 @@ export const PAYMENT_REQUEST_TYPES = [
   "BANK_TRANSFER",
   "CREDIT_CARD",
   "SALARY_ADVANCE",
+  "SALES_COMMISSION",
 ] as const;
 export type PaymentRequestTypeKey = (typeof PAYMENT_REQUEST_TYPES)[number];
 
@@ -197,6 +198,19 @@ export const PAYMENT_REQUEST_TYPE_DEFS: Record<PaymentRequestTypeKey, PaymentReq
     available: true,
     skill: "hrms-salary-advance",
     raisedFrom: { label: "Raised from HRMS → Advance Salary", href: "/salary/advances" },
+  },
+  SALES_COMMISSION: {
+    type: "SALES_COMMISSION",
+    group: "EXPENDITURE",
+    label: "Sales Commission",
+    description: "An approved monthly commission statement for a sales rep or sales agent (Sales & Marketing Phase 07).",
+    payTo: "TEXT",
+    payToLabel: "Rep / sales agent",
+    routing: "APPROVAL_THEN_PAY",
+    showModeOfTransfer: true,
+    available: true,
+    skill: "sales-marketing-commissions",
+    raisedFrom: { label: "Raised from Sales & Marketing → Commission Statements", href: "/sales-marketing/commissions" },
   },
   IMPREST: {
     type: "IMPREST",

@@ -27,3 +27,4 @@ import "./page-meta/business-performance.page-meta";
 import "./page-meta/sales-marketing.page-meta";
 import "./page-meta/sales-performance.page-meta";
 import "./page-meta/sales-forecast.page-meta";
+import "./page-meta/sales-commissions.page-meta";

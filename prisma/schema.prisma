@@ -293,6 +293,11 @@ model Company {
   salesPerformanceEvents      SalesPerformanceEvent[]
   salesForecastSnapshots      SalesForecastSnapshot[]
   salesForecastScenarios      SalesForecastScenario[]
+  salesChannels               SalesChannel[]
+  salesCommissionPlans        SalesCommissionPlan[]
+  salesCommissionAssignments  SalesCommissionAssignment[]
+  salesCommissionStatements   SalesCommissionStatement[]
+  salesIncentivePlans         SalesIncentivePlan[]
 
   @@map("companies")
 }
@@ -1102,41 +1107,59 @@ model User {
   customerReturnsReceived                    CustomerReturn[]                     @relation("CustomerReturnReceivedBy")
   customerReturnItemsInspected               CustomerReturnItem[]                 @relation("CustomerReturnItemInspectedBy")
 
-  productionHandbacks                ProductionHandback[]         @relation("ProductionHandbackBy")
-  permissionOverrides                UserPermissionOverride[]     @relation("UserPermissionOverrideUser")
-  permissionOverridesCreated         UserPermissionOverride[]     @relation("UserPermissionOverrideCreatedBy")
-  productionOrderColorFabricsUpdated ProductionOrderColorFabric[] @relation("ProductionOrderColorFabricUpdatedBy")
-  paymentRequestPayoutsCreated       PaymentRequestPayout[]       @relation("PaymentRequestPayoutCreatedBy")
-  quotationsOwned                    Quotation[]                  @relation("QuotationOwner")
-  quotationsCreated                  Quotation[]                  @relation("QuotationCreatedBy")
-  quotationRevisionsCreated          QuotationRevision[]          @relation("QuotationRevisionCreatedBy")
-  quotationEvents                    QuotationEvent[]             @relation("QuotationEventCreatedBy")
-  priceListsCreated                  PriceList[]                  @relation("PriceListCreatedBy")
-  priceListVersionsCreated           PriceListVersion[]           @relation("PriceListVersionCreatedBy")
-  priceListVersionsUpdated           PriceListVersion[]           @relation("PriceListVersionUpdatedBy")
-  priceListVersionsSubmitted         PriceListVersion[]           @relation("PriceListVersionSubmittedBy")
-  priceListVersionsApproved          PriceListVersion[]           @relation("PriceListVersionApprovedBy")
-  salesTerritoriesCreated            SalesTerritory[]             @relation("SalesTerritoryCreatedBy")
-  salesTerritoryAssignments          SalesTerritoryAssignment[]   @relation("SalesTerritoryAssignmentUser")
-  salesTerritoryAssignmentsCreated   SalesTerritoryAssignment[]   @relation("SalesTerritoryAssignmentCreatedBy")
-  salesTargets                       SalesTarget[]                @relation("SalesTargetUser")
-  salesTargetsArchived               SalesTarget[]                @relation("SalesTargetArchivedBy")
-  salesTargetsCreated                SalesTarget[]                @relation("SalesTargetCreatedBy")
-  salesTargetRevisionsCreated        SalesTargetRevision[]        @relation("SalesTargetRevisionCreatedBy")
-  salesTargetRevisionsUpdated        SalesTargetRevision[]        @relation("SalesTargetRevisionUpdatedBy")
-  salesTargetRevisionsSubmitted      SalesTargetRevision[]        @relation("SalesTargetRevisionSubmittedBy")
-  salesTargetRevisionsApproved       SalesTargetRevision[]        @relation("SalesTargetRevisionApprovedBy")
-  salesPerformanceEvents             SalesPerformanceEvent[]      @relation("SalesPerformanceEventCreatedBy")
-  salesForecastSnapshots             SalesForecastSnapshot[]      @relation("SalesForecastSnapshotCreatedBy")
-  salesForecastScenariosCreated      SalesForecastScenario[]      @relation("SalesForecastScenarioCreatedBy")
-  salesForecastScenariosUpdated      SalesForecastScenario[]      @relation("SalesForecastScenarioUpdatedBy")
-  salesOrdersCredited                SalesOrder[]                 @relation("SalesOrderSalesRep")
-  salesOrderCreditsChanged           SalesOrder[]                 @relation("SalesOrderCreditChangedBy")
-  discountRulesCreated               DiscountRule[]               @relation("DiscountRuleCreatedBy")
-  discountRulesUpdated               DiscountRule[]               @relation("DiscountRuleUpdatedBy")
-  discountRulesSubmitted             DiscountRule[]               @relation("DiscountRuleSubmittedBy")
-  discountRulesApproved              DiscountRule[]               @relation("DiscountRuleApprovedBy")
-  pricingEvents                      PricingEvent[]               @relation("PricingEventCreatedBy")
+  productionHandbacks                 ProductionHandback[]         @relation("ProductionHandbackBy")
+  permissionOverrides                 UserPermissionOverride[]     @relation("UserPermissionOverrideUser")
+  permissionOverridesCreated          UserPermissionOverride[]     @relation("UserPermissionOverrideCreatedBy")
+  productionOrderColorFabricsUpdated  ProductionOrderColorFabric[] @relation("ProductionOrderColorFabricUpdatedBy")
+  paymentRequestPayoutsCreated        PaymentRequestPayout[]       @relation("PaymentRequestPayoutCreatedBy")
+  quotationsOwned                     Quotation[]                  @relation("QuotationOwner")
+  quotationsCreated                   Quotation[]                  @relation("QuotationCreatedBy")
+  quotationRevisionsCreated           QuotationRevision[]          @relation("QuotationRevisionCreatedBy")
+  quotationEvents                     QuotationEvent[]             @relation("QuotationEventCreatedBy")
+  priceListsCreated                   PriceList[]                  @relation("PriceListCreatedBy")
+  priceListVersionsCreated            PriceListVersion[]           @relation("PriceListVersionCreatedBy")
+  priceListVersionsUpdated            PriceListVersion[]           @relation("PriceListVersionUpdatedBy")
+  priceListVersionsSubmitted          PriceListVersion[]           @relation("PriceListVersionSubmittedBy")
+  priceListVersionsApproved           PriceListVersion[]           @relation("PriceListVersionApprovedBy")
+  salesTerritoriesCreated             SalesTerritory[]             @relation("SalesTerritoryCreatedBy")
+  salesTerritoryAssignments           SalesTerritoryAssignment[]   @relation("SalesTerritoryAssignmentUser")
+  salesTerritoryAssignmentsCreated    SalesTerritoryAssignment[]   @relation("SalesTerritoryAssignmentCreatedBy")
+  salesTargets                        SalesTarget[]                @relation("SalesTargetUser")
+  salesTargetsArchived                SalesTarget[]                @relation("SalesTargetArchivedBy")
+  salesTargetsCreated                 SalesTarget[]                @relation("SalesTargetCreatedBy")
+  salesTargetRevisionsCreated         SalesTargetRevision[]        @relation("SalesTargetRevisionCreatedBy")
+  salesTargetRevisionsUpdated         SalesTargetRevision[]        @relation("SalesTargetRevisionUpdatedBy")
+  salesTargetRevisionsSubmitted       SalesTargetRevision[]        @relation("SalesTargetRevisionSubmittedBy")
+  salesTargetRevisionsApproved        SalesTargetRevision[]        @relation("SalesTargetRevisionApprovedBy")
+  salesPerformanceEvents              SalesPerformanceEvent[]      @relation("SalesPerformanceEventCreatedBy")
+  salesForecastSnapshots              SalesForecastSnapshot[]      @relation("SalesForecastSnapshotCreatedBy")
+  salesForecastScenariosCreated       SalesForecastScenario[]      @relation("SalesForecastScenarioCreatedBy")
+  salesForecastScenariosUpdated       SalesForecastScenario[]      @relation("SalesForecastScenarioUpdatedBy")
+  salesChannelsManaged                SalesChannel[]               @relation("SalesChannelManager")
+  salesChannelsCreated                SalesChannel[]               @relation("SalesChannelCreatedBy")
+  salesCommissionPlansCreated         SalesCommissionPlan[]        @relation("SalesCommissionPlanCreatedBy")
+  salesCommissionVersionsCreated      SalesCommissionPlanVersion[] @relation("SalesCommissionVersionCreatedBy")
+  salesCommissionVersionsUpdated      SalesCommissionPlanVersion[] @relation("SalesCommissionVersionUpdatedBy")
+  salesCommissionVersionsSubmitted    SalesCommissionPlanVersion[] @relation("SalesCommissionVersionSubmittedBy")
+  salesCommissionVersionsApproved     SalesCommissionPlanVersion[] @relation("SalesCommissionVersionApprovedBy")
+  salesCommissionAssignments          SalesCommissionAssignment[]  @relation("SalesCommissionAssignmentUser")
+  salesCommissionAssignmentsCreated   SalesCommissionAssignment[]  @relation("SalesCommissionAssignmentCreatedBy")
+  salesCommissionStatements           SalesCommissionStatement[]   @relation("SalesCommissionStatementUser")
+  salesCommissionStatementsCalculated SalesCommissionStatement[]   @relation("SalesCommissionStatementCalculatedBy")
+  salesCommissionStatementsSubmitted  SalesCommissionStatement[]   @relation("SalesCommissionStatementSubmittedBy")
+  salesCommissionStatementsApproved   SalesCommissionStatement[]   @relation("SalesCommissionStatementApprovedBy")
+  salesCommissionLinesCreated         SalesCommissionLine[]        @relation("SalesCommissionLineCreatedBy")
+  salesIncentivePlansCreated          SalesIncentivePlan[]         @relation("SalesIncentivePlanCreatedBy")
+  salesIncentivePlansUpdated          SalesIncentivePlan[]         @relation("SalesIncentivePlanUpdatedBy")
+  salesIncentivePlansSubmitted        SalesIncentivePlan[]         @relation("SalesIncentivePlanSubmittedBy")
+  salesIncentivePlansApproved         SalesIncentivePlan[]         @relation("SalesIncentivePlanApprovedBy")
+  salesOrdersCredited                 SalesOrder[]                 @relation("SalesOrderSalesRep")
+  salesOrderCreditsChanged            SalesOrder[]                 @relation("SalesOrderCreditChangedBy")
+  discountRulesCreated                DiscountRule[]               @relation("DiscountRuleCreatedBy")
+  discountRulesUpdated                DiscountRule[]               @relation("DiscountRuleUpdatedBy")
+  discountRulesSubmitted              DiscountRule[]               @relation("DiscountRuleSubmittedBy")
+  discountRulesApproved               DiscountRule[]               @relation("DiscountRuleApprovedBy")
+  pricingEvents                       PricingEvent[]               @relation("PricingEventCreatedBy")
 
   @@unique([companyId, supportForPlatformUserId])
   @@map("users")
@@ -2452,7 +2475,12 @@ model SalesAgent {
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @updatedAt @map("updated_at")
 
-  company Company @relation(fields: [companyId], references: [id])
+  company               Company                     @relation(fields: [companyId], references: [id])
+  buyerEnquiries        BuyerEnquiry[]
+  quotations            Quotation[]
+  salesOrders           SalesOrder[]
+  commissionAssignments SalesCommissionAssignment[]
+  commissionStatements  SalesCommissionStatement[]
 
   @@unique([companyId, code])
   @@map("sales_agents")
@@ -3308,7 +3336,12 @@ model BuyerEnquiry {
   requestedByUserId     String             @map("requested_by_user_id") @db.Uuid
   createdAt             DateTime           @default(now()) @map("created_at")
   updatedAt             DateTime           @updatedAt @map("updated_at")
+  // Sales & Marketing Phase 07: channel and external sales agent.
+  salesChannelId        String?            @map("sales_channel_id") @db.Uuid
+  salesAgentId          String?            @map("sales_agent_id") @db.Uuid
 
+  salesChannel         SalesChannel?        @relation(fields: [salesChannelId], references: [id])
+  salesAgent           SalesAgent?          @relation(fields: [salesAgentId], references: [id])
   // ── Sales & Marketing (Release 1 / S1, 2026-10-28) ──────────────
   // The Sales Enquiry IS this record (decision D1: no second enquiry table).
   // `status` above stays Merchandising's sampling progress, derived from the
@@ -4364,17 +4397,23 @@ model SalesOrder {
   salesCreditReason         String?            @map("sales_credit_reason")
   createdAt                 DateTime           @default(now()) @map("created_at")
   updatedAt                 DateTime           @updatedAt @map("updated_at")
+  // Sales & Marketing Phase 07: channel and external sales agent.
+  salesChannelId            String?            @map("sales_channel_id") @db.Uuid
+  salesAgentId              String?            @map("sales_agent_id") @db.Uuid
 
-  company                 Company            @relation(fields: [companyId], references: [id])
-  branch                  Branch?            @relation(fields: [branchId], references: [id])
-  customer                Customer           @relation(fields: [customerId], references: [id])
-  buyer                   Buyer?             @relation(fields: [buyerId], references: [id])
-  requestedBy             User               @relation("SalesOrderRequestedBy", fields: [requestedByUserId], references: [id])
-  originatingOpportunity  CrmOpportunity?    @relation(fields: [originatingOpportunityId], references: [id])
-  sourceQuotationRevision QuotationRevision? @relation(fields: [sourceQuotationRevisionId], references: [id])
-  salesRep                User?              @relation("SalesOrderSalesRep", fields: [salesRepUserId], references: [id])
-  salesTerritory          SalesTerritory?    @relation(fields: [salesTerritoryId], references: [id])
-  salesCreditChangedBy    User?              @relation("SalesOrderCreditChangedBy", fields: [salesCreditChangedById], references: [id])
+  salesChannel            SalesChannel?         @relation(fields: [salesChannelId], references: [id])
+  salesAgent              SalesAgent?           @relation(fields: [salesAgentId], references: [id])
+  company                 Company               @relation(fields: [companyId], references: [id])
+  branch                  Branch?               @relation(fields: [branchId], references: [id])
+  customer                Customer              @relation(fields: [customerId], references: [id])
+  buyer                   Buyer?                @relation(fields: [buyerId], references: [id])
+  requestedBy             User                  @relation("SalesOrderRequestedBy", fields: [requestedByUserId], references: [id])
+  originatingOpportunity  CrmOpportunity?       @relation(fields: [originatingOpportunityId], references: [id])
+  sourceQuotationRevision QuotationRevision?    @relation(fields: [sourceQuotationRevisionId], references: [id])
+  salesRep                User?                 @relation("SalesOrderSalesRep", fields: [salesRepUserId], references: [id])
+  salesTerritory          SalesTerritory?       @relation(fields: [salesTerritoryId], references: [id])
+  commissionLines         SalesCommissionLine[]
+  salesCreditChangedBy    User?                 @relation("SalesOrderCreditChangedBy", fields: [salesCreditChangedById], references: [id])
   items                   SalesOrderItem[]
   salesOrderLines         SalesOrderLine[]
   materialRequests        MaterialRequest[]
@@ -4389,6 +4428,7 @@ model SalesOrder {
   aiGarmentProject        AiGarmentProject?
 
   @@unique([companyId, orderNumber])
+  @@index([companyId, salesChannelId])
   @@index([companyId, salesRepUserId, orderDate])
   @@index([companyId, salesTerritoryId, orderDate])
   @@map("sales_orders")
@@ -7368,15 +7408,16 @@ model SalesInvoice {
   createdAt        DateTime           @default(now()) @map("created_at")
   updatedAt        DateTime           @updatedAt @map("updated_at")
 
-  company     Company             @relation(fields: [companyId], references: [id])
-  branch      Branch?             @relation(fields: [branchId], references: [id])
-  salesOrder  SalesOrder          @relation(fields: [salesOrderId], references: [id])
-  customer    Customer            @relation(fields: [customerId], references: [id])
-  journal     Journal?            @relation(fields: [journalId], references: [id])
-  postedBy    User?               @relation("SalesInvoicePostedBy", fields: [postedByUserId], references: [id])
-  createdBy   User                @relation("SalesInvoiceCreatedBy", fields: [createdByUserId], references: [id])
-  items       SalesInvoiceItem[]
-  allocations PaymentAllocation[]
+  company         Company               @relation(fields: [companyId], references: [id])
+  branch          Branch?               @relation(fields: [branchId], references: [id])
+  salesOrder      SalesOrder            @relation(fields: [salesOrderId], references: [id])
+  customer        Customer              @relation(fields: [customerId], references: [id])
+  journal         Journal?              @relation(fields: [journalId], references: [id])
+  postedBy        User?                 @relation("SalesInvoicePostedBy", fields: [postedByUserId], references: [id])
+  createdBy       User                  @relation("SalesInvoiceCreatedBy", fields: [createdByUserId], references: [id])
+  items           SalesInvoiceItem[]
+  allocations     PaymentAllocation[]
+  commissionLines SalesCommissionLine[]
 
   @@unique([companyId, branchId, invoiceNumber])
   @@unique([companyId, idempotencyKey])
@@ -8163,6 +8204,8 @@ enum PaymentRequestType {
   CREDIT_CARD
   /// Salary Management slice 5: raised only from HRMS → Advance Salary.
   SALARY_ADVANCE
+  /// Sales & Marketing Phase 07: raised only by approving a commission statement.
+  SALES_COMMISSION
 }
 
 enum PaymentRequestStatus {
@@ -8274,7 +8317,8 @@ model PaymentRequest {
   payee        Payee?                      @relation(fields: [payeeId], references: [id])
   invoiceLines PaymentRequestInvoiceLine[]
 
-  salaryAdvance SalaryAdvance?
+  salaryAdvance       SalaryAdvance?
+  commissionStatement SalesCommissionStatement?
 
   @@unique([companyId, requestNumber])
   @@unique([companyId, idempotencyKey])
@@ -14731,7 +14775,12 @@ model Quotation {
   createdByUserId       String          @map("created_by_user_id") @db.Uuid
   createdAt             DateTime        @default(now()) @map("created_at")
   updatedAt             DateTime        @updatedAt @map("updated_at")
+  // Sales & Marketing Phase 07: channel and external sales agent.
+  salesChannelId        String?         @map("sales_channel_id") @db.Uuid
+  salesAgentId          String?         @map("sales_agent_id") @db.Uuid
 
+  salesChannel SalesChannel?       @relation(fields: [salesChannelId], references: [id])
+  salesAgent   SalesAgent?         @relation(fields: [salesAgentId], references: [id])
   company      Company             @relation(fields: [companyId], references: [id])
   buyerEnquiry BuyerEnquiry?       @relation(fields: [buyerEnquiryId], references: [id])
   customer     Customer?           @relation(fields: [customerId], references: [id])
@@ -15392,4 +15441,294 @@ model SalesForecastScenario {
 
   @@index([companyId, periodStart])
   @@map("sales_forecast_scenarios")
+}
+
+// ── Sales & Marketing Phase 07 (2026-11-03): channels, commissions, incentives.
+// docs/sales-marketing/PHASE_07_COMMISSIONS.md
+
+enum SalesCommissionPayeeType {
+  REP
+  AGENT
+}
+
+enum SalesCommissionBasis {
+  INVOICED
+  COLLECTED
+}
+
+enum SalesCommissionMethod {
+  PERCENT
+  FIXED
+}
+
+enum SalesCommissionTierMode {
+  ALL_UNITS
+  PROGRESSIVE
+}
+
+enum SalesCommissionVersionStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  WITHDRAWN
+}
+
+enum SalesCommissionStatementStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+}
+
+enum SalesCommissionLineKind {
+  EARNING
+  REVERSAL
+  CARRY_FORWARD
+  ADJUSTMENT
+  INCENTIVE
+}
+
+enum SalesIncentivePlanStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  RETIRED
+}
+
+/// Flat sales channel master. Deactivated, never deleted.
+model SalesChannel {
+  id              String   @id @default(uuid()) @db.Uuid
+  companyId       String   @map("company_id") @db.Uuid
+  code            String
+  name            String
+  description     String?
+  isActive        Boolean  @default(true) @map("is_active")
+  managerUserId   String?  @map("manager_user_id") @db.Uuid
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  company        Company        @relation(fields: [companyId], references: [id])
+  manager        User?          @relation("SalesChannelManager", fields: [managerUserId], references: [id])
+  createdBy      User           @relation("SalesChannelCreatedBy", fields: [createdByUserId], references: [id])
+  buyerEnquiries BuyerEnquiry[]
+  quotations     Quotation[]
+  salesOrders    SalesOrder[]
+
+  @@unique([companyId, code])
+  @@map("sales_channels")
+}
+
+/// A commission plan: who it pays (reps or agents) and on what basis.
+/// The rule lives on numbered, approved versions.
+model SalesCommissionPlan {
+  id              String                   @id @default(uuid()) @db.Uuid
+  companyId       String                   @map("company_id") @db.Uuid
+  code            String
+  name            String
+  description     String?
+  payeeType       SalesCommissionPayeeType @map("payee_type")
+  basis           SalesCommissionBasis
+  isActive        Boolean                  @default(true) @map("is_active")
+  createdByUserId String                   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime                 @default(now()) @map("created_at")
+  updatedAt       DateTime                 @updatedAt @map("updated_at")
+
+  company     Company                      @relation(fields: [companyId], references: [id])
+  createdBy   User                         @relation("SalesCommissionPlanCreatedBy", fields: [createdByUserId], references: [id])
+  versions    SalesCommissionPlanVersion[]
+  assignments SalesCommissionAssignment[]
+  lines       SalesCommissionLine[]
+
+  @@unique([companyId, code])
+  @@map("sales_commission_plans")
+}
+
+/// One version of a plan's rule. Draft → Pending approval → Approved; only a
+/// Draft is edited; approved versions are never changed.
+model SalesCommissionPlanVersion {
+  id                String                       @id @default(uuid()) @db.Uuid
+  planId            String                       @map("plan_id") @db.Uuid
+  versionNumber     Int                          @map("version_number")
+  status            SalesCommissionVersionStatus @default(DRAFT)
+  effectiveFrom     DateTime                     @map("effective_from") @db.Date
+  effectiveTo       DateTime?                    @map("effective_to") @db.Date
+  method            SalesCommissionMethod
+  tierMode          SalesCommissionTierMode      @default(ALL_UNITS) @map("tier_mode")
+  // [{ from: number (₹ basis, first = 0), rate: number (%) }]
+  tiers             Json                         @default("[]")
+  fixedAmount       Decimal?                     @map("fixed_amount") @db.Decimal(18, 2)
+  minimumBasis      Decimal?                     @map("minimum_basis") @db.Decimal(18, 2)
+  capAmount         Decimal?                     @map("cap_amount") @db.Decimal(18, 2)
+  notes             String?
+  version           Int                          @default(1)
+  createdByUserId   String                       @map("created_by_user_id") @db.Uuid
+  updatedByUserId   String                       @map("updated_by_user_id") @db.Uuid
+  submittedByUserId String?                      @map("submitted_by_user_id") @db.Uuid
+  submittedAt       DateTime?                    @map("submitted_at")
+  approvedByUserId  String?                      @map("approved_by_user_id") @db.Uuid
+  approvedAt        DateTime?                    @map("approved_at")
+  decisionComment   String?                      @map("decision_comment")
+  createdAt         DateTime                     @default(now()) @map("created_at")
+  updatedAt         DateTime                     @updatedAt @map("updated_at")
+
+  plan        SalesCommissionPlan   @relation(fields: [planId], references: [id], onDelete: Cascade)
+  createdBy   User                  @relation("SalesCommissionVersionCreatedBy", fields: [createdByUserId], references: [id])
+  updatedBy   User                  @relation("SalesCommissionVersionUpdatedBy", fields: [updatedByUserId], references: [id])
+  submittedBy User?                 @relation("SalesCommissionVersionSubmittedBy", fields: [submittedByUserId], references: [id])
+  approvedBy  User?                 @relation("SalesCommissionVersionApprovedBy", fields: [approvedByUserId], references: [id])
+  lines       SalesCommissionLine[]
+
+  @@unique([planId, versionNumber])
+  @@map("sales_commission_plan_versions")
+}
+
+/// Who a plan pays, from / to. One assignment in force per payee per day.
+model SalesCommissionAssignment {
+  id              String                   @id @default(uuid()) @db.Uuid
+  companyId       String                   @map("company_id") @db.Uuid
+  planId          String                   @map("plan_id") @db.Uuid
+  payeeType       SalesCommissionPayeeType @map("payee_type")
+  userId          String?                  @map("user_id") @db.Uuid
+  salesAgentId    String?                  @map("sales_agent_id") @db.Uuid
+  startDate       DateTime                 @map("start_date") @db.Date
+  endDate         DateTime?                @map("end_date") @db.Date
+  createdByUserId String                   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime                 @default(now()) @map("created_at")
+  updatedAt       DateTime                 @updatedAt @map("updated_at")
+
+  company    Company             @relation(fields: [companyId], references: [id])
+  plan       SalesCommissionPlan @relation(fields: [planId], references: [id])
+  user       User?               @relation("SalesCommissionAssignmentUser", fields: [userId], references: [id])
+  salesAgent SalesAgent?         @relation(fields: [salesAgentId], references: [id])
+  createdBy  User                @relation("SalesCommissionAssignmentCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@index([companyId, payeeType, startDate], map: "sales_commission_assignments_company_id_payee_type_start_d_idx")
+  @@index([planId])
+  @@map("sales_commission_assignments")
+}
+
+/// A payee's commission statement for one month.
+model SalesCommissionStatement {
+  id                 String                         @id @default(uuid()) @db.Uuid
+  companyId          String                         @map("company_id") @db.Uuid
+  payeeType          SalesCommissionPayeeType       @map("payee_type")
+  userId             String?                        @map("user_id") @db.Uuid
+  salesAgentId       String?                        @map("sales_agent_id") @db.Uuid
+  periodStart        DateTime                       @map("period_start") @db.Date
+  periodEnd          DateTime                       @map("period_end") @db.Date
+  status             SalesCommissionStatementStatus @default(DRAFT)
+  earnedTotal        Decimal                        @default(0) @map("earned_total") @db.Decimal(18, 2)
+  reversalTotal      Decimal                        @default(0) @map("reversal_total") @db.Decimal(18, 2)
+  incentiveTotal     Decimal                        @default(0) @map("incentive_total") @db.Decimal(18, 2)
+  adjustmentTotal    Decimal                        @default(0) @map("adjustment_total") @db.Decimal(18, 2)
+  carryForwardTotal  Decimal                        @default(0) @map("carry_forward_total") @db.Decimal(18, 2)
+  netAmount          Decimal                        @default(0) @map("net_amount") @db.Decimal(18, 2)
+  calculatedAt       DateTime                       @default(now()) @map("calculated_at")
+  calculatedByUserId String                         @map("calculated_by_user_id") @db.Uuid
+  submittedByUserId  String?                        @map("submitted_by_user_id") @db.Uuid
+  submittedAt        DateTime?                      @map("submitted_at")
+  approvedByUserId   String?                        @map("approved_by_user_id") @db.Uuid
+  approvedAt         DateTime?                      @map("approved_at")
+  decisionComment    String?                        @map("decision_comment")
+  paymentRequestId   String?                        @unique @map("payment_request_id") @db.Uuid
+  version            Int                            @default(1)
+  createdAt          DateTime                       @default(now()) @map("created_at")
+  updatedAt          DateTime                       @updatedAt @map("updated_at")
+
+  company        Company               @relation(fields: [companyId], references: [id])
+  user           User?                 @relation("SalesCommissionStatementUser", fields: [userId], references: [id])
+  salesAgent     SalesAgent?           @relation(fields: [salesAgentId], references: [id])
+  calculatedBy   User                  @relation("SalesCommissionStatementCalculatedBy", fields: [calculatedByUserId], references: [id])
+  submittedBy    User?                 @relation("SalesCommissionStatementSubmittedBy", fields: [submittedByUserId], references: [id])
+  approvedBy     User?                 @relation("SalesCommissionStatementApprovedBy", fields: [approvedByUserId], references: [id])
+  paymentRequest PaymentRequest?       @relation(fields: [paymentRequestId], references: [id])
+  lines          SalesCommissionLine[]
+
+  @@index([companyId, periodStart])
+  @@map("sales_commission_statements")
+}
+
+/// One line of a statement. `payeeKey` + `eventKey` is unique per company,
+/// so an earning event, reversal or incentive is never paid twice.
+model SalesCommissionLine {
+  id               String                  @id @default(uuid()) @db.Uuid
+  companyId        String                  @map("company_id") @db.Uuid
+  statementId      String                  @map("statement_id") @db.Uuid
+  // REP:<userId> | AGENT:<salesAgentId>
+  payeeKey         String                  @map("payee_key")
+  kind             SalesCommissionLineKind
+  eventKey         String                  @map("event_key")
+  planId           String?                 @map("plan_id") @db.Uuid
+  planVersionId    String?                 @map("plan_version_id") @db.Uuid
+  incentivePlanId  String?                 @map("incentive_plan_id") @db.Uuid
+  salesInvoiceId   String?                 @map("sales_invoice_id") @db.Uuid
+  salesOrderId     String?                 @map("sales_order_id") @db.Uuid
+  // SALES_INVOICE | PAYMENT_ALLOCATION | STATEMENT | TARGET
+  sourceType       String?                 @map("source_type")
+  sourceId         String?                 @map("source_id") @db.Uuid
+  eventDate        DateTime?               @map("event_date") @db.Date
+  basisAmount      Decimal?                @map("basis_amount") @db.Decimal(18, 2)
+  // Effective rate applied (%), for earning / reversal lines.
+  rate             Decimal?                @db.Decimal(9, 4)
+  amount           Decimal                 @db.Decimal(18, 2)
+  // Tier breakdown, invoice / payment numbers, attainment … for the statement.
+  details          Json                    @default("{}")
+  reversalOfLineId String?                 @map("reversal_of_line_id") @db.Uuid
+  reason           String?
+  createdByUserId  String?                 @map("created_by_user_id") @db.Uuid
+  createdAt        DateTime                @default(now()) @map("created_at")
+
+  statement     SalesCommissionStatement    @relation(fields: [statementId], references: [id], onDelete: Cascade)
+  plan          SalesCommissionPlan?        @relation(fields: [planId], references: [id])
+  planVersion   SalesCommissionPlanVersion? @relation(fields: [planVersionId], references: [id])
+  incentivePlan SalesIncentivePlan?         @relation(fields: [incentivePlanId], references: [id])
+  salesInvoice  SalesInvoice?               @relation(fields: [salesInvoiceId], references: [id])
+  salesOrder    SalesOrder?                 @relation(fields: [salesOrderId], references: [id])
+  reversalOf    SalesCommissionLine?        @relation("SalesCommissionLineReversal", fields: [reversalOfLineId], references: [id])
+  reversedBy    SalesCommissionLine[]       @relation("SalesCommissionLineReversal")
+  createdBy     User?                       @relation("SalesCommissionLineCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@unique([companyId, payeeKey, eventKey])
+  @@index([statementId])
+  @@map("sales_commission_lines")
+}
+
+/// Target-attainment bonus: tiers of attainment % → fixed reward, on a
+/// Phase 05 metric and period type. Approved plans are never edited.
+model SalesIncentivePlan {
+  id                String                   @id @default(uuid()) @db.Uuid
+  companyId         String                   @map("company_id") @db.Uuid
+  code              String
+  name              String
+  description       String?
+  metric            SalesTargetMetric
+  periodType        SalesTargetPeriodType    @map("period_type")
+  effectiveFrom     DateTime                 @map("effective_from") @db.Date
+  effectiveTo       DateTime?                @map("effective_to") @db.Date
+  // [{ attainment: number (%), reward: number (₹) }]
+  tiers             Json                     @default("[]")
+  // Empty = every rep with an approved target.
+  userIds           String[]                 @default([]) @map("user_ids") @db.Uuid
+  status            SalesIncentivePlanStatus @default(DRAFT)
+  version           Int                      @default(1)
+  createdByUserId   String                   @map("created_by_user_id") @db.Uuid
+  updatedByUserId   String                   @map("updated_by_user_id") @db.Uuid
+  submittedByUserId String?                  @map("submitted_by_user_id") @db.Uuid
+  submittedAt       DateTime?                @map("submitted_at")
+  approvedByUserId  String?                  @map("approved_by_user_id") @db.Uuid
+  approvedAt        DateTime?                @map("approved_at")
+  decisionComment   String?                  @map("decision_comment")
+  retiredAt         DateTime?                @map("retired_at")
+  createdAt         DateTime                 @default(now()) @map("created_at")
+  updatedAt         DateTime                 @updatedAt @map("updated_at")
+
+  company     Company               @relation(fields: [companyId], references: [id])
+  createdBy   User                  @relation("SalesIncentivePlanCreatedBy", fields: [createdByUserId], references: [id])
+  updatedBy   User                  @relation("SalesIncentivePlanUpdatedBy", fields: [updatedByUserId], references: [id])
+  submittedBy User?                 @relation("SalesIncentivePlanSubmittedBy", fields: [submittedByUserId], references: [id])
+  approvedBy  User?                 @relation("SalesIncentivePlanApprovedBy", fields: [approvedByUserId], references: [id])
+  lines       SalesCommissionLine[]
+
+  @@unique([companyId, code])
+  @@map("sales_incentive_plans")
 }

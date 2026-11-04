@@ -21,6 +21,8 @@ export interface SalesMarketingPagePermissions {
   pricing: { view: boolean; create: boolean; edit: boolean; approve: boolean; reject: boolean };
   /** Phase 05 targets, territories, team performance. */
   performance: { view: boolean; viewAll: boolean; create: boolean; edit: boolean; approve: boolean; reject: boolean; export: boolean };
+  /** Phase 07 commissions & incentives. */
+  commissions: { view: boolean; viewAll: boolean; create: boolean; edit: boolean; approve: boolean; reject: boolean; export: boolean };
 }
 
 /**
@@ -32,7 +34,7 @@ export async function getSalesMarketingPageContext(): Promise<{ actor: SalesActo
   const session = await auth();
   if (!session?.user?.id) notFound();
   const userId = session.user.id;
-  const [view, create, edit, viewAll, crmView, crmEdit, merchandisingView, qView, qCreate, qEdit, qCancel, qApprove, qReject, qPrint, sView, sEdit, soView, soCreate, pView, pCreate, pEdit, pApprove, pReject, fView, fViewAll, fCreate, fEdit, fApprove, fReject, fExport] = await Promise.all([
+  const [view, create, edit, viewAll, crmView, crmEdit, merchandisingView, qView, qCreate, qEdit, qCancel, qApprove, qReject, qPrint, sView, sEdit, soView, soCreate, pView, pCreate, pEdit, pApprove, pReject, fView, fViewAll, fCreate, fEdit, fApprove, fReject, fExport, cView, cViewAll, cCreate, cEdit, cApprove, cReject, cExport] = await Promise.all([
     PermissionService.can(userId, "sales_marketing", "view"),
     PermissionService.can(userId, "sales_marketing", "create"),
     PermissionService.can(userId, "sales_marketing", "edit"),
@@ -63,6 +65,13 @@ export async function getSalesMarketingPageContext(): Promise<{ actor: SalesActo
     PermissionService.can(userId, "sales_performance", "approve"),
     PermissionService.can(userId, "sales_performance", "reject"),
     PermissionService.can(userId, "sales_performance", "export"),
+    PermissionService.can(userId, "sales_commissions", "view"),
+    PermissionService.can(userId, "sales_commissions", "view_all"),
+    PermissionService.can(userId, "sales_commissions", "create"),
+    PermissionService.can(userId, "sales_commissions", "edit"),
+    PermissionService.can(userId, "sales_commissions", "approve"),
+    PermissionService.can(userId, "sales_commissions", "reject"),
+    PermissionService.can(userId, "sales_commissions", "export"),
   ]);
   return {
     actor: { companyId: session.user.companyId, userId, branchId: session.user.defaultBranchId ?? null },
@@ -79,6 +88,7 @@ export async function getSalesMarketingPageContext(): Promise<{ actor: SalesActo
       salesOrders: { view: soView, create: soCreate },
       pricing: { view: pView, create: pCreate, edit: pEdit, approve: pApprove, reject: pReject },
       performance: { view: fView, viewAll: fViewAll, create: fCreate, edit: fEdit, approve: fApprove, reject: fReject, export: fExport },
+      commissions: { view: cView, viewAll: cViewAll, create: cCreate, edit: cEdit, approve: cApprove, reject: cReject, export: cExport },
     },
   };
 }

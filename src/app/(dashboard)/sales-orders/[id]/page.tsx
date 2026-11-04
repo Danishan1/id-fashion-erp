@@ -9,6 +9,7 @@ import { Barcode } from "@/components/ui/Barcode";
 import { formatDate } from "@/lib/date-format";
 import { SalesOrderWorkflowPanel } from "../SalesOrderWorkflowPanel";
 import { SalesCreditPanel } from "@/components/sales-marketing/performance/SalesCreditPanel";
+import { ChannelAgentPanel } from "@/components/sales-marketing/channels/ChannelAgentPanel";
 import { getSalesCredit } from "@/modules/sales-marketing/performance/sales-credit.service";
 
 export default async function SalesOrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -74,6 +75,8 @@ export default async function SalesOrderDetailPage({ params }: { params: Promise
           navigation between two different orders — same stale-data fix
           applied project-wide after the Sampling bug. */}
       <SalesCreditPanel key={`credit-${id}`} orderId={id} initial={salesCredit} canChange={canChangeCredit} />
+      {/* Channel & sales agent (Phase 07) — loads itself; hidden without sales_performance.view. */}
+      <ChannelAgentPanel key={`channel-${id}`} apiUrl={`/api/v1/sales-marketing/performance/orders/${id}/channel`} docType="SALES_ORDER" canChange={canChangeCredit} />
 
       <SalesOrderWorkflowPanel key={id} salesOrderId={id} initialOrder={JSON.parse(JSON.stringify(order))} />
     </div>

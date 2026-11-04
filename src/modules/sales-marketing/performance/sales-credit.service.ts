@@ -23,6 +23,13 @@ export interface SalesCredit {
   salesCreditSource: SalesCreditSource;
 }
 
+/** Phase 07: an order converted from a quotation starts with the quotation's channel and sales agent. */
+export async function resolveDefaultChannel(db: Db, companyId: string, sourceQuotationRevisionId: string | null | undefined) {
+  if (!sourceQuotationRevisionId) return { salesChannelId: null, salesAgentId: null };
+  const rev = await db.quotationRevision.findFirst({ where: { id: sourceQuotationRevisionId, companyId }, select: { quotation: { select: { salesChannelId: true, salesAgentId: true } } } });
+  return { salesChannelId: rev?.quotation.salesChannelId ?? null, salesAgentId: rev?.quotation.salesAgentId ?? null };
+}
+
 /**
  * Default credit for a new order. Rep: the converted quotation's owner → the
  * owner of the CRM company linked to the customer → the territory's primary

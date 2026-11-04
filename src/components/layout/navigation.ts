@@ -112,7 +112,7 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     label: "Sales & Marketing",
     href: "/sales-marketing",
-    modules: ["sales_marketing", "sales_quotations", "sales_marketing_settings", "sales_pricing", "sales_performance"],
+    modules: ["sales_marketing", "sales_quotations", "sales_marketing_settings", "sales_pricing", "sales_performance", "sales_commissions"],
     children: [
       { label: "Dashboard", href: "/sales-marketing", modules: ["sales_marketing"] },
       { label: "Enquiries", href: "/sales-marketing/enquiries", modules: ["sales_marketing"] },
@@ -124,6 +124,10 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Forecast", href: "/sales-marketing/forecast", modules: ["sales_performance"] },
       { label: "Sales Targets", href: "/sales-marketing/targets", modules: ["sales_performance"] },
       { label: "Territories", href: "/sales-marketing/territories", modules: ["sales_performance"] },
+      { label: "Commission Statements", href: "/sales-marketing/commissions", modules: ["sales_commissions"] },
+      { label: "Commission Plans", href: "/sales-marketing/commissions/plans", modules: ["sales_commissions"] },
+      { label: "Incentive Plans", href: "/sales-marketing/commissions/incentives", modules: ["sales_commissions"] },
+      { label: "Sales Channels", href: "/sales-marketing/channels", modules: ["sales_marketing_settings"] },
       { label: "Settings", href: "/sales-marketing/settings", modules: ["sales_marketing_settings"] },
     ],
   },

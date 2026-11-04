@@ -438,10 +438,13 @@ export async function createQuotation(actor: SalesActor, raw: unknown) {
     crmContactId: input.crmContactId || null,
   };
   let enquiryId: string | null = null;
+  // Phase 07: a quotation made from an enquiry starts with its channel and sales agent.
+  let channel: { salesChannelId: string | null; salesAgentId: string | null } = { salesChannelId: null, salesAgentId: null };
   if (input.buyerEnquiryId) {
     // The party always comes from the enquiry — a quotation can't be re-pointed at someone else.
     const enquiry = await loadEnquiryForQuotation(actor, input.buyerEnquiryId);
     enquiryId = enquiry.id;
+    channel = { salesChannelId: enquiry.salesChannelId ?? null, salesAgentId: enquiry.salesAgentId ?? null };
     party = {
       customerId: enquiry.customerId,
       buyerId: enquiry.buyerId,
@@ -466,6 +469,7 @@ export async function createQuotation(actor: SalesActor, raw: unknown) {
         quotationNumber,
         buyerEnquiryId: enquiryId,
         ...party,
+        ...channel,
         ownerUserId,
         status: "DRAFT",
         currentRevisionNumber: 1,

@@ -105,6 +105,7 @@ const perms = {
   salesOrders: { view: true, create: true },
   pricing: { view: true, create: true, edit: true, approve: false, reject: false },
   performance: { view: true, viewAll: false, create: false, edit: false, approve: false, reject: false, export: false },
+  commissions: { view: true, viewAll: false, create: false, edit: false, approve: false, reject: false, export: false },
 };
 const withStatus = (status: string, extra: Partial<Detail> = {}) => ({ ...base, status, current: { ...rev, status }, ...extra }) as Detail;
 const buttons = () => screen.queryAllByRole("button").map((b) => b.textContent);

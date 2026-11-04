@@ -16,7 +16,7 @@ import { CompanyRepository, SalesOrderRepository } from "./sales-order.repositor
 import { buildReconciledItemPlan, snapshotUnsnapshottedLinesInTx } from "./sales-order-bom.service";
 import { releaseActiveReservationsForSalesOrderInTx } from "@/modules/finished-goods-inventory/finished-goods-reservation.service";
 import { SalesOrderStatus, type Prisma } from "@prisma/client";
-import { creditAfterCustomerChange, resolveDefaultSalesCredit } from "@/modules/sales-marketing/performance/sales-credit.service";
+import { creditAfterCustomerChange, resolveDefaultChannel, resolveDefaultSalesCredit } from "@/modules/sales-marketing/performance/sales-credit.service";
 
 interface ActorContext {
   companyId: string;
@@ -288,6 +288,7 @@ export async function createSalesOrder(actor: ActorContext, input: SalesOrderInp
     sourceQuotationRevisionId: origin.sourceQuotationRevisionId ?? null,
     creatorUserId: actor.userId,
   });
+  const channel = await resolveDefaultChannel(prisma, actor.companyId, origin.sourceQuotationRevisionId);
 
   // Bare header first — createHeader() has no items yet, so
   // buildReconciledItemPlan() below (called against this real order id with
@@ -315,6 +316,7 @@ export async function createSalesOrder(actor: ActorContext, input: SalesOrderInp
     salesRepUserId: credit.salesRepUserId,
     salesTerritoryId: credit.salesTerritoryId,
     salesCreditSource: credit.salesCreditSource,
+    ...channel,
   });
 
   // A brand-new order always starts DRAFT — isConfirmed: false, so no line
