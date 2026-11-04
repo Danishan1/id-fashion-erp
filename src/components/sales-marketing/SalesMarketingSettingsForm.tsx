@@ -17,6 +17,7 @@ interface Settings {
   forecastProbabilityAccepted?: number;
   forecastTrendLookback?: number;
   forecastStaleDays?: number;
+  campaignApprovalRequired?: boolean;
   updatedAt: string | null;
 }
 
@@ -32,6 +33,7 @@ export function SalesMarketingSettingsForm({ initial, canEdit }: { initial: Sett
     forecastProbabilityAccepted: String(initial.forecastProbabilityAccepted ?? 90),
     forecastTrendLookback: String(initial.forecastTrendLookback ?? 3),
     forecastStaleDays: String(initial.forecastStaleDays ?? 60),
+    campaignApprovalRequired: initial.campaignApprovalRequired ?? true,
   });
   const [updatedAt, setUpdatedAt] = useState(initial.updatedAt);
   const [saving, setSaving] = useState(false);
@@ -98,6 +100,14 @@ export function SalesMarketingSettingsForm({ initial, canEdit }: { initial: Sett
           <input id="staleDays" type="number" min={1} max={3650} step={1} required disabled={!canEdit} value={v.forecastStaleDays} onChange={(e) => setV({ ...v, forecastStaleDays: e.target.value })} className={textInputClass()} />
         </FormField>
       </div>
+      <h2 className="pt-2 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Campaigns</h2>
+      <label className="flex items-start gap-2 text-sm">
+        <input type="checkbox" className="mt-1" disabled={!canEdit} checked={v.campaignApprovalRequired} onChange={(e) => setV({ ...v, campaignApprovalRequired: e.target.checked })} />
+        <span>
+          Campaign plans need approval
+          <span className="block text-xs text-zinc-500">Someone other than the preparer approves a campaign&apos;s plan (and later changes to its dates or budget) before it can start. Off: submitting approves at once, recorded as automatic.</span>
+        </span>
+      </label>
       {message && <p className={`text-sm ${message.ok ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>{message.text}</p>}
       <div className="flex items-center gap-3">
         {canEdit && (

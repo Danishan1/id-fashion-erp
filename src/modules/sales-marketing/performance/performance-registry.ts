@@ -154,7 +154,8 @@ export type PerformanceEventType =
   | "DISCARDED"
   | "ARCHIVED"
   | "SALES_CREDIT_CHANGED"
-  | "CHANNEL_CHANGED";
+  | "CHANNEL_CHANGED"
+  | "CAMPAIGN_CHANGED";
 
 export const EVENT_LABELS: Record<PerformanceEventType, string> = {
   TERRITORY_CREATED: "Territory created",
@@ -178,6 +179,7 @@ export const EVENT_LABELS: Record<PerformanceEventType, string> = {
   ARCHIVED: "Archived",
   SALES_CREDIT_CHANGED: "Sales credit changed",
   CHANNEL_CHANGED: "Channel / sales agent changed",
+  CAMPAIGN_CHANGED: "Campaign changed",
 };
 
 /** Order statuses that count as booked (On hold handled separately via statusBeforeHold). */

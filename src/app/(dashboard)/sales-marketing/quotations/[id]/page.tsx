@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { ChannelAgentPanel } from "@/components/sales-marketing/channels/ChannelAgentPanel";
+import { CampaignLinkPanel } from "@/components/sales-marketing/campaigns/CampaignLinkPanel";
 import { SalesMarketingPageHeader } from "@/components/sales-marketing/SalesMarketingPageHeader";
 import { QuotationDetailClient } from "@/components/sales-marketing/quotations/QuotationDetailClient";
 import { getQuotation } from "@/modules/sales-marketing/quotations/quotation.service";
@@ -23,6 +24,9 @@ export default async function QuotationDetailPage({ params, searchParams }: { pa
       />
       <div className="mb-4">
         <ChannelAgentPanel key={`channel-${q.id}`} apiUrl={`/api/v1/sales-marketing/quotations/${q.id}/channel`} docType="QUOTATION" canChange={permissions.quotations.edit} />
+      </div>
+      <div className="mb-4">
+        <CampaignLinkPanel key={`campaign-${q.id}`} docType="quotation" id={q.id} canChange={permissions.quotations.edit} />
       </div>
       {/* JSON round-trip: Decimal/Date aren't serialisable across the RSC boundary. key: remount between quotations/revisions. */}
       <QuotationDetailClient key={`${id}-${q.current.revisionNumber}`} initialQuotation={JSON.parse(JSON.stringify(q))} permissions={permissions} />

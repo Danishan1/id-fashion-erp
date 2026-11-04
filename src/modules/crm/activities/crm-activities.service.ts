@@ -146,6 +146,11 @@ export function recordInfo(recs: RecordsInfo, ref: Ref) {
           }
         : null;
     }
+    case "CAMPAIGN": {
+      const r = recs.campaigns.find((x) => x.id === ref.entityId);
+      // A cancelled campaign takes no new activities (completed ones may still get wrap-up tasks).
+      return r ? { label: `Campaign ${r.code} — ${r.name}`, archived: r.status === "CANCELLED", merged: false, also: [] as Ref[] } : null;
+    }
     default:
       return null;
   }

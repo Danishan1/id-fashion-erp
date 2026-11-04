@@ -23,6 +23,8 @@ export const SALES_MARKETING_SETTING_DEFAULTS = {
   forecastTrendLookback: 3,
   /** Opportunities not updated for this many days are flagged as stale. */
   forecastStaleDays: 60,
+  /** Phase 08: campaigns need approval by someone else before they can be activated. */
+  campaignApprovalRequired: true,
 };
 
 export type SalesMarketingSettingsView = typeof SALES_MARKETING_SETTING_DEFAULTS & { updatedAt: Date | null };
@@ -41,6 +43,7 @@ export async function getSalesMarketingSettings(companyId: string): Promise<Sale
     forecastProbabilityAccepted: row.forecastProbabilityAccepted,
     forecastTrendLookback: row.forecastTrendLookback,
     forecastStaleDays: row.forecastStaleDays,
+    campaignApprovalRequired: row.campaignApprovalRequired,
     updatedAt: row.updatedAt,
   };
 }
@@ -59,6 +62,8 @@ export const salesMarketingSettingsSchema = z
     forecastProbabilityAccepted: z.coerce.number().int().min(0).max(100).optional(),
     forecastTrendLookback: z.coerce.number().int().min(1).max(24).optional(),
     forecastStaleDays: z.coerce.number().int().min(1).max(3650).optional(),
+    // Phase 08 — omitted = keep the current value.
+    campaignApprovalRequired: z.boolean().optional(),
   })
   .strict();
 

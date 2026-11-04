@@ -81,6 +81,7 @@ const allow = {
   pricing: { view: true, create: true, edit: true, approve: false, reject: false },
   performance: { view: true, viewAll: false, create: false, edit: false, approve: false, reject: false, export: false },
   commissions: { view: true, viewAll: false, create: false, edit: false, approve: false, reject: false, export: false },
+  campaigns: { view: true, viewAll: false, create: false, edit: false, approve: false, reject: false, cancel: false, export: false },
 };
 
 beforeEach(() => push.mockReset());

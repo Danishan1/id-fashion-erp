@@ -4,12 +4,15 @@ import { CRM_EVENT_TYPES, CRM_EVENT_TYPE_NAMES, crmEventCategory, crmEventLabel,
 
 describe("CRM entity type registry", () => {
   it("covers every CRM record type (incl. Phase 09 activities, Phase 11 conversations, Phase 12 templates, Phase 18 workflows) with labels and audit table names", () => {
-    expect(CRM_ENTITY_TYPES.sort()).toEqual(["ACTIVITY", "COMPANY", "CONTACT", "CONVERSATION", "LEAD", "OPPORTUNITY", "TEMPLATE", "WORKFLOW"]);
+    expect(CRM_ENTITY_TYPES.sort()).toEqual(["ACTIVITY", "CAMPAIGN", "COMPANY", "CONTACT", "CONVERSATION", "LEAD", "OPPORTUNITY", "TEMPLATE", "WORKFLOW"]);
+    // Sales & Marketing Phase 08: CRM activities can sit on a marketing campaign (its own table, its own pages).
+    expect(crmEntityHref("CAMPAIGN", "abc")).toBe("/sales-marketing/campaigns/abc");
+    expect(CRM_ENTITY_TYPE_CONFIG.CAMPAIGN.tableName).toBe("marketing_campaigns");
     expect(crmEntityHref("WORKFLOW", "abc")).toBe("/crm/workflows/abc");
     expect(crmEntityHref("ACTIVITY", "abc")).toBe("/crm/activities/abc");
     expect(crmEntityHref("CONVERSATION", "abc")).toBe("/crm/inbox/abc");
     expect(crmEntityHref("TEMPLATE", "abc")).toBe("/crm/templates/abc");
-    for (const type of CRM_ENTITY_TYPES) {
+    for (const type of CRM_ENTITY_TYPES.filter((t) => t !== "CAMPAIGN")) {
       expect(CRM_ENTITY_TYPE_CONFIG[type].tableName).toMatch(/^crm_/);
     }
     expect(crmEntityLabel("OPPORTUNITY")).toBe("Opportunity");

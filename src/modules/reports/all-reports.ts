@@ -28,3 +28,4 @@ import "./sales-marketing.reports";
 import "./sales-performance.reports";
 import "./sales-forecast.reports";
 import "./sales-commissions.reports";
+import "./marketing-campaigns.reports";

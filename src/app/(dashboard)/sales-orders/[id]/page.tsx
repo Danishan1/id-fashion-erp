@@ -10,6 +10,7 @@ import { formatDate } from "@/lib/date-format";
 import { SalesOrderWorkflowPanel } from "../SalesOrderWorkflowPanel";
 import { SalesCreditPanel } from "@/components/sales-marketing/performance/SalesCreditPanel";
 import { ChannelAgentPanel } from "@/components/sales-marketing/channels/ChannelAgentPanel";
+import { CampaignLinkPanel } from "@/components/sales-marketing/campaigns/CampaignLinkPanel";
 import { getSalesCredit } from "@/modules/sales-marketing/performance/sales-credit.service";
 
 export default async function SalesOrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -77,6 +78,8 @@ export default async function SalesOrderDetailPage({ params }: { params: Promise
       <SalesCreditPanel key={`credit-${id}`} orderId={id} initial={salesCredit} canChange={canChangeCredit} />
       {/* Channel & sales agent (Phase 07) — loads itself; hidden without sales_performance.view. */}
       <ChannelAgentPanel key={`channel-${id}`} apiUrl={`/api/v1/sales-marketing/performance/orders/${id}/channel`} docType="SALES_ORDER" canChange={canChangeCredit} />
+      {/* Campaign (Phase 08) — loads itself; hidden without access. */}
+      <CampaignLinkPanel key={`campaign-${id}`} docType="order" id={id} canChange={canChangeCredit} />
 
       <SalesOrderWorkflowPanel key={id} salesOrderId={id} initialOrder={JSON.parse(JSON.stringify(order))} />
     </div>

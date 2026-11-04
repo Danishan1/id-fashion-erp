@@ -89,7 +89,7 @@ export const CrmActivityRepository = {
   /** Records an activity can point at, with the fields needed for validation, links and labels. */
   async records(companyId: string, refs: { entityType: CrmEntityType; entityId: string }[]) {
     const ids = (t: CrmEntityType) => [...new Set(refs.filter((r) => r.entityType === t).map((r) => r.entityId))];
-    const [leads, contacts, companies, opportunities, conversations] = await Promise.all([
+    const [leads, contacts, companies, opportunities, conversations, campaigns] = await Promise.all([
       ids("LEAD").length ? prisma.crmLead.findMany({ where: { companyId, id: { in: ids("LEAD") } }, select: { id: true, leadNumber: true, fullName: true, crmCompanyId: true, archivedAt: true } }) : [],
       ids("CONTACT").length ? prisma.crmContact.findMany({ where: { companyId, id: { in: ids("CONTACT") } }, select: { id: true, fullName: true, crmCompanyId: true, archivedAt: true, mergedIntoId: true } }) : [],
       ids("COMPANY").length ? prisma.crmCompany.findMany({ where: { companyId, id: { in: ids("COMPANY") } }, select: { id: true, name: true, archivedAt: true, mergedIntoId: true } }) : [],
@@ -100,8 +100,10 @@ export const CrmActivityRepository = {
       ids("CONVERSATION").length
         ? prisma.crmConversation.findMany({ where: { companyId, id: { in: ids("CONVERSATION") } }, select: { id: true, displayName: true, displayIdentifier: true, channelType: true, status: true, contactId: true, crmCompanyId: true, opportunityId: true } })
         : [],
+      // Sales & Marketing Phase 08: activities on a marketing campaign.
+      ids("CAMPAIGN").length ? prisma.marketingCampaign.findMany({ where: { companyId, id: { in: ids("CAMPAIGN") } }, select: { id: true, code: true, name: true, status: true } }) : [],
     ]);
-    return { leads, contacts, companies, opportunities, conversations };
+    return { leads, contacts, companies, opportunities, conversations, campaigns };
   },
   userNames(ids: string[]) {
     if (!ids.length) return Promise.resolve([] as { id: string; fullName: string }[]);

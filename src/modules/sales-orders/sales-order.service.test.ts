@@ -23,7 +23,7 @@ vi.mock("@/core/db/client", () => {
 // Sales credit (Sales & Marketing Phase 05) has its own real-DB tests; here it just returns the creator.
 vi.mock("@/modules/sales-marketing/performance/sales-credit.service", () => ({
   resolveDefaultSalesCredit: vi.fn(async (_db: unknown, _companyId: string, input: { creatorUserId: string }) => ({ salesRepUserId: input.creatorUserId, salesTerritoryId: null, salesCreditSource: "CREATOR" })),
-  resolveDefaultChannel: vi.fn(async () => ({ salesChannelId: null, salesAgentId: null })),
+  resolveDefaultChannel: vi.fn(async () => ({ salesChannelId: null, salesAgentId: null, campaignId: null })),
   creditAfterCustomerChange: vi.fn(async () => null),
 }));
 vi.mock("@/modules/finished-goods-inventory/finished-goods-reservation.service", () => ({

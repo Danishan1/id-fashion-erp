@@ -14,6 +14,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ push, replace: vi.fn(), 
 
 const { StatementDetailClient } = await import("./StatementDetailClient");
 const { RuleEditor, emptyRule } = await import("./PlanRuleEditor");
+type RuleDraft = import("./PlanRuleEditor").RuleDraft;
 const { StatementsClient } = await import("./StatementsClient");
 const { ChannelAgentPanel } = await import("../channels/ChannelAgentPanel");
 type View = Parameters<typeof StatementDetailClient>[0]["initial"];
@@ -73,7 +74,7 @@ describe("Commission screens", () => {
   });
 
   it("rule editor: progressive worked example uses the engine; fixed amount is disabled on collected basis", () => {
-    let value = { ...emptyRule("2026-11-01"), tierMode: "PROGRESSIVE" as const, tiers: [{ from: "0", rate: "2" }, { from: "100000", rate: "3" }] };
+    let value: RuleDraft = { ...emptyRule("2026-11-01"), tierMode: "PROGRESSIVE", tiers: [{ from: "0", rate: "2" }, { from: "100000", rate: "3" }] };
     const { rerender } = render(<RuleEditor value={value} onChange={(v) => (value = v)} basis="COLLECTED" />);
     expect(screen.getByText("₹3,500.00")).toBeTruthy();
     expect(screen.getByText(/₹1,00,000.00 × 2% = ₹2,000.00/)).toBeTruthy();

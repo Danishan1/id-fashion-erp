@@ -128,6 +128,7 @@ function eventDetail(e: PerformanceEvent): string | null {
     const a = (m.after ?? {}) as Record<string, string | null>;
     return `${b.channel ?? "no channel"} / ${b.agent ?? "no agent"} → ${a.channel ?? "no channel"} / ${a.agent ?? "no agent"}`;
   }
+  if (e.type === "CAMPAIGN_CHANGED") return `${m.before ?? "no campaign"} → ${m.after ?? "no campaign"}`;
   if (e.type === "SALES_CREDIT_CHANGED") {
     const b = (m.before ?? {}) as Record<string, string | null>;
     const a = (m.after ?? {}) as Record<string, string | null>;

@@ -21,6 +21,7 @@ export default async function SalesMarketingLayout({ children }: { children: Rea
       ["sales_pricing", "view"],
       ["sales_performance", "view"],
       ["sales_commissions", "view"],
+      ["marketing_campaigns", "view"],
     ],
     { sessionIssuedAt: session.user.sessionIssuedAt }
   ).catch(() => notFound());

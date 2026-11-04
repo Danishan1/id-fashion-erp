@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { ChannelAgentPanel } from "@/components/sales-marketing/channels/ChannelAgentPanel";
+import { CampaignLinkPanel } from "@/components/sales-marketing/campaigns/CampaignLinkPanel";
 import { SalesMarketingPageHeader } from "@/components/sales-marketing/SalesMarketingPageHeader";
 import { SalesEnquiryDetailClient } from "@/components/sales-marketing/enquiries/SalesEnquiryDetailClient";
 import { getSalesEnquiry } from "@/modules/sales-marketing/enquiries/sales-enquiry.service";
@@ -23,6 +24,9 @@ export default async function SalesEnquiryDetailPage({ params }: { params: Promi
       />
       <div className="mb-4">
         <ChannelAgentPanel key={`channel-${enquiry.id}`} apiUrl={`/api/v1/sales-marketing/enquiries/${enquiry.id}/channel`} docType="ENQUIRY" canChange={permissions.edit} />
+      </div>
+      <div className="mb-4">
+        <CampaignLinkPanel key={`campaign-${enquiry.id}`} docType="enquiry" id={enquiry.id} canChange={permissions.edit} />
       </div>
       {/* JSON round-trip: Decimal/Date aren't serialisable across the RSC boundary.
           key={id}: remount on client-side navigation between enquiries. */}

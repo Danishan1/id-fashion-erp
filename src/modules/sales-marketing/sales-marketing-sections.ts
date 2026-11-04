@@ -42,7 +42,7 @@ export const SALES_MARKETING_SECTIONS: readonly SalesMarketingSection[] = [
   { key: "forecasting", label: "Sales Forecasting", area: "SALES", phase: 6, status: "AVAILABLE", href: "/sales-marketing/forecast", description: "Booked + weighted pipeline and trend vs target, snapshots with accuracy, what-if scenarios." },
   { key: "channels", label: "Sales Channels", area: "SALES", phase: 7, status: "AVAILABLE", href: "/sales-marketing/channels", description: "Channel master set on enquiries, quotations and Sales Orders, with sales by channel." },
   { key: "commissions", label: "Commissions & Incentives", area: "SALES", phase: 7, status: "AVAILABLE", href: "/sales-marketing/commissions", description: "Approved commission plans for reps and sales agents, target incentives, monthly statements paid through Payment Requests." },
-  { key: "campaigns", label: "Campaigns & Calendar", area: "MARKETING", phase: 8, status: "PLANNED", description: "Plan, run and schedule marketing campaigns." },
+  { key: "campaigns", label: "Campaigns & Calendar", area: "MARKETING", phase: 8, status: "AVAILABLE", href: "/sales-marketing/campaigns", description: "Plan, approve and run campaigns with milestones, success metrics, budget vs linked expenses and a calendar." },
   { key: "segments", label: "Audience Segmentation", area: "MARKETING", phase: 9, status: "PLANNED", description: "Target groups built from customers and CRM data." },
   { key: "marketing-channels", label: "Marketing Channels", area: "MARKETING", phase: 10, status: "PLANNED", description: "Email, WhatsApp, social and ad platforms." },
   { key: "assets", label: "Assets & Templates", area: "MARKETING", phase: 11, status: "PLANNED", description: "Catalogues, creatives and message templates." },

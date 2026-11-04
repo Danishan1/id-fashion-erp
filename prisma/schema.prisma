@@ -298,6 +298,8 @@ model Company {
   salesCommissionAssignments  SalesCommissionAssignment[]
   salesCommissionStatements   SalesCommissionStatement[]
   salesIncentivePlans         SalesIncentivePlan[]
+  marketingCampaigns          MarketingCampaign[]
+  marketingCampaignLookups    MarketingCampaignLookup[]
 
   @@map("companies")
 }
@@ -1160,6 +1162,12 @@ model User {
   discountRulesSubmitted              DiscountRule[]               @relation("DiscountRuleSubmittedBy")
   discountRulesApproved               DiscountRule[]               @relation("DiscountRuleApprovedBy")
   pricingEvents                       PricingEvent[]               @relation("PricingEventCreatedBy")
+  marketingCampaignsOwned             MarketingCampaign[]          @relation("MarketingCampaignOwner")
+  marketingCampaignsCreated           MarketingCampaign[]          @relation("MarketingCampaignCreatedBy")
+  marketingCampaignsUpdated           MarketingCampaign[]          @relation("MarketingCampaignUpdatedBy")
+  marketingRevisionsRequested         MarketingCampaignRevision[]  @relation("MarketingRevisionRequestedBy")
+  marketingRevisionsDecided           MarketingCampaignRevision[]  @relation("MarketingRevisionDecidedBy")
+  marketingMetricsUpdated             MarketingCampaignMetric[]    @relation("MarketingMetricUpdatedBy")
 
   @@unique([companyId, supportForPlatformUserId])
   @@map("users")
@@ -1638,13 +1646,14 @@ model Department {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  company          Company           @relation(fields: [companyId], references: [id])
-  branch           Branch?           @relation(fields: [branchId], references: [id])
-  employees        Employee[]
-  productionLines  ProductionLine[]
-  materialRequests MaterialRequest[]
-  productionStages ProductionStage[]
-  designations     Designation[]
+  company            Company             @relation(fields: [companyId], references: [id])
+  branch             Branch?             @relation(fields: [branchId], references: [id])
+  employees          Employee[]
+  productionLines    ProductionLine[]
+  materialRequests   MaterialRequest[]
+  productionStages   ProductionStage[]
+  designations       Designation[]
+  marketingCampaigns MarketingCampaign[]
 
   @@unique([companyId, code])
   @@map("departments")
@@ -3379,8 +3388,12 @@ model BuyerEnquiry {
   lines       BuyerEnquiryLine[]
   activities  BuyerEnquiryActivity[]
   quotations  Quotation[]
+  // Sales & Marketing Phase 08: campaign this record came from / is spent on.
+  campaignId  String?                @map("campaign_id") @db.Uuid
+  campaign    MarketingCampaign?     @relation(fields: [campaignId], references: [id])
 
   @@unique([companyId, enquiryNumber])
+  @@index([companyId, campaignId])
   @@index([companyId, salesStage])
   @@index([companyId, ownerUserId])
   @@index([companyId, nextFollowUpDate])
@@ -4426,8 +4439,12 @@ model SalesOrder {
   // for AI Garment Flow); documented placeholder, same precedent as
   // ProductionOrderStatus.MATERIAL_ALLOCATED.
   aiGarmentProject        AiGarmentProject?
+  // Sales & Marketing Phase 08: campaign this record came from / is spent on.
+  campaignId              String?               @map("campaign_id") @db.Uuid
+  campaign                MarketingCampaign?    @relation(fields: [campaignId], references: [id])
 
   @@unique([companyId, orderNumber])
+  @@index([companyId, campaignId])
   @@index([companyId, salesChannelId])
   @@index([companyId, salesRepUserId, orderDate])
   @@index([companyId, salesTerritoryId, orderDate])
@@ -8109,22 +8126,26 @@ model Expense {
   createdAt        DateTime              @default(now()) @map("created_at")
   updatedAt        DateTime              @updatedAt @map("updated_at")
 
-  company     Company          @relation(fields: [companyId], references: [id])
-  branch      Branch?          @relation(fields: [branchId], references: [id])
-  account     ChartOfAccount?  @relation(fields: [accountId], references: [id])
-  supplier    Supplier?        @relation(fields: [supplierId], references: [id])
-  taxRate     TaxRate?         @relation(fields: [taxRateId], references: [id])
-  paymentType PaymentType?     @relation(fields: [paymentTypeId], references: [id])
-  bankAccount BankAccount?     @relation(fields: [bankAccountId], references: [id])
-  journal     Journal?         @relation(fields: [journalId], references: [id])
-  postedBy    User?            @relation("ExpensePostedBy", fields: [postedByUserId], references: [id])
-  createdBy   User             @relation("ExpenseCreatedBy", fields: [createdByUserId], references: [id])
-  approvedBy  User?            @relation("ExpenseApprovedBy", fields: [approvedByUserId], references: [id])
-  rejectedBy  User?            @relation("ExpenseRejectedBy", fields: [rejectedByUserId], references: [id])
+  company     Company            @relation(fields: [companyId], references: [id])
+  branch      Branch?            @relation(fields: [branchId], references: [id])
+  account     ChartOfAccount?    @relation(fields: [accountId], references: [id])
+  supplier    Supplier?          @relation(fields: [supplierId], references: [id])
+  taxRate     TaxRate?           @relation(fields: [taxRateId], references: [id])
+  paymentType PaymentType?       @relation(fields: [paymentTypeId], references: [id])
+  bankAccount BankAccount?       @relation(fields: [bankAccountId], references: [id])
+  journal     Journal?           @relation(fields: [journalId], references: [id])
+  postedBy    User?              @relation("ExpensePostedBy", fields: [postedByUserId], references: [id])
+  createdBy   User               @relation("ExpenseCreatedBy", fields: [createdByUserId], references: [id])
+  approvedBy  User?              @relation("ExpenseApprovedBy", fields: [approvedByUserId], references: [id])
+  rejectedBy  User?              @relation("ExpenseRejectedBy", fields: [rejectedByUserId], references: [id])
   payments    ExpensePayment[]
+  // Sales & Marketing Phase 08: campaign this record came from / is spent on.
+  campaignId  String?            @map("campaign_id") @db.Uuid
+  campaign    MarketingCampaign? @relation(fields: [campaignId], references: [id])
 
   @@unique([companyId, branchId, expenseNumber])
   @@unique([companyId, idempotencyKey])
+  @@index([companyId, campaignId])
   @@map("expenses")
 }
 
@@ -10752,6 +10773,8 @@ enum CrmEntityType {
   TEMPLATE
   // Phase 18: workflows. workflow.* events form the workflow's own history.
   WORKFLOW
+  // Sales & Marketing Phase 08: CRM activities (tasks, milestones) on a marketing campaign.
+  CAMPAIGN
 }
 
 // Append-only business event log for the CRM. One row per thing that
@@ -11212,8 +11235,12 @@ model CrmLead {
   ingestEvents         CrmIngestEvent[]
   sourcedContacts      CrmContact[]         @relation("CrmContactSourceLead")
   sourcedCompanies     CrmCompany[]         @relation("CrmCompanySourceLead")
+  // Sales & Marketing Phase 08: campaign this record came from / is spent on.
+  campaignId           String?              @map("campaign_id") @db.Uuid
+  campaign             MarketingCampaign?   @relation(fields: [campaignId], references: [id])
 
   @@unique([companyId, leadNumber])
+  @@index([companyId, campaignId])
   @@index([companyId, archivedAt, createdAt])
   @@index([companyId, statusId])
   @@index([companyId, ownerUserId])
@@ -14791,8 +14818,12 @@ model Quotation {
   createdBy    User                @relation("QuotationCreatedBy", fields: [createdByUserId], references: [id])
   revisions    QuotationRevision[]
   events       QuotationEvent[]
+  // Sales & Marketing Phase 08: campaign this record came from / is spent on.
+  campaignId   String?             @map("campaign_id") @db.Uuid
+  campaign     MarketingCampaign?  @relation(fields: [campaignId], references: [id])
 
   @@unique([companyId, quotationNumber])
+  @@index([companyId, campaignId])
   @@index([companyId, status])
   @@index([companyId, ownerUserId])
   @@index([buyerEnquiryId])
@@ -14996,6 +15027,8 @@ model SalesMarketingSettings {
   forecastProbabilityAccepted         Int      @default(90) @map("forecast_probability_accepted")
   forecastTrendLookback               Int      @default(3) @map("forecast_trend_lookback")
   forecastStaleDays                   Int      @default(60) @map("forecast_stale_days")
+  // Phase 08: campaigns need approval by someone else before activation (off = submit approves at once).
+  campaignApprovalRequired            Boolean  @default(true) @map("campaign_approval_required")
   updatedByUserId                     String?  @map("updated_by_user_id") @db.Uuid
   createdAt                           DateTime @default(now()) @map("created_at")
   updatedAt                           DateTime @updatedAt @map("updated_at")
@@ -15507,12 +15540,13 @@ model SalesChannel {
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
-  company        Company        @relation(fields: [companyId], references: [id])
-  manager        User?          @relation("SalesChannelManager", fields: [managerUserId], references: [id])
-  createdBy      User           @relation("SalesChannelCreatedBy", fields: [createdByUserId], references: [id])
-  buyerEnquiries BuyerEnquiry[]
-  quotations     Quotation[]
-  salesOrders    SalesOrder[]
+  company            Company             @relation(fields: [companyId], references: [id])
+  manager            User?               @relation("SalesChannelManager", fields: [managerUserId], references: [id])
+  createdBy          User                @relation("SalesChannelCreatedBy", fields: [createdByUserId], references: [id])
+  buyerEnquiries     BuyerEnquiry[]
+  quotations         Quotation[]
+  salesOrders        SalesOrder[]
+  marketingCampaigns MarketingCampaign[]
 
   @@unique([companyId, code])
   @@map("sales_channels")
@@ -15731,4 +15765,165 @@ model SalesIncentivePlan {
 
   @@unique([companyId, code])
   @@map("sales_incentive_plans")
+}
+
+// ── Sales & Marketing Phase 08: marketing campaigns (2026-11-04) ──────────
+// docs/sales-marketing/PHASE_08_CAMPAIGNS.md. Activities are CRM activities
+// (entity type CAMPAIGN); status history is in sales_performance_events
+// (entity CAMPAIGN); spend is linked Expenses (expenses.campaign_id).
+
+enum MarketingCampaignStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  ACTIVE
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+enum MarketingCampaignPriority {
+  LOW
+  NORMAL
+  HIGH
+}
+
+enum MarketingLookupKind {
+  TYPE
+  OBJECTIVE
+}
+
+enum MarketingRevisionStatus {
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  WITHDRAWN
+}
+
+enum MarketingMetricSource {
+  SYSTEM
+  MANUAL
+}
+
+model MarketingCampaignLookup {
+  id          String              @id @default(uuid()) @db.Uuid
+  companyId   String              @map("company_id") @db.Uuid
+  kind        MarketingLookupKind
+  code        String
+  name        String
+  description String?
+  sortOrder   Int                 @default(0) @map("sort_order")
+  isActive    Boolean             @default(true) @map("is_active")
+  createdAt   DateTime            @default(now()) @map("created_at")
+  updatedAt   DateTime            @updatedAt @map("updated_at")
+
+  company              Company             @relation(fields: [companyId], references: [id])
+  campaignsByType      MarketingCampaign[] @relation("MarketingCampaignType")
+  campaignsByObjective MarketingCampaign[] @relation("MarketingCampaignObjective")
+
+  @@unique([companyId, kind, code])
+  @@map("marketing_campaign_lookups")
+}
+
+model MarketingCampaign {
+  id                     String                    @id @default(uuid()) @db.Uuid
+  companyId              String                    @map("company_id") @db.Uuid
+  code                   String
+  name                   String
+  description            String?
+  typeId                 String                    @map("type_id") @db.Uuid
+  objectiveId            String                    @map("objective_id") @db.Uuid
+  ownerUserId            String                    @map("owner_user_id") @db.Uuid
+  departmentId           String?                   @map("department_id") @db.Uuid
+  salesChannelId         String?                   @map("sales_channel_id") @db.Uuid
+  parentCampaignId       String?                   @map("parent_campaign_id") @db.Uuid
+  priority               MarketingCampaignPriority @default(NORMAL)
+  status                 MarketingCampaignStatus   @default(DRAFT)
+  plannedStartDate       DateTime                  @map("planned_start_date") @db.Date
+  plannedEndDate         DateTime                  @map("planned_end_date") @db.Date
+  actualStartDate        DateTime?                 @map("actual_start_date") @db.Date
+  actualEndDate          DateTime?                 @map("actual_end_date") @db.Date
+  plannedBudget          Decimal?                  @map("planned_budget") @db.Decimal(18, 2)
+  budgetNotes            String?                   @map("budget_notes")
+  currencyCode           String                    @map("currency_code") @db.Char(3)
+  approvedRevisionNumber Int?                      @map("approved_revision_number")
+  statusReason           String?                   @map("status_reason")
+  idempotencyKey         String?                   @map("idempotency_key")
+  version                Int                       @default(1)
+  createdByUserId        String                    @map("created_by_user_id") @db.Uuid
+  updatedByUserId        String                    @map("updated_by_user_id") @db.Uuid
+  createdAt              DateTime                  @default(now()) @map("created_at")
+  updatedAt              DateTime                  @updatedAt @map("updated_at")
+
+  company        Company                     @relation(fields: [companyId], references: [id])
+  type           MarketingCampaignLookup     @relation("MarketingCampaignType", fields: [typeId], references: [id])
+  objective      MarketingCampaignLookup     @relation("MarketingCampaignObjective", fields: [objectiveId], references: [id])
+  owner          User                        @relation("MarketingCampaignOwner", fields: [ownerUserId], references: [id])
+  department     Department?                 @relation(fields: [departmentId], references: [id])
+  salesChannel   SalesChannel?               @relation(fields: [salesChannelId], references: [id])
+  parent         MarketingCampaign?          @relation("MarketingCampaignParent", fields: [parentCampaignId], references: [id])
+  children       MarketingCampaign[]         @relation("MarketingCampaignParent")
+  createdBy      User                        @relation("MarketingCampaignCreatedBy", fields: [createdByUserId], references: [id])
+  updatedBy      User                        @relation("MarketingCampaignUpdatedBy", fields: [updatedByUserId], references: [id])
+  revisions      MarketingCampaignRevision[]
+  metrics        MarketingCampaignMetric[]
+  crmLeads       CrmLead[]
+  buyerEnquiries BuyerEnquiry[]
+  quotations     Quotation[]
+  salesOrders    SalesOrder[]
+  expenses       Expense[]
+
+  @@unique([companyId, code])
+  @@unique([companyId, idempotencyKey])
+  @@index([companyId, status, plannedStartDate])
+  @@index([companyId, ownerUserId])
+  @@map("marketing_campaigns")
+}
+
+model MarketingCampaignRevision {
+  id                String                  @id @default(uuid()) @db.Uuid
+  campaignId        String                  @map("campaign_id") @db.Uuid
+  revisionNumber    Int                     @map("revision_number")
+  status            MarketingRevisionStatus @default(PENDING_APPROVAL)
+  plannedStartDate  DateTime                @map("planned_start_date") @db.Date
+  plannedEndDate    DateTime                @map("planned_end_date") @db.Date
+  plannedBudget     Decimal?                @map("planned_budget") @db.Decimal(18, 2)
+  budgetNotes       String?                 @map("budget_notes")
+  reason            String?
+  autoApproved      Boolean                 @default(false) @map("auto_approved")
+  requestedByUserId String                  @map("requested_by_user_id") @db.Uuid
+  requestedAt       DateTime                @default(now()) @map("requested_at")
+  decidedByUserId   String?                 @map("decided_by_user_id") @db.Uuid
+  decidedAt         DateTime?               @map("decided_at")
+  decisionComment   String?                 @map("decision_comment")
+
+  campaign    MarketingCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  requestedBy User              @relation("MarketingRevisionRequestedBy", fields: [requestedByUserId], references: [id])
+  decidedBy   User?             @relation("MarketingRevisionDecidedBy", fields: [decidedByUserId], references: [id])
+
+  @@unique([campaignId, revisionNumber])
+  @@map("marketing_campaign_revisions")
+}
+
+model MarketingCampaignMetric {
+  id                    String                @id @default(uuid()) @db.Uuid
+  campaignId            String                @map("campaign_id") @db.Uuid
+  source                MarketingMetricSource
+  systemKey             String?               @map("system_key")
+  label                 String
+  unit                  String
+  targetValue           Decimal?              @map("target_value") @db.Decimal(18, 2)
+  manualActual          Decimal?              @map("manual_actual") @db.Decimal(18, 2)
+  manualAsOf            DateTime?             @map("manual_as_of") @db.Date
+  manualUpdatedByUserId String?               @map("manual_updated_by_user_id") @db.Uuid
+  manualUpdatedAt       DateTime?             @map("manual_updated_at")
+  notes                 String?
+  sortOrder             Int                   @default(0) @map("sort_order")
+  createdAt             DateTime              @default(now()) @map("created_at")
+  updatedAt             DateTime              @updatedAt @map("updated_at")
+
+  campaign        MarketingCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  manualUpdatedBy User?             @relation("MarketingMetricUpdatedBy", fields: [manualUpdatedByUserId], references: [id])
+
+  @@map("marketing_campaign_metrics")
 }

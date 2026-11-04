@@ -23,11 +23,11 @@ export interface SalesCredit {
   salesCreditSource: SalesCreditSource;
 }
 
-/** Phase 07: an order converted from a quotation starts with the quotation's channel and sales agent. */
+/** Phase 07 / 08: an order converted from a quotation starts with the quotation's channel, sales agent and campaign. */
 export async function resolveDefaultChannel(db: Db, companyId: string, sourceQuotationRevisionId: string | null | undefined) {
-  if (!sourceQuotationRevisionId) return { salesChannelId: null, salesAgentId: null };
-  const rev = await db.quotationRevision.findFirst({ where: { id: sourceQuotationRevisionId, companyId }, select: { quotation: { select: { salesChannelId: true, salesAgentId: true } } } });
-  return { salesChannelId: rev?.quotation.salesChannelId ?? null, salesAgentId: rev?.quotation.salesAgentId ?? null };
+  if (!sourceQuotationRevisionId) return { salesChannelId: null, salesAgentId: null, campaignId: null };
+  const rev = await db.quotationRevision.findFirst({ where: { id: sourceQuotationRevisionId, companyId }, select: { quotation: { select: { salesChannelId: true, salesAgentId: true, campaignId: true } } } });
+  return { salesChannelId: rev?.quotation.salesChannelId ?? null, salesAgentId: rev?.quotation.salesAgentId ?? null, campaignId: rev?.quotation.campaignId ?? null };
 }
 
 /**

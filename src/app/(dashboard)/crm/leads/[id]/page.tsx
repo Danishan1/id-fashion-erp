@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { CrmPageHeader } from "@/components/crm/CrmPageHeader";
+import { CampaignLinkPanel } from "@/components/sales-marketing/campaigns/CampaignLinkPanel";
 import { getCrmPageContext } from "@/modules/crm/core/crm-page";
 import { getLead } from "@/modules/crm/leads/lead.service";
 import { LeadDetailClient } from "../_components/LeadDetailClient";
@@ -16,6 +17,10 @@ export default async function LeadDetailPage({ params, searchParams }: { params:
   return (
     <>
       <CrmPageHeader title="Lead" breadcrumbs={[{ label: "Leads", href: "/crm/leads" }, { label: dto.leadNumber }]} />
+      {/* Marketing campaign (Sales & Marketing Phase 08) — loads itself; hidden without access. */}
+      <div className="mb-4">
+        <CampaignLinkPanel key={`campaign-${dto.id}`} docType="lead" id={dto.id} canChange={permissions.edit} />
+      </div>
       <LeadDetailClient initialLead={dto} permissions={permissions} openConvert={convert === "1"} />
     </>
   );
