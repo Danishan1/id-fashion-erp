@@ -43,6 +43,10 @@ export const MODULES = [
   // creator / owner in the viewer's CRM team); view_all; create; edit (incl.
   // activate / pause / complete); approve / reject plans and revisions; cancel.
   "marketing_campaigns",
+  // Sales & Marketing → Audience Segments (Phase 09, 2026-11-05). view = own
+  // (owner / creator / owner in the viewer's CRM team); view_all; create; edit
+  // (definition, members, refresh, snapshots, activate / pause); delete = archive.
+  "marketing_segments",
   // HRMS is split into one module per screen (2026-10-27) so a role can be
   // given each attendance/leave screen separately. "hrms_attendance" is My
   // Attendance (punch + own records); "hrms_leave" is Leave Requests.
@@ -251,6 +255,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     sales_performance: ["view", "view_all", "create", "edit", "approve", "reject", "export"],
     sales_commissions: ["view", "view_all", "create", "edit", "approve", "reject", "export"],
     marketing_campaigns: ["view", "view_all", "create", "edit", "approve", "reject", "cancel", "export"],
+    marketing_segments: ["view", "view_all", "create", "edit", "delete", "export"],
     // No dedicated HR role exists yet in this system — MANAGEMENT owns
     // attendance/leave for now (same "closest existing manager role" default
     // used for crm above), including leave approval.
@@ -346,6 +351,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     sales_performance: ["view", "export"],
     sales_commissions: ["view", "export"],
     marketing_campaigns: ["view", "create", "edit", "export"],
+    marketing_segments: ["view", "create", "edit", "export"],
     sampling: ["view", "create", "edit", "export", "print"],
     buyer_enquiries: ["view", "create", "edit", "reject", "export", "print"],
     sales_orders: ["view", "create", "edit", "cancel", "export", "print"],

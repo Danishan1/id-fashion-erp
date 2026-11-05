@@ -299,6 +299,7 @@ model Company {
   salesCommissionStatements   SalesCommissionStatement[]
   salesIncentivePlans         SalesIncentivePlan[]
   marketingCampaigns          MarketingCampaign[]
+  marketingSegments           MarketingSegment[]
   marketingCampaignLookups    MarketingCampaignLookup[]
 
   @@map("companies")
@@ -1163,6 +1164,8 @@ model User {
   discountRulesApproved               DiscountRule[]               @relation("DiscountRuleApprovedBy")
   pricingEvents                       PricingEvent[]               @relation("PricingEventCreatedBy")
   marketingCampaignsOwned             MarketingCampaign[]          @relation("MarketingCampaignOwner")
+  marketingSegmentsOwned              MarketingSegment[]           @relation("MarketingSegmentOwner")
+  marketingSegmentsCreated            MarketingSegment[]           @relation("MarketingSegmentCreatedBy")
   marketingCampaignsCreated           MarketingCampaign[]          @relation("MarketingCampaignCreatedBy")
   marketingCampaignsUpdated           MarketingCampaign[]          @relation("MarketingCampaignUpdatedBy")
   marketingRevisionsRequested         MarketingCampaignRevision[]  @relation("MarketingRevisionRequestedBy")
@@ -15872,6 +15875,7 @@ model MarketingCampaign {
   quotations     Quotation[]
   salesOrders    SalesOrder[]
   expenses       Expense[]
+  audiences      MarketingCampaignAudience[]
 
   @@unique([companyId, code])
   @@unique([companyId, idempotencyKey])
@@ -15926,4 +15930,217 @@ model MarketingCampaignMetric {
   manualUpdatedBy User?             @relation("MarketingMetricUpdatedBy", fields: [manualUpdatedByUserId], references: [id])
 
   @@map("marketing_campaign_metrics")
+}
+
+// ── Sales & Marketing Phase 09: audience segments ─────────────────────
+// docs/sales-marketing/PHASE_09_SEGMENTS.md. A segment targets ONE kind of
+// record (CRM contact / CRM company / CRM lead / ERP customer). Members are
+// always canonical ids of those records — no personal data is copied here.
+
+enum MarketingSegmentSource {
+  CONTACT
+  COMPANY
+  LEAD
+  CUSTOMER
+}
+
+enum MarketingSegmentType {
+  DYNAMIC
+  STATIC
+}
+
+enum MarketingSegmentStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
+enum MarketingSegmentRefresh {
+  MANUAL
+  NIGHTLY
+}
+
+enum MarketingSegmentMemberKind {
+  INCLUDED
+  EXCLUDED
+}
+
+enum MarketingSegmentEvaluationStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+  SUPERSEDED
+}
+
+enum MarketingSegmentEntryOutcome {
+  INCLUDED
+  EXCLUDED
+  INELIGIBLE
+}
+
+enum MarketingCampaignAudienceRole {
+  INCLUDE
+  EXCLUDE
+}
+
+model MarketingSegment {
+  id                   String                            @id @default(uuid()) @db.Uuid
+  companyId            String                            @map("company_id") @db.Uuid
+  code                 String
+  name                 String
+  description          String?
+  purpose              String?
+  sourceType           MarketingSegmentSource            @map("source_type")
+  segmentType          MarketingSegmentType              @map("segment_type")
+  status               MarketingSegmentStatus            @default(DRAFT)
+  ownerUserId          String                            @map("owner_user_id") @db.Uuid
+  refreshSchedule      MarketingSegmentRefresh           @default(MANUAL) @map("refresh_schedule")
+  /// Latest definition version (criteria / exclusions / eligibility channel). Versions are immutable rows.
+  currentVersionNumber Int                               @default(1) @map("current_version_number")
+  /// Summary of the newest COMPLETED evaluation (never a running / failed one).
+  lastEvaluationId     String?                           @map("last_evaluation_id") @db.Uuid
+  lastEvaluatedAt      DateTime?                         @map("last_evaluated_at")
+  lastEvaluationStatus MarketingSegmentEvaluationStatus? @map("last_evaluation_status")
+  lastError            String?                           @map("last_error")
+  memberCount          Int?                              @map("member_count")
+  idempotencyKey       String?                           @map("idempotency_key")
+  version              Int                               @default(1)
+  createdByUserId      String                            @map("created_by_user_id") @db.Uuid
+  updatedByUserId      String                            @map("updated_by_user_id") @db.Uuid
+  createdAt            DateTime                          @default(now()) @map("created_at")
+  updatedAt            DateTime                          @updatedAt @map("updated_at")
+
+  company     Company                      @relation(fields: [companyId], references: [id])
+  owner       User                         @relation("MarketingSegmentOwner", fields: [ownerUserId], references: [id])
+  createdBy   User                         @relation("MarketingSegmentCreatedBy", fields: [createdByUserId], references: [id])
+  versions    MarketingSegmentVersion[]
+  members     MarketingSegmentMember[]
+  evaluations MarketingSegmentEvaluation[]
+  campaigns   MarketingCampaignAudience[]
+
+  @@unique([companyId, code])
+  @@unique([companyId, idempotencyKey])
+  @@index([companyId, status])
+  @@index([companyId, ownerUserId])
+  @@map("marketing_segments")
+}
+
+/// Immutable definition versions. A change to criteria, exclusions or the
+/// eligibility channel adds version N+1; evaluations keep the version they used.
+model MarketingSegmentVersion {
+  id                 String   @id @default(uuid()) @db.Uuid
+  segmentId          String   @map("segment_id") @db.Uuid
+  versionNumber      Int      @map("version_number")
+  criteria           Json
+  exclusionCriteria  Json?    @map("exclusion_criteria")
+  /// Eligibility channel (EMAIL / WHATSAPP / SMS / PHONE) or null = no channel check.
+  eligibilityChannel String?  @map("eligibility_channel")
+  definitionHash     String   @map("definition_hash")
+  changeNote         String?  @map("change_note")
+  createdByUserId    String   @map("created_by_user_id") @db.Uuid
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  segment MarketingSegment @relation(fields: [segmentId], references: [id], onDelete: Cascade)
+
+  @@unique([segmentId, versionNumber])
+  @@map("marketing_segment_versions")
+}
+
+/// Explicit membership: static members (INCLUDED) and manual exclusions
+/// (EXCLUDED, static or dynamic). Removing sets removed_at — history is kept;
+/// a partial unique index allows one live row per record.
+model MarketingSegmentMember {
+  id              String                     @id @default(uuid()) @db.Uuid
+  segmentId       String                     @map("segment_id") @db.Uuid
+  recordId        String                     @map("record_id") @db.Uuid
+  kind            MarketingSegmentMemberKind
+  reason          String?
+  source          String                     @default("MANUAL")
+  addedByUserId   String                     @map("added_by_user_id") @db.Uuid
+  addedAt         DateTime                   @default(now()) @map("added_at")
+  removedAt       DateTime?                  @map("removed_at")
+  removedByUserId String?                    @map("removed_by_user_id") @db.Uuid
+
+  segment MarketingSegment @relation(fields: [segmentId], references: [id], onDelete: Cascade)
+
+  @@index([segmentId, kind, removedAt])
+  @@index([segmentId, recordId])
+  @@map("marketing_segment_members")
+}
+
+/// One evaluation run = one membership snapshot. Entries become readable only
+/// once status is COMPLETED (written while RUNNING, deleted on failure).
+model MarketingSegmentEvaluation {
+  id              String                           @id @default(uuid()) @db.Uuid
+  companyId       String                           @map("company_id") @db.Uuid
+  segmentId       String                           @map("segment_id") @db.Uuid
+  versionNumber   Int                              @map("version_number")
+  status          MarketingSegmentEvaluationStatus @default(QUEUED)
+  trigger         String                           @default("MANUAL")
+  /// Whose access the run used (requester, or the segment owner for nightly runs).
+  runAsUserId     String                           @map("run_as_user_id") @db.Uuid
+  requestedByUserId String?                        @map("requested_by_user_id") @db.Uuid
+  matchedCount    Int?                             @map("matched_count")
+  excludedCount   Int?                             @map("excluded_count")
+  ineligibleCount Int?                             @map("ineligible_count")
+  memberCount     Int?                             @map("member_count")
+  /// Kept beyond the retention window (pinned by a campaign or saved by a user).
+  isKept          Boolean                          @default(false) @map("is_kept")
+  label           String?
+  entriesPurgedAt DateTime?                        @map("entries_purged_at")
+  error           String?
+  idempotencyKey  String?                          @map("idempotency_key")
+  attempts        Int                              @default(0)
+  requestedAt     DateTime                         @default(now()) @map("requested_at")
+  startedAt       DateTime?                        @map("started_at")
+  finishedAt      DateTime?                        @map("finished_at")
+
+  segment  MarketingSegment             @relation(fields: [segmentId], references: [id], onDelete: Cascade)
+  entries  MarketingSegmentSnapshotEntry[]
+  pinnedBy MarketingCampaignAudience[]
+
+  @@unique([segmentId, idempotencyKey])
+  @@index([segmentId, status, finishedAt])
+  @@index([companyId, status])
+  @@map("marketing_segment_evaluations")
+}
+
+model MarketingSegmentSnapshotEntry {
+  id           String                       @id @default(uuid()) @db.Uuid
+  evaluationId String                       @map("evaluation_id") @db.Uuid
+  recordId     String                       @map("record_id") @db.Uuid
+  outcome      MarketingSegmentEntryOutcome
+  /// CRITERIA (dynamic) or STATIC (explicit member).
+  origin       String
+  /// Why it was left out: MANUAL_EXCLUSION, EXCLUSION_RULE, CONSENT_*, NO_ADDRESS, NOT_ACCESSIBLE, SOURCE_UNAVAILABLE.
+  reason       String?
+
+  evaluation MarketingSegmentEvaluation @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+
+  @@unique([evaluationId, recordId])
+  @@index([evaluationId, outcome])
+  @@map("marketing_segment_snapshot_entries")
+}
+
+/// Campaign audience (Phase 09): include / exclude segments, optionally pinned to a snapshot.
+model MarketingCampaignAudience {
+  id                  String                        @id @default(uuid()) @db.Uuid
+  companyId           String                        @map("company_id") @db.Uuid
+  campaignId          String                        @map("campaign_id") @db.Uuid
+  segmentId           String                        @map("segment_id") @db.Uuid
+  role                MarketingCampaignAudienceRole
+  pinnedEvaluationId  String?                       @map("pinned_evaluation_id") @db.Uuid
+  addedByUserId       String                        @map("added_by_user_id") @db.Uuid
+  createdAt           DateTime                      @default(now()) @map("created_at")
+  updatedAt           DateTime                      @updatedAt @map("updated_at")
+
+  campaign        MarketingCampaign           @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  segment         MarketingSegment            @relation(fields: [segmentId], references: [id])
+  pinnedEvaluation MarketingSegmentEvaluation? @relation(fields: [pinnedEvaluationId], references: [id])
+
+  @@unique([campaignId, segmentId])
+  @@index([segmentId])
+  @@map("marketing_campaign_audiences")
 }

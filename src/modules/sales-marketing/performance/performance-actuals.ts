@@ -23,7 +23,7 @@ export interface MetricTotal {
 /** Key = rep user id / territory id / channel id (Phase 07) / campaign id (Phase 08) / "TOTAL"; "" = none. */
 export type MetricTotals = Map<string, MetricTotal>;
 
-const bookedOrderSql = (alias: string) =>
+export const bookedOrderSql = (alias: string) =>
   Prisma.sql`(${Prisma.raw(alias)}.status::text IN (${Prisma.join([...BOOKED_ORDER_STATUSES])})
     OR (${Prisma.raw(alias)}.status::text = 'ON_HOLD' AND ${Prisma.raw(alias)}.status_before_hold::text IN (${Prisma.join([...BOOKED_ORDER_STATUSES])})))`;
 

@@ -56,7 +56,7 @@ export function useApi<T>(url: string | null) {
 }
 
 /** Sends JSON; returns the `data` payload or throws the API's message. */
-export async function send<T = unknown>(url: string, method: "POST" | "PATCH" | "DELETE", body?: unknown): Promise<T> {
+export async function send<T = unknown>(url: string, method: "POST" | "PUT" | "PATCH" | "DELETE", body?: unknown): Promise<T> {
   const res = await fetch(url, { method, headers: { "Content-Type": "application/json", "x-toast": "off" }, body: body === undefined ? undefined : JSON.stringify(body) });
   if (!res.ok) throw new Error(await getApiErrorMessage(res));
   return (await res.json()).data as T;
