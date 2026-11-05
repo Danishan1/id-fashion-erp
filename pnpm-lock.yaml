@@ -42,8 +42,8 @@ importers:
         specifier: ^22.0.2
         version: 22.2.0(supports-color@10.2.2)
       geist:
-        specifier: 1.5.1
-        version: 1.5.1(next@16.3.1(@babel/core@7.29.7(supports-color@10.2.2))(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))
+        specifier: 1.9.0
+        version: 1.9.0(next@16.3.1(@babel/core@7.29.7(supports-color@10.2.2))(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))
       ioredis:
         specifier: ^6.0.0
         version: 6.0.0(supports-color@10.2.2)
@@ -2508,8 +2508,8 @@ packages:
     resolution: {integrity: sha512-zV/5HKTfCeKWnxG0Dmrw51hEWFGfcF2xiXqcA3+J90WDuP0SvoiSO5ORvcBsifmx/FoIjgQN3oNOGaQ5PhLFkg==}
     engines: {node: '>=18'}
 
-  geist@1.5.1:
-    resolution: {integrity: sha512-mAHZxIsL2o3ZITFaBVFBnwyDOw+zNLYum6A6nIjpzCGIO8QtC3V76XF2RnZTyLx1wlDTmMDy8jg3Ib52MIjGvQ==}
+  geist@1.9.0:
+    resolution: {integrity: sha512-uxiyxH5PaKDaK2//ln06NxJEz5gc6771BTwSs1YFgNnASGtp1SYD3VZShSIijvlNwDjMgHnzqye4MmIUTspEzw==}
     peerDependencies:
       next: '>=13.2.0'
 
@@ -6754,7 +6754,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  geist@1.5.1(next@16.3.1(@babel/core@7.29.7(supports-color@10.2.2))(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)):
+  geist@1.9.0(next@16.3.1(@babel/core@7.29.7(supports-color@10.2.2))(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)):
     dependencies:
       next: 16.3.1(@babel/core@7.29.7(supports-color@10.2.2))(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
 
