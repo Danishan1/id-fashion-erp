@@ -23,6 +23,7 @@ export default async function SalesMarketingLayout({ children }: { children: Rea
       ["sales_commissions", "view"],
       ["marketing_campaigns", "view"],
       ["marketing_segments", "view"],
+      ["marketing_delivery", "view"],
     ],
     { sessionIssuedAt: session.user.sessionIssuedAt }
   ).catch(() => notFound());

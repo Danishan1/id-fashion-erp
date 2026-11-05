@@ -73,7 +73,23 @@ export const SMS_MAX_LENGTH = 1600;
 
 export const TEMPLATE_CHANNELS: Record<ChannelType, TemplateChannelConfig> = {
   EMAIL: { label: "Email", enabled: true, subject: "required", maxBodyLength: TEMPLATE_MAX_BODY, providerFields: [], html: false },
-  SMS: { label: "SMS", enabled: true, subject: "none", maxBodyLength: SMS_MAX_LENGTH, smsSegments: true, providerFields: [], html: false },
+  SMS: {
+    label: "SMS",
+    enabled: true,
+    subject: "none",
+    maxBodyLength: SMS_MAX_LENGTH,
+    smsSegments: true,
+    providerFields: [
+      {
+        key: "externalTemplateId",
+        label: "Provider template / flow id (optional)",
+        help: "Only for SMS providers that send DLT-registered templates (e.g. the MSG91 flow id). Marketing delivery needs it for such providers.",
+        pattern: "^[A-Za-z0-9_.-]{1,80}$",
+        maxLength: 80,
+      },
+    ],
+    html: false,
+  },
   WHATSAPP: {
     label: "WhatsApp",
     enabled: true,

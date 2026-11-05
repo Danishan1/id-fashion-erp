@@ -24,10 +24,12 @@ describe("Sales & Marketing module wiring", () => {
   });
 
   it("owns its pages for route protection and module entitlements", () => {
-    expect(modulesForPath("/sales-marketing")).toEqual(["sales_marketing", "sales_quotations", "sales_marketing_settings", "sales_pricing", "sales_performance", "sales_commissions", "marketing_campaigns", "marketing_segments"]);
+    expect(modulesForPath("/sales-marketing")).toEqual(["sales_marketing", "sales_quotations", "sales_marketing_settings", "sales_pricing", "sales_performance", "sales_commissions", "marketing_campaigns", "marketing_segments", "marketing_delivery"]);
     expect(modulesForPath("/sales-marketing/commissions/plans/x")).toEqual(["sales_commissions"]);
     expect(modulesForPath("/sales-marketing/campaigns/calendar")).toEqual(["marketing_campaigns"]);
     expect(modulesForPath("/sales-marketing/segments/x")).toEqual(["marketing_segments"]);
+    expect(modulesForPath("/sales-marketing/delivery/runs/x")).toEqual(["marketing_delivery"]);
+    expect(modulesForPath("/sales-marketing/delivery/connections")).toEqual(["sales_marketing_settings"]);
     expect(modulesForPath("/sales-marketing/targets/x")).toEqual(["sales_performance"]);
     expect(modulesForPath("/sales-marketing/pricing/discounts/x")).toEqual(["sales_pricing"]);
     expect(modulesForPath("/sales-marketing/enquiries/x")).toEqual(["sales_marketing"]);

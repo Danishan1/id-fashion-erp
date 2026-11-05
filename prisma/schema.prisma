@@ -300,6 +300,8 @@ model Company {
   salesIncentivePlans         SalesIncentivePlan[]
   marketingCampaigns          MarketingCampaign[]
   marketingSegments           MarketingSegment[]
+  marketingChannelConnections MarketingChannelConnection[]
+  marketingDeliveryRuns       MarketingDeliveryRun[]
   marketingCampaignLookups    MarketingCampaignLookup[]
 
   @@map("companies")
@@ -1166,6 +1168,8 @@ model User {
   marketingCampaignsOwned             MarketingCampaign[]          @relation("MarketingCampaignOwner")
   marketingSegmentsOwned              MarketingSegment[]           @relation("MarketingSegmentOwner")
   marketingSegmentsCreated            MarketingSegment[]           @relation("MarketingSegmentCreatedBy")
+  marketingConnectionsCreated         MarketingChannelConnection[] @relation("MarketingConnectionCreatedBy")
+  marketingDeliveryRunsStarted        MarketingDeliveryRun[]       @relation("MarketingDeliveryRunInitiatedBy")
   marketingCampaignsCreated           MarketingCampaign[]          @relation("MarketingCampaignCreatedBy")
   marketingCampaignsUpdated           MarketingCampaign[]          @relation("MarketingCampaignUpdatedBy")
   marketingRevisionsRequested         MarketingCampaignRevision[]  @relation("MarketingRevisionRequestedBy")
@@ -11463,6 +11467,7 @@ model CrmContact {
   conversationParticipants CrmConversationParticipant[]
   buyerEnquiries           BuyerEnquiry[]
   quotations               Quotation[]
+  marketingDeliveries      MarketingDelivery[]
 
   @@index([companyId, crmCompanyId])
   @@index([companyId, archivedAt, createdAt])
@@ -12276,6 +12281,8 @@ model CrmMessageTemplate {
   currentVersion CrmMessageTemplateVersion?  @relation("CrmMessageTemplateCurrentVersion", fields: [currentVersionId], references: [id])
   versions       CrmMessageTemplateVersion[] @relation("CrmMessageTemplateVersions")
   messages       CrmMessage[]
+  marketingCampaignChannels MarketingCampaignChannel[]
+  marketingDeliveryRuns     MarketingDeliveryRun[]
 
   @@index([companyId, status, updatedAt])
   @@index([companyId, channelType, status])
@@ -12309,6 +12316,7 @@ model CrmMessageTemplateVersion {
   currentOf CrmMessageTemplate? @relation("CrmMessageTemplateCurrentVersion")
   createdBy User                @relation("CrmMessageTemplateVersionCreatedBy", fields: [createdByUserId], references: [id])
   messages  CrmMessage[]
+  marketingDeliveryRuns MarketingDeliveryRun[]
 
   @@unique([templateId, versionNumber])
   @@map("crm_message_template_versions")
@@ -15876,6 +15884,8 @@ model MarketingCampaign {
   salesOrders    SalesOrder[]
   expenses       Expense[]
   audiences      MarketingCampaignAudience[]
+  channels       MarketingCampaignChannel[]
+  deliveryRuns   MarketingDeliveryRun[]
 
   @@unique([companyId, code])
   @@unique([companyId, idempotencyKey])
@@ -16143,4 +16153,237 @@ model MarketingCampaignAudience {
   @@unique([campaignId, segmentId])
   @@index([segmentId])
   @@map("marketing_campaign_audiences")
+}
+
+// ── Sales & Marketing Phase 10: marketing channels & delivery ─────────
+// Docs: docs/sales-marketing/PHASE_10_DELIVERY.md
+
+enum MarketingChannelType {
+  EMAIL
+  SMS
+  WHATSAPP
+}
+
+enum MarketingProviderKey {
+  SMTP
+  BREVO
+  MSG91
+  WHATSAPP_CLOUD
+}
+
+enum MarketingConnectionStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum MarketingDeliveryRunStatus {
+  PREPARING
+  SCHEDULED
+  QUEUED
+  RUNNING
+  COMPLETED
+  PARTIALLY_COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum MarketingDeliveryStatus {
+  PENDING
+  SUBMITTING
+  ACCEPTED
+  SENT
+  DELIVERED
+  BOUNCED
+  REJECTED
+  FAILED
+  SUPPRESSED
+  CANCELLED
+  UNKNOWN
+}
+
+/// A configured provider account for one channel (an SMTP mailbox, a Brevo
+/// account, an MSG91 sender, a WhatsApp business number). Secrets are stored
+/// only AES-GCM encrypted (`secrets_encrypted`, a JSON object) and never
+/// leave the server; `secret_hints` holds masked tails for display.
+model MarketingChannelConnection {
+  id                  String                    @id @default(uuid()) @db.Uuid
+  companyId           String                    @map("company_id") @db.Uuid
+  code                String
+  name                String
+  description         String?
+  channelType         MarketingChannelType      @map("channel_type")
+  providerKey         MarketingProviderKey      @map("provider_key")
+  status              MarketingConnectionStatus @default(ACTIVE)
+  // Non-secret provider settings (host, sender, ids…), validated by the adapter.
+  config              Json                      @default("{}")
+  secretsEncrypted    String?                   @map("secrets_encrypted")
+  secretHints         Json                      @default("{}") @map("secret_hints")
+  // Random path token for the public webhook URL (also checked in constant time).
+  webhookToken        String                    @unique @map("webhook_token")
+  // OPT_OUT: send unless a restriction is recorded; OPT_IN: only contacts with an ALLOWED consent row.
+  consentPolicy       String                    @default("OPT_OUT") @map("consent_policy")
+  ratePerMinute       Int                       @default(60) @map("rate_per_minute")
+  batchSize           Int                       @default(50) @map("batch_size")
+  lastTestedAt        DateTime?                 @map("last_tested_at")
+  lastTestStatus      String?                   @map("last_test_status")
+  lastTestMessage     String?                   @map("last_test_message")
+  consecutiveFailures Int                       @default(0) @map("consecutive_failures")
+  circuitOpenUntil    DateTime?                 @map("circuit_open_until")
+  lastSendAt          DateTime?                 @map("last_send_at")
+  createdByUserId     String                    @map("created_by_user_id") @db.Uuid
+  updatedByUserId     String?                   @map("updated_by_user_id") @db.Uuid
+  version             Int                       @default(1)
+  createdAt           DateTime                  @default(now()) @map("created_at")
+  updatedAt           DateTime                  @updatedAt @map("updated_at")
+
+  company          Company                    @relation(fields: [companyId], references: [id])
+  createdBy        User                       @relation("MarketingConnectionCreatedBy", fields: [createdByUserId], references: [id])
+  campaignChannels MarketingCampaignChannel[]
+  runs             MarketingDeliveryRun[]
+  deliveries       MarketingDelivery[]
+  events           MarketingDeliveryEvent[]
+
+  @@unique([companyId, code])
+  @@index([companyId, channelType, status])
+  @@map("marketing_channel_connections")
+}
+
+/// A campaign's use of one connection + one CRM message template.
+model MarketingCampaignChannel {
+  id              String   @id @default(uuid()) @db.Uuid
+  companyId       String   @map("company_id") @db.Uuid
+  campaignId      String   @map("campaign_id") @db.Uuid
+  connectionId    String   @map("connection_id") @db.Uuid
+  templateId      String   @map("template_id") @db.Uuid
+  isActive        Boolean  @default(true) @map("is_active")
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  campaign   MarketingCampaign          @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  connection MarketingChannelConnection @relation(fields: [connectionId], references: [id])
+  template   CrmMessageTemplate         @relation(fields: [templateId], references: [id])
+  runs       MarketingDeliveryRun[]
+
+  @@unique([campaignId, connectionId, templateId])
+  @@index([companyId, campaignId])
+  @@map("marketing_campaign_channels")
+}
+
+/// One execution of a campaign channel against the campaign's audience
+/// snapshots. Counts are derived from the deliveries; the audience used is
+/// frozen in `audience_json` (segment + evaluation ids, include / exclude).
+model MarketingDeliveryRun {
+  id                String                     @id @default(uuid()) @db.Uuid
+  companyId         String                     @map("company_id") @db.Uuid
+  campaignId        String                     @map("campaign_id") @db.Uuid
+  campaignChannelId String                     @map("campaign_channel_id") @db.Uuid
+  connectionId      String                     @map("connection_id") @db.Uuid
+  runNumber         Int                        @map("run_number")
+  channelType       MarketingChannelType       @map("channel_type")
+  providerKey       MarketingProviderKey       @map("provider_key")
+  templateId        String                     @map("template_id") @db.Uuid
+  templateVersionId String                     @map("template_version_id") @db.Uuid
+  audienceJson      Json                       @default("{}") @map("audience_json")
+  exclusionSummary  Json                       @default("{}") @map("exclusion_summary")
+  status            MarketingDeliveryRunStatus @default(PREPARING)
+  scheduledFor      DateTime?                  @map("scheduled_for")
+  timezone          String                     @default("Asia/Kolkata")
+  idempotencyKey    String?                    @map("idempotency_key")
+  initiatedByUserId String                     @map("initiated_by_user_id") @db.Uuid
+  plannedCount      Int                        @default(0) @map("planned_count")
+  cancelRequestedAt DateTime?                  @map("cancel_requested_at")
+  cancelledByUserId String?                    @map("cancelled_by_user_id") @db.Uuid
+  cancelReason      String?                    @map("cancel_reason")
+  preparedAt        DateTime?                  @map("prepared_at")
+  startedAt         DateTime?                  @map("started_at")
+  finishedAt        DateTime?                  @map("finished_at")
+  lockToken         String?                    @map("lock_token")
+  lockedAt          DateTime?                  @map("locked_at")
+  nextDispatchAt    DateTime?                  @map("next_dispatch_at")
+  error             String?
+  createdAt         DateTime                   @default(now()) @map("created_at")
+  updatedAt         DateTime                   @updatedAt @map("updated_at")
+
+  company         Company                    @relation(fields: [companyId], references: [id])
+  campaign        MarketingCampaign          @relation(fields: [campaignId], references: [id])
+  campaignChannel MarketingCampaignChannel   @relation(fields: [campaignChannelId], references: [id])
+  connection      MarketingChannelConnection @relation(fields: [connectionId], references: [id])
+  template        CrmMessageTemplate         @relation(fields: [templateId], references: [id])
+  templateVersion CrmMessageTemplateVersion  @relation(fields: [templateVersionId], references: [id])
+  initiatedBy     User                       @relation("MarketingDeliveryRunInitiatedBy", fields: [initiatedByUserId], references: [id])
+  deliveries      MarketingDelivery[]
+
+  @@unique([campaignId, runNumber])
+  @@unique([companyId, idempotencyKey])
+  @@index([companyId, status])
+  @@index([status, nextDispatchAt])
+  @@map("marketing_delivery_runs")
+}
+
+/// One intended recipient of a run. `destination` is the address the message
+/// went to (needed to send and to match bounces); no message content is kept.
+model MarketingDelivery {
+  id                String                  @id @default(uuid()) @db.Uuid
+  companyId         String                  @map("company_id") @db.Uuid
+  runId             String                  @map("run_id") @db.Uuid
+  connectionId      String                  @map("connection_id") @db.Uuid
+  contactId         String                  @map("contact_id") @db.Uuid
+  destination       String?
+  status            MarketingDeliveryStatus @default(PENDING)
+  skipReason        String?                 @map("skip_reason")
+  attempts          Int                     @default(0)
+  lastAttemptAt     DateTime?               @map("last_attempt_at")
+  nextAttemptAt     DateTime?               @map("next_attempt_at")
+  lockToken         String?                 @map("lock_token")
+  providerMessageId String?                 @map("provider_message_id")
+  providerStatus    String?                 @map("provider_status")
+  errorCode         String?                 @map("error_code")
+  errorMessage      String?                 @map("error_message")
+  acceptedAt        DateTime?               @map("accepted_at")
+  deliveredAt       DateTime?               @map("delivered_at")
+  failedAt          DateTime?               @map("failed_at")
+  statusAt          DateTime?               @map("status_at")
+  createdAt         DateTime                @default(now()) @map("created_at")
+  updatedAt         DateTime                @updatedAt @map("updated_at")
+
+  run        MarketingDeliveryRun       @relation(fields: [runId], references: [id], onDelete: Cascade)
+  connection MarketingChannelConnection @relation(fields: [connectionId], references: [id])
+  contact    CrmContact                 @relation(fields: [contactId], references: [id])
+  events     MarketingDeliveryEvent[]
+
+  @@unique([runId, contactId])
+  @@index([runId, status, nextAttemptAt])
+  @@index([connectionId, providerMessageId])
+  @@index([companyId, contactId])
+  @@map("marketing_deliveries")
+}
+
+/// Provider callbacks (webhook inbox) and our own send attempts, per delivery.
+/// `event_key` is unique per connection: a repeated webhook is stored once.
+model MarketingDeliveryEvent {
+  id                String    @id @default(uuid()) @db.Uuid
+  companyId         String    @map("company_id") @db.Uuid
+  connectionId      String    @map("connection_id") @db.Uuid
+  deliveryId        String?   @map("delivery_id") @db.Uuid
+  source            String    @default("PROVIDER")
+  eventKey          String    @map("event_key")
+  providerMessageId String?   @map("provider_message_id")
+  correlationId     String?   @map("correlation_id")
+  eventType         String    @map("event_type")
+  normalizedStatus  String?   @map("normalized_status")
+  occurredAt        DateTime  @map("occurred_at")
+  receivedAt        DateTime  @default(now()) @map("received_at")
+  processedAt       DateTime? @map("processed_at")
+  result            String?
+  errorCode         String?   @map("error_code")
+  detail            String?
+
+  connection MarketingChannelConnection @relation(fields: [connectionId], references: [id])
+  delivery   MarketingDelivery?         @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, eventKey])
+  @@index([deliveryId, occurredAt])
+  @@index([processedAt, receivedAt])
+  @@map("marketing_delivery_events")
 }

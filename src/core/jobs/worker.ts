@@ -10,6 +10,7 @@ import { startBulkActionWorker } from "@/modules/bulk-actions/bulk-actions.worke
 import { startAttendanceJobsWorker } from "@/modules/hrms/attendance-jobs.worker";
 import { startForecastJobsWorker } from "@/modules/sales-marketing/forecast/forecast-jobs.worker";
 import { startSegmentJobsWorker } from "@/modules/sales-marketing/segments/segment-jobs.worker";
+import { startDeliveryJobsWorker } from "@/modules/sales-marketing/delivery/delivery-jobs.worker";
 
 /**
  * Standalone process for the Bulk Master Data Import background queue —
@@ -76,12 +77,15 @@ const forecastWorker = startForecastJobsWorker();
 // Sales & Marketing Phase 09: segment evaluations, nightly refresh, recovery.
 const segmentWorker = startSegmentJobsWorker();
 
+// Sales & Marketing Phase 10: campaign delivery runs, provider events, recovery.
+const deliveryWorker = startDeliveryJobsWorker();
+
 process.on("SIGTERM", async () => {
-  await Promise.all([worker.close(), crmWorker.close(), bulkWorker.close(), platformWorker.close(), attendanceWorker.close(), forecastWorker.close(), segmentWorker.close()]);
+  await Promise.all([worker.close(), crmWorker.close(), bulkWorker.close(), platformWorker.close(), attendanceWorker.close(), forecastWorker.close(), segmentWorker.close(), deliveryWorker.close()]);
   process.exit(0);
 });
 process.on("SIGINT", async () => {
-  await Promise.all([worker.close(), crmWorker.close(), bulkWorker.close(), platformWorker.close(), attendanceWorker.close(), forecastWorker.close(), segmentWorker.close()]);
+  await Promise.all([worker.close(), crmWorker.close(), bulkWorker.close(), platformWorker.close(), attendanceWorker.close(), forecastWorker.close(), segmentWorker.close(), deliveryWorker.close()]);
   process.exit(0);
 });
 
