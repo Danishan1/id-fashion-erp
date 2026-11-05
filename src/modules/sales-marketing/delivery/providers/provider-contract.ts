@@ -31,6 +31,15 @@ export interface OutboundMarketingMessage {
   unsubscribeUrl: string | null;
   /** Short tag for provider-side reporting (campaign code). */
   tag: string | null;
+  /** Phase 11: approved library files (email only). `content` is absent in validation-only calls. */
+  attachments?: OutboundAttachment[];
+}
+
+export interface OutboundAttachment {
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  content?: Buffer;
 }
 
 /**
@@ -92,7 +101,7 @@ export interface MarketingProviderAdapter {
   /** Normalised destination, or null when it can't be used. */
   normalizeDestination(raw: string, config: Record<string, string | number>): string | null;
   /** Problems with a message before it is sent (missing template id, too long…). */
-  validateMessage(msg: Pick<OutboundMarketingMessage, "subject" | "body" | "providerMetadata" | "parameters">, config: Record<string, string | number>): string[];
+  validateMessage(msg: Pick<OutboundMarketingMessage, "subject" | "body" | "providerMetadata" | "parameters" | "attachments">, config: Record<string, string | number>): string[];
   testConnection(conn: ConnectionRuntime, deps: ProviderDeps): Promise<{ ok: boolean; message: string }>;
   send(conn: ConnectionRuntime, msg: OutboundMarketingMessage, deps: ProviderDeps): Promise<SendOutcome>;
   /** Provider-specific check on top of the URL token (signatures). */

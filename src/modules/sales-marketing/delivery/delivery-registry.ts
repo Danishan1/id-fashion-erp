@@ -45,6 +45,8 @@ export interface ProviderCapabilities {
   subject: boolean;
   /** Connection test available. */
   connectionTest: boolean;
+  /** Phase 11: sends library files (approved asset versions) as email attachments. */
+  attachments: boolean;
 }
 
 export interface ProviderDef {
@@ -74,7 +76,7 @@ export const MARKETING_PROVIDERS = {
     channel: "EMAIL",
     summary: "Any mail service that offers SMTP (Google Workspace, Zoho, Amazon SES, Brevo SMTP…). The server's acceptance is recorded; SMTP has no delivery receipts.",
     setup: ["Create an SMTP user / app password at your mail provider.", "Enter host, port and security as your provider documents them.", "The From address must be one your provider allows you to send as (SPF / DKIM set up for its domain)."],
-    capabilities: { deliveryReceipts: false, webhooks: false, webhookAuth: "NONE", correlationEcho: false, statusLookup: false, unsubscribeEvents: false, providerTemplateRequired: false, subject: true, connectionTest: true },
+    capabilities: { deliveryReceipts: false, webhooks: false, webhookAuth: "NONE", correlationEcho: false, statusLookup: false, unsubscribeEvents: false, providerTemplateRequired: false, subject: true, connectionTest: true, attachments: true },
     fields: [
       { key: "host", label: "SMTP host", type: "text", required: true, placeholder: "smtp.example.com" },
       { key: "port", label: "Port", type: "number", required: true, placeholder: "587" },
@@ -102,7 +104,7 @@ export const MARKETING_PROVIDERS = {
     channel: "EMAIL",
     summary: "Brevo transactional email API with delivery, bounce, complaint and unsubscribe callbacks.",
     setup: ["In Brevo: SMTP & API → API keys → create a key.", "Verify the sender address / domain in Brevo.", "In Brevo: Transactional → Settings → Webhook, add the webhook URL shown here for delivered, hard/soft bounce, blocked, spam, unsubscribed, error, opened and click events."],
-    capabilities: { deliveryReceipts: true, webhooks: true, webhookAuth: "URL_TOKEN", correlationEcho: true, statusLookup: false, unsubscribeEvents: true, providerTemplateRequired: false, subject: true, connectionTest: true },
+    capabilities: { deliveryReceipts: true, webhooks: true, webhookAuth: "URL_TOKEN", correlationEcho: true, statusLookup: false, unsubscribeEvents: true, providerTemplateRequired: false, subject: true, connectionTest: true, attachments: true },
     fields: [
       { key: "fromEmail", label: "Sender email", type: "email", required: true },
       { key: "fromName", label: "Sender name", type: "text", required: false },
@@ -121,7 +123,7 @@ export const MARKETING_PROVIDERS = {
       "On the CRM SMS template version, enter the MSG91 flow / template id.",
       "In MSG91, set the delivery-report webhook to the URL shown here.",
     ],
-    capabilities: { deliveryReceipts: true, webhooks: true, webhookAuth: "URL_TOKEN", correlationEcho: false, statusLookup: false, unsubscribeEvents: false, providerTemplateRequired: true, subject: false, connectionTest: true },
+    capabilities: { deliveryReceipts: true, webhooks: true, webhookAuth: "URL_TOKEN", correlationEcho: false, statusLookup: false, unsubscribeEvents: false, providerTemplateRequired: true, subject: false, connectionTest: true, attachments: false },
     fields: [{ key: "senderId", label: "Sender ID (DLT header)", type: "text", required: true, placeholder: "INDRDH" }, countryCodeField],
     secretFields: [{ key: "authKey", label: "Auth key", required: true }],
     liveVerified: false,
@@ -136,7 +138,7 @@ export const MARKETING_PROVIDERS = {
       "Get each marketing template approved by Meta; enter its name and language on the CRM WhatsApp template version.",
       "In the Meta app: Webhooks → WhatsApp Business Account → callback URL shown here, verify token as entered below, subscribe to 'messages'.",
     ],
-    capabilities: { deliveryReceipts: true, webhooks: true, webhookAuth: "SIGNATURE", correlationEcho: true, statusLookup: false, unsubscribeEvents: false, providerTemplateRequired: true, subject: false, connectionTest: true },
+    capabilities: { deliveryReceipts: true, webhooks: true, webhookAuth: "SIGNATURE", correlationEcho: true, statusLookup: false, unsubscribeEvents: false, providerTemplateRequired: true, subject: false, connectionTest: true, attachments: false },
     fields: [
       { key: "phoneNumberId", label: "Phone number ID", type: "text", required: true },
       { key: "businessAccountId", label: "WhatsApp business account ID", type: "text", required: false },

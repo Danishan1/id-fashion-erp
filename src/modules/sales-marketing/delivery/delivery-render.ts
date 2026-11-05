@@ -4,6 +4,7 @@ import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { renderTemplateContent, renderWithSampleData, type RenderedTemplate } from "@/modules/crm/templates/template-engine";
 import type { TemplateEntity } from "@/modules/crm/templates/template-registry";
 import type { MarketingChannelKey } from "./delivery-registry";
+import { DELIVERY_TEMPLATE_ENTITIES } from "./delivery-render-entities";
 
 type Db = Prisma.TransactionClient | typeof prisma;
 
@@ -18,7 +19,7 @@ type Db = Prisma.TransactionClient | typeof prisma;
 const clean = (v: string | null | undefined) => (v == null ? null : String(v).trim() || null);
 const firstWord = (v: string | null | undefined) => clean(v)?.split(/\s+/)[0] ?? null;
 
-export const DELIVERY_TEMPLATE_ENTITIES: ReadonlySet<TemplateEntity> = new Set<TemplateEntity>(["contact", "company", "user"]);
+export { DELIVERY_TEMPLATE_ENTITIES };
 
 export function providerMetadataOf(v: Pick<CrmMessageTemplateVersion, "providerMetadata">): Record<string, string> {
   const raw = (v.providerMetadata ?? {}) as Record<string, unknown>;
@@ -98,4 +99,13 @@ export function renderForRecipient(v: Pick<CrmMessageTemplateVersion, "subject" 
 /** The footer every campaign email gets — the unsubscribe path can't be left out of a template. */
 export function withUnsubscribeFooter(body: string, url: string): string {
   return `${body.trimEnd()}\n\n--\nYou are receiving this because you are in our contact list. To stop receiving these emails, open:\n${url}\n`;
+}
+
+/**
+ * Phase 11 rule for campaign messages: a variable with no value and no
+ * fallback is an error, never a silent blank. The recipient is skipped
+ * (RENDER_FAILED); authors avoid it with a fallback, e.g. {{contact.first_name|there}}.
+ */
+export function strictRenderProblems(rendered: Pick<RenderedTemplate, "missing">): string[] {
+  return rendered.missing.filter((m) => !m.usedFallback).map((m) => (m.reason === "NO_CONTEXT" ? `{{${m.key}}}: no ${m.key.split(".")[0]} record for this recipient, and no fallback.` : `{{${m.key}}} has no value for this recipient, and no fallback.`));
 }

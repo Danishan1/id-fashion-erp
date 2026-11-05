@@ -10,7 +10,8 @@ import { checkContacts, markDuplicateAddresses, resolveCampaignAudience } from "
 import { auditDelivery, publicBaseUrl, recordDeliveryCampaignEvent, RUNS_TABLE, runtimeOf } from "./delivery-common";
 import { runOutcomeCounts } from "./delivery-engine";
 import { DELIVERY_STATUSES, MARKETING_PROVIDERS, OPEN_RUN_STATUSES, RUN_STATUSES, type ConsentPolicyKey, type MarketingChannelKey, type RunStatusKey } from "./delivery-registry";
-import { checkTemplateForDelivery, loadUsableTemplate, providerMetadataOf, sampleRender } from "./delivery-render";
+import { checkTemplateForDelivery, sampleRender } from "./delivery-render";
+import { loadAttachmentFiles, loadRunContent, resolveChannelContent, type ResolvedContent } from "@/modules/sales-marketing/content/content-resolver";
 import { defaultProviderDeps, getProviderAdapter, type ProviderDeps } from "./providers";
 
 /**
@@ -27,7 +28,10 @@ import { defaultProviderDeps, getProviderAdapter, type ProviderDeps } from "./pr
 const CAMPAIGN_CHANNELS_TABLE = "marketing_campaign_channels";
 const MAX_SCHEDULE_DAYS = 90;
 
-const addChannelSchema = z.object({ connectionId: z.string().uuid("Choose a connection"), templateId: z.string().uuid("Choose a message template") }).strict();
+const addChannelSchema = z
+  .object({ connectionId: z.string().uuid("Choose a connection"), templateId: z.string().uuid("Choose a message template").optional(), contentId: z.string().uuid("Choose campaign content").optional() })
+  .strict()
+  .refine((v) => Boolean(v.templateId) !== Boolean(v.contentId), { message: "Choose either a template or campaign content." });
 const startRunSchema = z
   .object({
     scheduledFor: z.string().datetime({ offset: true }).optional().nullable(),
@@ -73,33 +77,39 @@ export async function listCampaignChannels(actor: SalesActor, campaignId: string
   const campaign = await loadCampaign(actor, campaignId);
   const rows = await prisma.marketingCampaignChannel.findMany({
     where: { campaignId: campaign.id, companyId: actor.companyId },
-    include: { connection: true, template: { select: { id: true, name: true, channelType: true, status: true, currentVersion: { select: { versionNumber: true, subject: true, body: true, variables: true, providerMetadata: true } } } } },
+    include: { connection: true, template: { select: { id: true, name: true, channelType: true, status: true } }, content: { select: { id: true, name: true, status: true } } },
     orderBy: { createdAt: "asc" },
   });
   const runs = await prisma.marketingDeliveryRun.findMany({ where: { campaignId: campaign.id }, orderBy: { runNumber: "desc" }, select: { id: true, campaignChannelId: true, runNumber: true, status: true, scheduledFor: true, createdAt: true, finishedAt: true, plannedCount: true } });
-  return {
-    campaign: { id: campaign.id, code: campaign.code, status: campaign.status },
-    channels: rows.map((r) => {
-      const def = MARKETING_PROVIDERS[r.connection.providerKey];
-      const v = r.template.currentVersion;
-      const problems = [
-        ...(r.connection.status !== "ACTIVE" ? ["The connection is disabled."] : []),
-        ...(r.template.status !== "ACTIVE" ? [`The template is ${r.template.status.toLowerCase()}.`] : []),
-        ...(v ? checkTemplateForDelivery(v) : ["The template has no version."]),
-        ...(v ? getProviderAdapter(r.connection.providerKey).validateMessage({ ...sampleRender(v), providerMetadata: providerMetadataOf(v) }, r.connection.config as Record<string, string | number>) : []),
-        ...(r.connection.channelType === "EMAIL" && !publicBaseUrl() ? ["The server has no public address for unsubscribe links (set APP_BASE_URL)."] : []),
-      ];
-      return {
-        id: r.id,
-        isActive: r.isActive,
-        channelType: r.connection.channelType,
-        connection: { id: r.connection.id, code: r.connection.code, name: r.connection.name, providerKey: r.connection.providerKey, providerLabel: def.label, status: r.connection.status, consentPolicy: r.connection.consentPolicy, capabilities: def.capabilities, liveVerified: def.liveVerified, lastTestStatus: r.connection.lastTestStatus },
-        template: { id: r.template.id, name: r.template.name, status: r.template.status, versionNumber: v?.versionNumber ?? null },
-        problems,
-        runs: runs.filter((x) => x.campaignChannelId === r.id).map((x) => ({ ...x, scheduledFor: x.scheduledFor?.toISOString() ?? null, createdAt: x.createdAt.toISOString(), finishedAt: x.finishedAt?.toISOString() ?? null })),
-      };
-    }),
-  };
+  const channels = [];
+  for (const r of rows) {
+    const def = MARKETING_PROVIDERS[r.connection.providerKey];
+    const { content, problems } = await resolveChannelContent({ templateId: r.templateId, contentId: r.contentId, campaignId: campaign.id }, def.capabilities.attachments);
+    if (r.connection.status !== "ACTIVE") problems.unshift("The connection is disabled.");
+    if (content) problems.push(...deliveryChecks(content, r.connection.providerKey, r.connection.config as Record<string, string | number>));
+    if (r.connection.channelType === "EMAIL" && !publicBaseUrl()) problems.push("The server has no public address for unsubscribe links (set APP_BASE_URL).");
+    channels.push({
+      id: r.id,
+      isActive: r.isActive,
+      channelType: r.connection.channelType,
+      connection: { id: r.connection.id, code: r.connection.code, name: r.connection.name, providerKey: r.connection.providerKey, providerLabel: def.label, status: r.connection.status, consentPolicy: r.connection.consentPolicy, capabilities: def.capabilities, liveVerified: def.liveVerified, lastTestStatus: r.connection.lastTestStatus },
+      template: { id: r.template.id, name: r.template.name, status: r.template.status, versionNumber: content?.source === "TEMPLATE" ? content.templateVersionNumber : null },
+      content: r.content ? { id: r.content.id, name: r.content.name, status: r.content.status, versionNumber: content?.contentVersionNumber ?? null } : null,
+      sends: content ? { source: content.source, label: content.source === "TEMPLATE" ? `template v${content.templateVersionNumber} (approved)` : `"${content.contentName}" v${content.contentVersionNumber} (approved)`, attachments: content.attachments.map((x) => x.name), locale: content.locale } : null,
+      problems,
+      runs: runs.filter((x) => x.campaignChannelId === r.id).map((x) => ({ ...x, scheduledFor: x.scheduledFor?.toISOString() ?? null, createdAt: x.createdAt.toISOString(), finishedAt: x.finishedAt?.toISOString() ?? null })),
+    });
+  }
+  return { campaign: { id: campaign.id, code: campaign.code, status: campaign.status }, channels };
+}
+
+/** Structural + provider checks of resolved content, with sample data. */
+function deliveryChecks(content: ResolvedContent, providerKey: string, config: Record<string, string | number>) {
+  const sample = sampleRender(content);
+  return [
+    ...checkTemplateForDelivery(content),
+    ...getProviderAdapter(providerKey).validateMessage({ ...sample, providerMetadata: content.providerMetadata, attachments: content.attachments.map((a) => ({ fileName: a.fileName, mimeType: a.mimeType, sizeBytes: a.fileSizeBytes })) }, config),
+  ];
 }
 
 export async function addCampaignChannel(actor: SalesActor, campaignId: string, raw: unknown) {
@@ -109,16 +119,33 @@ export async function addCampaignChannel(actor: SalesActor, campaignId: string, 
   if (["COMPLETED", "CANCELLED"].includes(campaign.status)) throw new BusinessRuleError("INVALID_STATE_TRANSITION", `The campaign is ${campaign.status.toLowerCase()}.`);
   const conn = await prisma.marketingChannelConnection.findFirst({ where: { id: input.connectionId, companyId: actor.companyId } });
   if (!conn || conn.status !== "ACTIVE") throw new BusinessRuleError("VALIDATION_ERROR", "Choose an active channel connection.", { fieldErrors: { connectionId: "Not active." } });
-  const { template } = await loadUsableTemplate(actor.companyId, input.templateId, conn.channelType as MarketingChannelKey);
+  let templateId: string;
+  let contentId: string | null = null;
+  let label: string;
+  if (input.contentId) {
+    const c = await prisma.marketingCampaignContent.findFirst({ where: { id: input.contentId, companyId: actor.companyId, campaignId: campaign.id } });
+    if (!c || c.status !== "ACTIVE") throw new BusinessRuleError("VALIDATION_ERROR", "Choose active content of this campaign.", { fieldErrors: { contentId: "Not found." } });
+    if (c.channelType !== conn.channelType) throw new BusinessRuleError("VALIDATION_ERROR", `"${c.name}" is ${c.channelType.toLowerCase()} content; this connection sends ${conn.channelType.toLowerCase()}.`);
+    templateId = c.sourceTemplateId;
+    contentId = c.id;
+    label = c.name;
+  } else {
+    const t = await prisma.crmMessageTemplate.findFirst({ where: { id: input.templateId!, companyId: actor.companyId } });
+    if (!t) throw new BusinessRuleError("NOT_FOUND", "Message template not found.", { id: input.templateId });
+    if (t.channelType !== conn.channelType) throw new BusinessRuleError("VALIDATION_ERROR", `"${t.name}" is a ${t.channelType.toLowerCase()} template; this channel sends ${conn.channelType.toLowerCase()}.`);
+    if (t.status === "ARCHIVED") throw new BusinessRuleError("VALIDATION_ERROR", `"${t.name}" is archived.`);
+    templateId = t.id;
+    label = t.name;
+  }
   try {
     return await prisma.$transaction(async (tx) => {
-      const row = await tx.marketingCampaignChannel.create({ data: { companyId: actor.companyId, campaignId: campaign.id, connectionId: conn.id, templateId: template.id, createdByUserId: actor.userId } });
-      await auditDelivery(tx, actor, CAMPAIGN_CHANNELS_TABLE, row.id, "CREATE", null, { campaignId: campaign.id, connectionId: conn.id, templateId: template.id });
-      await recordDeliveryCampaignEvent(tx, actor, campaign.id, "CHANNEL_ADDED", null, { campaignChannelId: row.id, connection: conn.code, template: template.name });
+      const row = await tx.marketingCampaignChannel.create({ data: { companyId: actor.companyId, campaignId: campaign.id, connectionId: conn.id, templateId, contentId, createdByUserId: actor.userId } });
+      await auditDelivery(tx, actor, CAMPAIGN_CHANNELS_TABLE, row.id, "CREATE", null, { campaignId: campaign.id, connectionId: conn.id, templateId, contentId });
+      await recordDeliveryCampaignEvent(tx, actor, campaign.id, "CHANNEL_ADDED", null, { campaignChannelId: row.id, connection: conn.code, [contentId ? "content" : "template"]: label });
       return row;
     });
   } catch (e) {
-    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") throw new BusinessRuleError("VALIDATION_ERROR", "This connection and template are already set up for the campaign.");
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") throw new BusinessRuleError("VALIDATION_ERROR", "This connection already sends that content in this campaign.");
     throw e;
   }
 }
@@ -187,8 +214,12 @@ export async function sendTestMessage(actor: SalesActor, campaignChannelId: stri
   const config = ch.connection.config as Record<string, string | number>;
   const to = adapter.normalizeDestination(input.to, config);
   if (!to) throw new BusinessRuleError("VALIDATION_ERROR", ch.connection.channelType === "EMAIL" ? "Enter a valid email address." : "Enter the number with its country code, e.g. +91 98100 12345.", { fieldErrors: { to: "Not valid." } });
-  const { version } = await loadUsableTemplate(actor.companyId, ch.templateId, ch.connection.channelType as MarketingChannelKey);
+  // A test uses the newest text (approved or not) so authors can check it before review.
+  const version = await testContentOf(ch);
   const rendered = sampleRender(version);
+  const attachments = await loadAttachmentFiles(version.attachments).catch(() => {
+    throw new BusinessRuleError("VALIDATION_ERROR", "An attachment's file is missing from storage.");
+  });
   const msg = {
     deliveryId: randomUUID(),
     to,
@@ -196,9 +227,10 @@ export async function sendTestMessage(actor: SalesActor, campaignChannelId: stri
     subject: rendered.subject ? `[TEST] ${rendered.subject}` : null,
     body: ch.connection.channelType === "EMAIL" ? `[TEST — sample data, not a campaign message]\n\n${rendered.body}` : rendered.body,
     parameters: rendered.parameters,
-    providerMetadata: providerMetadataOf(version),
+    providerMetadata: version.providerMetadata,
     unsubscribeUrl: null,
     tag: `${campaign.code}-TEST`,
+    attachments,
   };
   const problems = adapter.validateMessage(msg, config);
   if (problems.length) throw new BusinessRuleError("VALIDATION_ERROR", problems.join(" "));
@@ -206,6 +238,15 @@ export async function sendTestMessage(actor: SalesActor, campaignChannelId: stri
   await auditDelivery(prisma, actor, CAMPAIGN_CHANNELS_TABLE, ch.id, "UPDATE", null, { testSend: outcome.kind, code: "code" in outcome ? outcome.code : null });
   if (outcome.kind === "ACCEPTED") return { ok: true, message: "The provider accepted the test message. Check the inbox / phone — acceptance isn't proof of delivery." };
   return { ok: false, message: outcome.message };
+}
+
+/** Newest text of a channel for a test send: the content's current version, or the template's current version. */
+async function testContentOf(ch: { templateId: string; contentId: string | null; connection: { channelType: string } }) {
+  const t = await prisma.crmMessageTemplate.findUniqueOrThrow({ where: { id: ch.templateId }, select: { currentVersionId: true } });
+  const content = ch.contentId ? await prisma.marketingCampaignContent.findUniqueOrThrow({ where: { id: ch.contentId }, select: { currentVersionId: true } }) : null;
+  if (content?.currentVersionId) return loadRunContent({ templateId: ch.templateId, templateVersionId: "", contentVersionId: content.currentVersionId, locale: null, channelType: ch.connection.channelType });
+  if (!t.currentVersionId) throw new BusinessRuleError("VALIDATION_ERROR", "The template has no text yet.");
+  return loadRunContent({ templateId: ch.templateId, templateVersionId: t.currentVersionId, contentVersionId: null, locale: null, channelType: ch.connection.channelType });
 }
 
 // ── Runs ──────────────────────────────────────────────────────────
@@ -224,8 +265,10 @@ export async function startRun(actor: SalesActor, campaignChannelId: string, raw
   const conn = ch.connection;
   if (conn.status !== "ACTIVE") throw new BusinessRuleError("INVALID_STATE_TRANSITION", "The channel connection is disabled.");
   const channel = conn.channelType as MarketingChannelKey;
-  const { template, version } = await loadUsableTemplate(actor.companyId, ch.templateId, channel);
-  const problems = [...checkTemplateForDelivery(version), ...getProviderAdapter(conn.providerKey).validateMessage({ ...sampleRender(version), providerMetadata: providerMetadataOf(version) }, conn.config as Record<string, string | number>)];
+  // Only approved, immutable content is sent; the run freezes exactly these versions.
+  const { content, problems } = await resolveChannelContent({ templateId: ch.templateId, contentId: ch.contentId, campaignId: campaign.id }, MARKETING_PROVIDERS[conn.providerKey].capabilities.attachments);
+  if (!content) throw new BusinessRuleError("VALIDATION_ERROR", problems.join(" "));
+  problems.push(...deliveryChecks(content, conn.providerKey, conn.config as Record<string, string | number>));
   if (channel === "EMAIL" && !publicBaseUrl()) problems.push("The server has no public address for unsubscribe links. Set APP_BASE_URL (or NEXTAUTH_URL) to the app's public URL.");
   if (problems.length) throw new BusinessRuleError("VALIDATION_ERROR", problems.join(" "));
   let scheduledFor: Date | null = null;
@@ -251,8 +294,10 @@ export async function startRun(actor: SalesActor, campaignChannelId: string, raw
           runNumber: (last?.runNumber ?? 0) + 1,
           channelType: conn.channelType,
           providerKey: conn.providerKey,
-          templateId: template.id,
-          templateVersionId: version.id,
+          templateId: content.templateId,
+          templateVersionId: content.templateVersionId,
+          contentVersionId: content.contentVersionId,
+          locale: content.locale,
           audienceJson: { segments: audience.segments, includedTotal: audience.includedTotal, removedByExclusions: audience.removedByExclusions } as unknown as Prisma.InputJsonValue,
           scheduledFor,
           idempotencyKey: input.idempotencyKey ?? null,
@@ -260,7 +305,7 @@ export async function startRun(actor: SalesActor, campaignChannelId: string, raw
           plannedCount: audience.contactIds.length,
         },
       });
-      await auditDelivery(tx, actor, RUNS_TABLE, r.id, "CREATE", null, { campaignId: campaign.id, runNumber: r.runNumber, connection: conn.code, templateId: template.id, templateVersion: version.versionNumber, scheduledFor, audience: audience.segments.map((s) => ({ segment: s.code, role: s.role, evaluationId: s.evaluationId })) });
+      await auditDelivery(tx, actor, RUNS_TABLE, r.id, "CREATE", null, { campaignId: campaign.id, runNumber: r.runNumber, connection: conn.code, templateId: content.templateId, templateVersion: content.templateVersionNumber, contentVersionId: content.contentVersionId, contentVersion: content.contentVersionNumber, attachments: content.attachments.map((a) => a.assetVersionId), scheduledFor, audience: audience.segments.map((s) => ({ segment: s.code, role: s.role, evaluationId: s.evaluationId })) });
       await recordDeliveryCampaignEvent(tx, actor, campaign.id, scheduledFor ? "DELIVERY_RUN_SCHEDULED" : "DELIVERY_RUN_REQUESTED", null, { runId: r.id, runNumber: r.runNumber, connection: conn.code, scheduledFor: scheduledFor?.toISOString() ?? null, audience: audience.contactIds.length });
       return r;
     });
@@ -377,6 +422,7 @@ function presentRun<E extends Record<string, unknown> = Record<never, never>>(ru
     status: run.status,
     scheduledFor: run.scheduledFor?.toISOString() ?? null,
     timezone: run.timezone,
+    locale: run.locale,
     plannedCount: run.plannedCount,
     exclusionSummary: run.exclusionSummary as Record<string, number>,
     audience: run.audienceJson,
@@ -399,7 +445,7 @@ export async function getRun(actor: SalesActor, id: string) {
     runOutcomeCounts(run.id),
     prisma.marketingDeliveryRun.findUniqueOrThrow({
       where: { id: run.id },
-      select: { connection: { select: { id: true, code: true, name: true } }, template: { select: { id: true, name: true } }, templateVersion: { select: { versionNumber: true } }, initiatedBy: { select: { fullName: true } } },
+      select: { connection: { select: { id: true, code: true, name: true } }, template: { select: { id: true, name: true } }, templateVersion: { select: { versionNumber: true } }, contentVersion: { select: { versionNumber: true, content: { select: { id: true, name: true } }, assets: { select: { assetVersion: { select: { versionNumber: true, asset: { select: { id: true, name: true } } } } } } } }, initiatedBy: { select: { fullName: true } } },
     }),
   ]);
   const errors = await prisma.marketingDelivery.groupBy({ by: ["errorCode"], where: { runId: run.id, status: { in: ["FAILED", "BOUNCED", "REJECTED", "UNKNOWN"] } }, _count: { _all: true } });
@@ -407,6 +453,7 @@ export async function getRun(actor: SalesActor, id: string) {
     campaign: { id: campaign.id, code: campaign.code, name: campaign.name, status: campaign.status },
     connection: extras.connection,
     template: { ...extras.template, versionNumber: extras.templateVersion.versionNumber },
+    content: extras.contentVersion ? { id: extras.contentVersion.content.id, name: extras.contentVersion.content.name, versionNumber: extras.contentVersion.versionNumber, attachments: extras.contentVersion.assets.map((a) => ({ assetId: a.assetVersion.asset.id, name: a.assetVersion.asset.name, versionNumber: a.assetVersion.versionNumber })) } : null,
     initiatedBy: extras.initiatedBy.fullName,
     counts,
     errorSummary: errors.map((e) => ({ code: e.errorCode ?? "UNSPECIFIED", count: e._count._all })).sort((a, b) => b.count - a.count),

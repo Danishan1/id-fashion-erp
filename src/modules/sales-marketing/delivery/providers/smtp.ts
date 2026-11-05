@@ -65,6 +65,9 @@ export const smtpAdapter: MarketingProviderAdapter = {
     const out: string[] = [];
     if (!msg.subject?.trim()) out.push("An email needs a subject.");
     if (!msg.body.trim()) out.push("The message body is empty.");
+    const att = msg.attachments ?? [];
+    if (att.reduce((s, a) => s + a.sizeBytes, 0) > 10 * 1024 * 1024) out.push("Attachments are larger than 10 MB in total.");
+    if (att.length > 5) out.push("At most 5 attachments.");
     return out;
   },
   async testConnection(conn, deps) {
@@ -96,6 +99,7 @@ export const smtpAdapter: MarketingProviderAdapter = {
         replyTo: str(conn.config.replyTo) || undefined,
         subject: msg.subject ?? "",
         text: msg.body,
+        ...(msg.attachments?.length ? { attachments: msg.attachments.map((a) => ({ filename: a.fileName, content: a.content, contentType: a.mimeType })) } : {}),
         messageId,
         headers,
       });

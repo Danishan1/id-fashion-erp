@@ -44,6 +44,7 @@ export const whatsappCloudAdapter: MarketingProviderAdapter = {
     const out: string[] = [];
     if (!msg.providerMetadata.externalTemplateName) out.push("The WhatsApp template version has no Meta-approved template name.");
     if (msg.parameters.length > 30) out.push("Too many template parameters.");
+    if (msg.attachments?.length) out.push("WhatsApp template media isn't supported yet — attachments go by email only.");
     return out;
   },
   async testConnection(conn, deps) {

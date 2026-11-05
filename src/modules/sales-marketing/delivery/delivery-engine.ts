@@ -5,7 +5,8 @@ import { logger } from "@/core/logging/logger";
 import { checkContacts, markDuplicateAddresses } from "./audience-eligibility";
 import { auditDelivery, publicBaseUrl, recordDeliveryCampaignEvent, RUNS_TABLE, runtimeOf, signUnsubscribeToken, unsubscribePath } from "./delivery-common";
 import { MARKETING_PROVIDERS, type ConsentPolicyKey, type DeliveryStatusKey, type MarketingChannelKey, type RunStatusKey, type SkipReasonKey } from "./delivery-registry";
-import { providerMetadataOf, recipientValues, renderForRecipient, withUnsubscribeFooter } from "./delivery-render";
+import { recipientValues, renderForRecipient, strictRenderProblems, withUnsubscribeFooter } from "./delivery-render";
+import { attachmentProblems, loadAttachmentFiles, loadRunContent } from "@/modules/sales-marketing/content/content-resolver";
 import { enqueueRunStep } from "./delivery-queue";
 import { defaultProviderDeps, getProviderAdapter, type ProviderDeps } from "./providers";
 import type { SendOutcome } from "./providers/provider-contract";
@@ -208,7 +209,8 @@ export async function dispatchRun(runId: string, deps: EngineDeps = defaultEngin
     const [campaign, connection, version] = await Promise.all([
       prisma.marketingCampaign.findUniqueOrThrow({ where: { id: run.campaignId }, select: { status: true, code: true } }),
       prisma.marketingChannelConnection.findUniqueOrThrow({ where: { id: run.connectionId } }),
-      prisma.crmMessageTemplateVersion.findUniqueOrThrow({ where: { id: run.templateVersionId } }),
+      // Exactly what the run froze when it started (Phase 11): never a newer edit.
+      loadRunContent(run),
     ]);
     if (campaign.status !== "ACTIVE") return await stopRun(run, token, `The campaign is ${campaign.status.toLowerCase()}, not active. Messages already sent are unaffected; resume the run after reactivating the campaign.`);
     if (connection.status !== "ACTIVE") return await stopRun(run, token, "The channel connection is disabled. Enable it and resume the run.");
@@ -222,10 +224,19 @@ export async function dispatchRun(runId: string, deps: EngineDeps = defaultEngin
       if (!run.startedAt) await prisma.$transaction((tx) => recordDeliveryCampaignEvent(tx, systemActor(run), run.campaignId, "DELIVERY_RUN_STARTED", null, { runId: run.id, runNumber: run.runNumber }));
     }
 
+    // Attached files must still be approved, active and unexpired before anything goes out.
+    const fileProblems = await attachmentProblems(run.channelType, version.attachments, MARKETING_PROVIDERS[connection.providerKey].capabilities.attachments);
+    if (fileProblems.length) return await stopRun(run, token, `${fileProblems.join(" ")} Fix the content (a new approved version needs a new run).`);
+    let attachments: Awaited<ReturnType<typeof loadAttachmentFiles>>;
+    try {
+      attachments = await loadAttachmentFiles(version.attachments);
+    } catch {
+      return await stopRun(run, token, "An attachment's file is missing from storage. Upload it again as a new asset version and start a new run.");
+    }
     const adapter = getProviderAdapter(connection.providerKey);
     const runtime = runtimeOf(connection);
     const channel = run.channelType as MarketingChannelKey;
-    const providerMetadata = providerMetadataOf(version);
+    const providerMetadata = version.providerMetadata;
     const baseUrl = publicBaseUrl();
     const intervalMs = Math.ceil(60_000 / connection.ratePerMinute);
     let lastSendAt = 0;
@@ -262,13 +273,14 @@ export async function dispatchRun(runId: string, deps: EngineDeps = defaultEngin
         if (claimed.count === 0) continue;
         const v = values.get(d.contactId) ?? {};
         const rendered = renderForRecipient(version, v, "company.name" in v);
-        if (rendered.issues.some((i) => i.severity === "error")) {
+        // Phase 11: a variable with no value and no fallback skips the recipient (never a silent blank).
+        if (rendered.issues.some((i) => i.severity === "error") || strictRenderProblems(rendered).length) {
           await prisma.marketingDelivery.updateMany({ where: { id: d.id, lockToken: claim }, data: { status: "SUPPRESSED", skipReason: "RENDER_FAILED", lockToken: null, statusAt: deps.now() } });
           continue;
         }
         const unsubscribeUrl = channel === "EMAIL" && baseUrl ? `${baseUrl}${unsubscribePath(signUnsubscribeToken(d.id))}` : null;
         const body = channel === "EMAIL" && unsubscribeUrl ? withUnsubscribeFooter(rendered.body, unsubscribeUrl) : rendered.body;
-        const msg = { deliveryId: d.id, to: check.destination, toName: check.name, subject: rendered.subject, body, parameters: rendered.parameters, providerMetadata, unsubscribeUrl, tag: campaign.code };
+        const msg = { deliveryId: d.id, to: check.destination, toName: check.name, subject: rendered.subject, body, parameters: rendered.parameters, providerMetadata, unsubscribeUrl, tag: campaign.code, attachments };
         const problems = adapter.validateMessage(msg, runtime.config);
         let outcome: SendOutcome;
         if (problems.length) outcome = { kind: "PERMANENT", code: "INVALID_MESSAGE", message: problems.join(" ") };

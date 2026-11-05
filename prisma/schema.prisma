@@ -302,6 +302,8 @@ model Company {
   marketingSegments           MarketingSegment[]
   marketingChannelConnections MarketingChannelConnection[]
   marketingDeliveryRuns       MarketingDeliveryRun[]
+  marketingAssets             MarketingAsset[]
+  marketingCampaignContents   MarketingCampaignContent[]
   marketingCampaignLookups    MarketingCampaignLookup[]
 
   @@map("companies")
@@ -12283,6 +12285,7 @@ model CrmMessageTemplate {
   messages       CrmMessage[]
   marketingCampaignChannels MarketingCampaignChannel[]
   marketingDeliveryRuns     MarketingDeliveryRun[]
+  marketingContents         MarketingCampaignContent[]
 
   @@index([companyId, status, updatedAt])
   @@index([companyId, channelType, status])
@@ -12317,6 +12320,7 @@ model CrmMessageTemplateVersion {
   createdBy User                @relation("CrmMessageTemplateVersionCreatedBy", fields: [createdByUserId], references: [id])
   messages  CrmMessage[]
   marketingDeliveryRuns MarketingDeliveryRun[]
+  marketingContentVersions MarketingCampaignContentVersion[]
 
   @@unique([templateId, versionNumber])
   @@map("crm_message_template_versions")
@@ -15886,6 +15890,7 @@ model MarketingCampaign {
   audiences      MarketingCampaignAudience[]
   channels       MarketingCampaignChannel[]
   deliveryRuns   MarketingDeliveryRun[]
+  contents       MarketingCampaignContent[]
 
   @@unique([companyId, code])
   @@unique([companyId, idempotencyKey])
@@ -16255,6 +16260,8 @@ model MarketingCampaignChannel {
   campaignId      String   @map("campaign_id") @db.Uuid
   connectionId    String   @map("connection_id") @db.Uuid
   templateId      String   @map("template_id") @db.Uuid
+  /// Phase 11: campaign-specific content (its latest approved version is sent). Null = the template itself.
+  contentId       String?  @map("content_id") @db.Uuid
   isActive        Boolean  @default(true) @map("is_active")
   createdByUserId String   @map("created_by_user_id") @db.Uuid
   createdAt       DateTime @default(now()) @map("created_at")
@@ -16263,9 +16270,11 @@ model MarketingCampaignChannel {
   campaign   MarketingCampaign          @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   connection MarketingChannelConnection @relation(fields: [connectionId], references: [id])
   template   CrmMessageTemplate         @relation(fields: [templateId], references: [id])
+  content    MarketingCampaignContent?  @relation(fields: [contentId], references: [id])
   runs       MarketingDeliveryRun[]
 
-  @@unique([campaignId, connectionId, templateId])
+  // One channel per (campaign, connection, template) without content and per
+  // (campaign, connection, content) with it — partial unique indexes in SQL.
   @@index([companyId, campaignId])
   @@map("marketing_campaign_channels")
 }
@@ -16284,6 +16293,9 @@ model MarketingDeliveryRun {
   providerKey       MarketingProviderKey       @map("provider_key")
   templateId        String                     @map("template_id") @db.Uuid
   templateVersionId String                     @map("template_version_id") @db.Uuid
+  /// Phase 11: the approved campaign content version this run sends (null = template version).
+  contentVersionId  String?                    @map("content_version_id") @db.Uuid
+  locale            String?
   audienceJson      Json                       @default("{}") @map("audience_json")
   exclusionSummary  Json                       @default("{}") @map("exclusion_summary")
   status            MarketingDeliveryRunStatus @default(PREPARING)
@@ -16311,6 +16323,7 @@ model MarketingDeliveryRun {
   connection      MarketingChannelConnection @relation(fields: [connectionId], references: [id])
   template        CrmMessageTemplate         @relation(fields: [templateId], references: [id])
   templateVersion CrmMessageTemplateVersion  @relation(fields: [templateVersionId], references: [id])
+  contentVersion  MarketingCampaignContentVersion? @relation(fields: [contentVersionId], references: [id])
   initiatedBy     User                       @relation("MarketingDeliveryRunInitiatedBy", fields: [initiatedByUserId], references: [id])
   deliveries      MarketingDelivery[]
 
@@ -16386,4 +16399,201 @@ model MarketingDeliveryEvent {
   @@index([deliveryId, occurredAt])
   @@index([processedAt, receivedAt])
   @@map("marketing_delivery_events")
+}
+
+// ── Sales & Marketing Phase 11: content library ───────────────────────────
+// User ids below are plain uuid columns with foreign keys in SQL (no Prisma
+// back-relations on User); names are looked up when shown.
+
+/// A reusable marketing file (image, logo, document, video). The file lives
+/// in its immutable versions; the asset row holds metadata and pointers.
+model MarketingAsset {
+  id                   String    @id @default(uuid()) @db.Uuid
+  companyId            String    @map("company_id") @db.Uuid
+  code                 String
+  name                 String
+  description          String?
+  /// IMAGE | LOGO | DOCUMENT | VIDEO (content-registry.ts, CHECK in SQL)
+  assetType            String    @map("asset_type")
+  tags                 String[]  @default([])
+  altText              String?   @map("alt_text")
+  /// Licence / usage restrictions, free text.
+  usageNotes           String?   @map("usage_notes")
+  /// Not usable in messages after this date (licence expiry).
+  expiresOn            DateTime? @map("expires_on") @db.Date
+  ownerUserId          String    @map("owner_user_id") @db.Uuid
+  /// ACTIVE | ARCHIVED
+  status               String    @default("ACTIVE")
+  currentVersionId     String?   @unique @map("current_version_id") @db.Uuid
+  currentVersionNumber Int       @default(0) @map("current_version_number")
+  /// Newest approved version (what new campaign content uses).
+  approvedVersionId    String?   @unique @map("approved_version_id") @db.Uuid
+  searchText           String    @default("") @map("search_text")
+  createdByUserId      String    @map("created_by_user_id") @db.Uuid
+  updatedByUserId      String?   @map("updated_by_user_id") @db.Uuid
+  archivedAt           DateTime? @map("archived_at")
+  archivedByUserId     String?   @map("archived_by_user_id") @db.Uuid
+  version              Int       @default(1)
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  company         Company                 @relation(fields: [companyId], references: [id])
+  versions        MarketingAssetVersion[] @relation("MarketingAssetVersions")
+  currentVersion  MarketingAssetVersion?  @relation("MarketingAssetCurrentVersion", fields: [currentVersionId], references: [id])
+  approvedVersion MarketingAssetVersion?  @relation("MarketingAssetApprovedVersion", fields: [approvedVersionId], references: [id])
+
+  @@unique([companyId, code])
+  @@index([companyId, status, assetType])
+  @@index([companyId, ownerUserId])
+  @@map("marketing_assets")
+}
+
+/// One uploaded file of an asset. Immutable (DB trigger): replacing a file = a new version.
+model MarketingAssetVersion {
+  id               String   @id @default(uuid()) @db.Uuid
+  companyId        String   @map("company_id") @db.Uuid
+  assetId          String   @map("asset_id") @db.Uuid
+  versionNumber    Int      @map("version_number")
+  storageKey       String   @map("storage_key")
+  originalFileName String   @map("original_file_name")
+  mimeType         String   @map("mime_type")
+  fileSizeBytes    Int      @map("file_size_bytes")
+  sha256           String
+  width            Int?
+  height           Int?
+  /// NOT_SCANNED — no malware scanner is configured (never reported as scanned).
+  scanStatus       String   @default("NOT_SCANNED") @map("scan_status")
+  changeNote       String?  @map("change_note")
+  createdByUserId  String   @map("created_by_user_id") @db.Uuid
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  asset        MarketingAsset                 @relation("MarketingAssetVersions", fields: [assetId], references: [id])
+  currentOf    MarketingAsset?                @relation("MarketingAssetCurrentVersion")
+  approvedOf   MarketingAsset?                @relation("MarketingAssetApprovedVersion")
+  contentLinks MarketingContentVersionAsset[]
+
+  @@unique([assetId, versionNumber])
+  @@index([companyId, sha256])
+  @@map("marketing_asset_versions")
+}
+
+/// The review of one immutable content version: an asset version, a CRM
+/// template version (for marketing use) or a campaign content version.
+model MarketingContentReview {
+  id                String    @id @default(uuid()) @db.Uuid
+  companyId         String    @map("company_id") @db.Uuid
+  /// ASSET_VERSION | TEMPLATE_VERSION | CONTENT_VERSION
+  subjectType       String    @map("subject_type")
+  subjectId         String    @map("subject_id") @db.Uuid
+  /// PENDING | APPROVED | CHANGES_REQUESTED | REJECTED | WITHDRAWN
+  status            String
+  /// Who wrote the version (can never decide it).
+  authorUserId      String    @map("author_user_id") @db.Uuid
+  submittedByUserId String    @map("submitted_by_user_id") @db.Uuid
+  submittedAt       DateTime  @map("submitted_at")
+  decidedByUserId   String?   @map("decided_by_user_id") @db.Uuid
+  decidedAt         DateTime? @map("decided_at")
+  decisionComment   String?   @map("decision_comment")
+  version           Int       @default(1)
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  events MarketingContentReviewEvent[]
+
+  @@unique([subjectType, subjectId])
+  @@index([companyId, status, subjectType])
+  @@map("marketing_content_reviews")
+}
+
+model MarketingContentReviewEvent {
+  id          String   @id @default(uuid()) @db.Uuid
+  companyId   String   @map("company_id") @db.Uuid
+  reviewId    String   @map("review_id") @db.Uuid
+  /// SUBMITTED | APPROVED | CHANGES_REQUESTED | REJECTED | WITHDRAWN
+  action      String
+  comment     String?
+  actorUserId String   @map("actor_user_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  review MarketingContentReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  @@index([reviewId, createdAt])
+  @@map("marketing_content_review_events")
+}
+
+/// Campaign-specific content made from a CRM template; the template itself is never changed.
+model MarketingCampaignContent {
+  id                   String    @id @default(uuid()) @db.Uuid
+  companyId            String    @map("company_id") @db.Uuid
+  campaignId           String    @map("campaign_id") @db.Uuid
+  name                 String
+  /// EMAIL | SMS | WHATSAPP (same as the source template)
+  channelType          String    @map("channel_type")
+  /// BCP 47 tag, e.g. "en", "hi-IN". Metadata only (no translations yet).
+  locale               String    @default("en")
+  sourceTemplateId     String    @map("source_template_id") @db.Uuid
+  /// ACTIVE | ARCHIVED
+  status               String    @default("ACTIVE")
+  currentVersionId     String?   @unique @map("current_version_id") @db.Uuid
+  currentVersionNumber Int       @default(0) @map("current_version_number")
+  approvedVersionId    String?   @unique @map("approved_version_id") @db.Uuid
+  createdByUserId      String    @map("created_by_user_id") @db.Uuid
+  updatedByUserId      String?   @map("updated_by_user_id") @db.Uuid
+  archivedAt           DateTime? @map("archived_at")
+  version              Int       @default(1)
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  company         Company                           @relation(fields: [companyId], references: [id])
+  campaign        MarketingCampaign                 @relation(fields: [campaignId], references: [id])
+  sourceTemplate  CrmMessageTemplate                @relation(fields: [sourceTemplateId], references: [id])
+  versions        MarketingCampaignContentVersion[] @relation("MarketingCampaignContentVersions")
+  currentVersion  MarketingCampaignContentVersion?  @relation("MarketingCampaignContentCurrent", fields: [currentVersionId], references: [id])
+  approvedVersion MarketingCampaignContentVersion?  @relation("MarketingCampaignContentApproved", fields: [approvedVersionId], references: [id])
+  channels        MarketingCampaignChannel[]
+
+  @@index([companyId, campaignId, status])
+  @@map("marketing_campaign_contents")
+}
+
+/// One immutable version of campaign content (DB trigger).
+model MarketingCampaignContentVersion {
+  id                      String   @id @default(uuid()) @db.Uuid
+  companyId               String   @map("company_id") @db.Uuid
+  contentId               String   @map("content_id") @db.Uuid
+  versionNumber           Int      @map("version_number")
+  sourceTemplateVersionId String   @map("source_template_version_id") @db.Uuid
+  subject                 String?
+  body                    String
+  variables               String[] @default([])
+  providerMetadata        Json     @default("{}") @map("provider_metadata")
+  changeNote              String?  @map("change_note")
+  createdByUserId         String   @map("created_by_user_id") @db.Uuid
+  createdAt               DateTime @default(now()) @map("created_at")
+
+  content               MarketingCampaignContent       @relation("MarketingCampaignContentVersions", fields: [contentId], references: [id])
+  currentOf             MarketingCampaignContent?      @relation("MarketingCampaignContentCurrent")
+  approvedOf            MarketingCampaignContent?      @relation("MarketingCampaignContentApproved")
+  sourceTemplateVersion CrmMessageTemplateVersion      @relation(fields: [sourceTemplateVersionId], references: [id])
+  assets                MarketingContentVersionAsset[]
+  runs                  MarketingDeliveryRun[]
+
+  @@unique([contentId, versionNumber])
+  @@map("marketing_campaign_content_versions")
+}
+
+/// Pinned asset versions of a content version (email attachments). Immutable.
+model MarketingContentVersionAsset {
+  id               String @id @default(uuid()) @db.Uuid
+  companyId        String @map("company_id") @db.Uuid
+  contentVersionId String @map("content_version_id") @db.Uuid
+  assetVersionId   String @map("asset_version_id") @db.Uuid
+  position         Int    @default(0)
+
+  contentVersion MarketingCampaignContentVersion @relation(fields: [contentVersionId], references: [id])
+  assetVersion   MarketingAssetVersion           @relation(fields: [assetVersionId], references: [id])
+
+  @@unique([contentVersionId, assetVersionId])
+  @@index([assetVersionId])
+  @@map("marketing_content_version_assets")
 }

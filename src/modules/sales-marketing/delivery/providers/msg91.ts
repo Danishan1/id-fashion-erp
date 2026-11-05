@@ -48,6 +48,7 @@ export const msg91Adapter: MarketingProviderAdapter = {
   validateMessage(msg) {
     const out: string[] = [];
     if (!msg.providerMetadata.externalTemplateId) out.push("The SMS template version has no MSG91 flow / template id.");
+    if (msg.attachments?.length) out.push("SMS can't carry attachments.");
     if (!msg.body.trim()) out.push("The message body is empty.");
     return out;
   },

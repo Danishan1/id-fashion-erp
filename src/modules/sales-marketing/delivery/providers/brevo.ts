@@ -53,6 +53,9 @@ export const brevoAdapter: MarketingProviderAdapter = {
     const out: string[] = [];
     if (!msg.subject?.trim()) out.push("An email needs a subject.");
     if (!msg.body.trim()) out.push("The message body is empty.");
+    const att = msg.attachments ?? [];
+    if (att.reduce((s, a) => s + a.sizeBytes, 0) > 10 * 1024 * 1024) out.push("Attachments are larger than 10 MB in total.");
+    if (att.length > 5) out.push("At most 5 attachments.");
     return out;
   },
   async testConnection(conn, deps) {
@@ -76,6 +79,7 @@ export const brevoAdapter: MarketingProviderAdapter = {
       textContent: msg.body,
       headers,
       ...(msg.tag ? { tags: [msg.tag.slice(0, 50)] } : {}),
+      ...(msg.attachments?.length ? { attachment: msg.attachments.map((a) => ({ name: a.fileName, content: (a.content ?? Buffer.alloc(0)).toString("base64") })) } : {}),
     };
     const res = await request(deps.fetch, `${API}/smtp/email`, { method: "POST", headers: { "api-key": conn.secrets.apiKey ?? "", "content-type": "application/json", accept: "application/json" }, body: JSON.stringify(body) });
     if (!res.ok) return res.outcome;

@@ -28,6 +28,8 @@ interface Run {
   campaign: { id: string; code: string; name: string; status: string };
   connection: { id: string; code: string; name: string };
   template: { id: string; name: string; versionNumber: number };
+  content: { id: string; name: string; versionNumber: number; attachments: { assetId: string; name: string; versionNumber: number }[] } | null;
+  locale: string | null;
   initiatedBy: string;
   counts: { planned: number; eligible: number; excluded: number; pending: number; accepted: number; delivered: number; failed: number; unknown: number; cancelled: number };
   errorSummary: { code: string; count: number }[];
@@ -124,7 +126,22 @@ export function RunDetailClient({ runId, canCancel, canEdit }: { runId: string; 
               </Link>
             </div>
             <div className="text-zinc-600 dark:text-zinc-400">
-              {CHANNEL_LABELS[run.channelType] ?? run.channelType} via {run.connection.name} ({run.providerLabel}) · template {run.template.name} v{run.template.versionNumber}
+              {CHANNEL_LABELS[run.channelType] ?? run.channelType} via {run.connection.name} ({run.providerLabel}) ·{" "}
+              {run.content ? (
+                <>
+                  content{" "}
+                  <Link className="underline" href={`/sales-marketing/content/items/${run.content.id}`}>
+                    {run.content.name} v{run.content.versionNumber}
+                  </Link>{" "}
+                  (from template {run.template.name} v{run.template.versionNumber})
+                  {run.content.attachments.length ? ` · attachments: ${run.content.attachments.map((a) => `${a.name} v${a.versionNumber}`).join(", ")}` : ""}
+                </>
+              ) : (
+                <>
+                  template {run.template.name} v{run.template.versionNumber}
+                </>
+              )}
+              {run.locale ? ` · language ${run.locale}` : ""}
             </div>
             <div className="text-zinc-600 dark:text-zinc-400">
               Started by {run.initiatedBy} on {fmtDateTime(run.createdAt)}

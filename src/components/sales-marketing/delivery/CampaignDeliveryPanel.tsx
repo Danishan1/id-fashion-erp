@@ -14,6 +14,8 @@ interface ChannelRow {
   channelType: string;
   connection: { id: string; code: string; name: string; providerLabel: string; status: string; consentPolicy: string; liveVerified: boolean; lastTestStatus: string | null };
   template: { id: string; name: string; status: string; versionNumber: number | null };
+  content: { id: string; name: string; status: string; versionNumber: number | null } | null;
+  sends: { source: string; label: string; attachments: string[]; locale: string | null } | null;
   problems: string[];
   runs: { id: string; runNumber: number; status: string; scheduledFor: string | null; createdAt: string; finishedAt: string | null; plannedCount: number }[];
 }
@@ -76,19 +78,23 @@ export function CampaignDeliveryPanel({ campaignId, canCreate, canEdit }: { camp
 
 function AddChannel({ campaignId, onDone, onCancel }: { campaignId: string; onDone: () => void; onCancel: () => void }) {
   const { data, error } = useApi<Options>("/api/v1/sales-marketing/delivery/options");
+  // Campaign content (Phase 11) — only listed for users who can see the content library.
+  const { data: contents } = useApi<{ contents: { id: string; name: string; channelType: string; status: string; approvedVersionNumber: number | null }[] }>(`/api/v1/sales-marketing/campaigns/${campaignId}/contents`);
   const [connectionId, setConnectionId] = useState("");
   const [templateId, setTemplateId] = useState("");
+  const [contentId, setContentId] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   if (error) return <p className="text-sm text-red-700 dark:text-red-400">{error}</p>;
   if (!data) return <LoadingState />;
   const conn = data.connections.find((c) => c.id === connectionId);
   const templates = conn ? data.templates.filter((t) => t.channelType === conn.channelType) : [];
+  const ownContents = conn ? (contents?.contents ?? []).filter((c) => c.channelType === conn.channelType && c.status === "ACTIVE") : [];
   const save = async () => {
     setBusy(true);
     setMsg(null);
     try {
-      await send(`/api/v1/sales-marketing/campaigns/${campaignId}/channels`, "POST", { connectionId, templateId });
+      await send(`/api/v1/sales-marketing/campaigns/${campaignId}/channels`, "POST", contentId ? { connectionId, contentId } : { connectionId, templateId });
       onDone();
     } catch (e) {
       setMsg((e as Error).message);
@@ -106,7 +112,7 @@ function AddChannel({ campaignId, onDone, onCancel }: { campaignId: string; onDo
         <div className="flex flex-wrap items-end gap-2">
           <label className="text-sm">
             <span className="mb-1 block text-zinc-600 dark:text-zinc-400">Connection</span>
-            <select className={`${textInputClass()} !w-auto min-w-[14rem]`} value={connectionId} onChange={(e) => (setConnectionId(e.target.value), setTemplateId(""))}>
+            <select className={`${textInputClass()} !w-auto min-w-[14rem]`} value={connectionId} onChange={(e) => (setConnectionId(e.target.value), setTemplateId(""), setContentId(""))}>
               <option value="">Choose…</option>
               {data.connections.map((c) => (
                 <option key={c.id} value={c.id}>
@@ -116,17 +122,38 @@ function AddChannel({ campaignId, onDone, onCancel }: { campaignId: string; onDo
             </select>
           </label>
           <label className="text-sm">
-            <span className="mb-1 block text-zinc-600 dark:text-zinc-400">Message template (CRM)</span>
-            <select className={`${textInputClass()} !w-auto min-w-[14rem]`} value={templateId} disabled={!conn} onChange={(e) => setTemplateId(e.target.value)}>
-              <option value="">{conn ? (templates.length ? "Choose…" : "No active templates for this channel") : "Pick a connection first"}</option>
-              {templates.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
+            <span className="mb-1 block text-zinc-600 dark:text-zinc-400">Message</span>
+            <select
+              className={`${textInputClass()} !w-auto min-w-[14rem]`}
+              value={contentId ? `c:${contentId}` : templateId ? `t:${templateId}` : ""}
+              disabled={!conn}
+              onChange={(e) => {
+                const [kind, id] = e.target.value.split(":");
+                setContentId(kind === "c" ? id : "");
+                setTemplateId(kind === "t" ? id : "");
+              }}
+            >
+              <option value="">{conn ? (templates.length + ownContents.length ? "Choose…" : "No active templates or content for this channel") : "Pick a connection first"}</option>
+              {ownContents.length > 0 && (
+                <optgroup label="This campaign's content">
+                  {ownContents.map((c) => (
+                    <option key={c.id} value={`c:${c.id}`}>
+                      {c.name}
+                      {c.approvedVersionNumber ? ` (v${c.approvedVersionNumber} approved)` : " (not approved yet)"}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              <optgroup label="Templates as they are">
+                {templates.map((t) => (
+                  <option key={t.id} value={`t:${t.id}`}>
+                    {t.name}
+                  </option>
+                ))}
+              </optgroup>
             </select>
           </label>
-          <Button size="sm" disabled={!connectionId || !templateId || busy} onClick={save}>
+          <Button size="sm" disabled={!connectionId || (!templateId && !contentId) || busy} onClick={save}>
             {busy ? "Adding…" : "Add"}
           </Button>
           <Button size="sm" variant="secondary" onClick={onCancel}>
@@ -205,8 +232,22 @@ function ChannelCard({ ch, campaignActive, closed, canCreate, canEdit, reload }:
             {!ch.isActive && <span className="text-xs text-zinc-500">· disabled</span>}
           </div>
           <div className="text-sm text-zinc-600 dark:text-zinc-400">
-            Template: {ch.template.name}
-            {ch.template.versionNumber ? ` (current v${ch.template.versionNumber} — the run keeps the version it starts with)` : ""}
+            {ch.content ? (
+              <>
+                Content:{" "}
+                <Link className="underline" href={`/sales-marketing/content/items/${ch.content.id}`}>
+                  {ch.content.name}
+                </Link>
+              </>
+            ) : (
+              <>
+                Template:{" "}
+                <Link className="underline" href={`/sales-marketing/content/templates/${ch.template.id}`}>
+                  {ch.template.name}
+                </Link>
+              </>
+            )}
+            {ch.sends ? ` — sends ${ch.sends.label}${ch.sends.attachments.length ? ` with ${ch.sends.attachments.join(", ")}` : ""}; a run keeps the version it starts with` : ""}
           </div>
         </div>
         {canEdit && !closed && (

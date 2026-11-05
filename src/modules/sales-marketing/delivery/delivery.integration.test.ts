@@ -95,6 +95,11 @@ describe.skipIf(!DB_URL)("Campaign delivery (database integration)", async () =>
     const v = await prisma.crmMessageTemplateVersion.create({ data: { companyId: company.id, templateId: t.id, versionNumber: 1, subject: "Hello {{contact.first_name}}", body: "Hi {{contact.first_name}}, new styles are in.", variables: ["contact.first_name"], createdByUserId: u.id } });
     await prisma.crmMessageTemplate.update({ where: { id: t.id }, data: { currentVersionId: v.id, currentVersionNumber: 1, status: "ACTIVE", activatedAt: new Date(), activatedByUserId: u.id } });
     (globalThis as { __tpl?: string }).__tpl = t.id;
+    // Phase 11: a template version must be approved for marketing (by someone else) before it can be sent.
+    const reviewer = await prisma.user.create({ data: { companyId: company.id, email: `reviewer.${run}@del-it.local`, passwordHash: "x", fullName: `Reviewer ${run}` } });
+    const { reviewVersion } = await import("@/modules/sales-marketing/content/content-review.service");
+    await reviewVersion(owner, "TEMPLATE_VERSION", v.id, "submit", {});
+    await reviewVersion({ companyId: company.id, userId: reviewer.id, branchId: null }, "TEMPLATE_VERSION", v.id, "approve", {});
   });
 
   afterAll(async () => {
