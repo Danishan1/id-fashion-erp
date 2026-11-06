@@ -543,3 +543,38 @@ Not suitable without more data:
 - anything outside the registry.
 
 Phase 18 should call the engine, not write its own SQL.
+
+## 19. Sales & Marketing dashboard (module home, 2026-11-06)
+
+`/sales-marketing` is now the module's final dashboard. It replaces the Phase 01 page (build map, "Planned · Phase N", connected-sources panel). Scope confirmed with the user: rebuild the home; show KPIs + trend, work queue, team & targets and system health; a period picker that defaults to this month.
+
+- **Service.** `sales-marketing-home.service.ts` → `GET /api/v1/sales-marketing/home?preset=`. The route needs `sales_marketing.view` or `sales_quotations.view`.
+  - Tiles use `runGovernedQuery`, the engine without the Analytics gate. **`sales_analytics` is not needed**, but every dataset and metric permission and record scope still applies.
+  - A tile without access returns HIDDEN with the reason; the UI says "Not available to you", never 0.
+  - Numbers equal Analytics because they are the same metric ids.
+- **Headline KPIs** vs the previous period of the same length: booked order value, invoiced (before GST), cash collected, quoted value, enquiries, quotation acceptance rate, attributed revenue, revenue-based ROI.
+  - "Report" opens the Analytics builder pre-filled with the tile's exact query (`/sales-marketing/analytics?tab=builder&q=…`; the page accepts only a schema-valid query, and the server validates it again on run). It is shown only to users with Analytics.
+  - "Open list" opens the source list.
+- **Bookings trend.** The grain follows the period: day up to 45 days, week up to 120 days, month beyond.
+- **Enquiry funnel.**
+- **Needs your attention.** Counts in the viewer's own scope, each linking to its list. Approval items appear only for approvers:
+  - overdue follow-ups and enquiries to qualify;
+  - quotations to approve, expiring within 7 days, and accepted but not ordered;
+  - campaigns to approve and open budget alerts;
+  - promotion and attribution versions to approve;
+  - workflows needing attention;
+  - open sync conflicts.
+- **Team & targets.** Top 5 reps, channels and customers by bookings; targets overlapping the period, lowest attainment first.
+- **System health**, shown only for what the viewer can see:
+  - attribution freshness;
+  - failed or partly failed message runs (7 days);
+  - failed or degraded integrations;
+  - failed S&M webhooks (24 h);
+  - failed bulk jobs (7 days; all S&M jobs for admins, otherwise the viewer's own);
+  - the viewer's failed or skipped report deliveries (7 days).
+- Removed: `SalesMarketingKpis.tsx`, which the new KPIs replace. `/overview` and `/metrics` are kept for API compatibility.
+- **Tests.**
+  - `SalesMarketingDashboardClient.test.tsx` (4): hidden tiles, n/a, report links, queue, team, health, period change, error and retry.
+  - `sales-marketing-home.integration.test.ts` (5, real Postgres): KPIs equal the governed metrics, no Analytics needed, hidden tiles, queue scope and approver-only items, health, tenant isolation.
+  - Full suite: **343 files passed, 3 skipped; 4,394 tests passed, 10 skipped.**
+- **Visual check.** The page was loaded in a real browser (Playwright, sandbox dev server on the test database). All sections rendered with data; two chart alignment fixes came out of it (last axis label clipped, ranking bars squeezed).

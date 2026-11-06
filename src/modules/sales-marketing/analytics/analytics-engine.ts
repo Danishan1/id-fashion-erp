@@ -202,6 +202,16 @@ const keyOf = (keys: Record<string, string | null>) => JSON.stringify(keys);
 /** Runs a validated query. Throws PERMISSION_DENIED if the dataset is hidden from the viewer. */
 export async function runReport(actor: SalesActor, raw: unknown): Promise<ReportResult> {
   await PermissionService.assert(actor.userId, "sales_analytics", "view");
+  return runGovernedQuery(actor, raw);
+}
+
+/**
+ * The same governed query WITHOUT the Analytics-module gate — for module home
+ * screens (the Sales & Marketing dashboard) whose fixed tiles must work for
+ * anyone with the source modules. Dataset and metric permissions and record
+ * scope still apply in full.
+ */
+export async function runGovernedQuery(actor: SalesActor, raw: unknown): Promise<ReportResult> {
   const started = Date.now();
   const v = validateQuery(raw);
   const { ok: metrics, no: unavailable } = await metricAccess(actor.userId, v.metrics);

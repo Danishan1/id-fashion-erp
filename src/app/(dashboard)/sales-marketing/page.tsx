@@ -4,9 +4,9 @@ import { redirect } from "next/navigation";
 import { getSalesMarketingPageContext } from "@/modules/sales-marketing/sales-marketing-page";
 
 /**
- * Sales & Marketing dashboard (Phase 01 foundation). Shows the module map and
- * the existing ERP data the module builds on. Sales and marketing KPIs appear
- * here as their phases are built — none are shown before real data exists.
+ * Sales & Marketing dashboard — the module home: headline KPIs vs the previous
+ * period, bookings trend, enquiry funnel, work queue, team & targets and system
+ * health, all from the governed metrics in the viewer's own scope.
  */
 export default async function SalesMarketingDashboardPage() {
   // Users without Sales & Marketing itself land on the area they do have.
@@ -16,7 +16,7 @@ export default async function SalesMarketingDashboardPage() {
     <>
       <SalesMarketingPageHeader
         title="Sales & Marketing"
-        description="Enquiries, quotations, pricing, targets and campaigns — built in phases on top of your existing customers, CRM and sales orders."
+        description="How sales and marketing are doing, what needs your attention, and whether everything is running — in your own access."
       />
       <SalesMarketingDashboardClient />
     </>

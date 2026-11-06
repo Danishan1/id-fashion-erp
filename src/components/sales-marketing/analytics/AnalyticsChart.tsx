@@ -31,7 +31,7 @@ export function AnalyticsChart({ result, kind, height = 220 }: { result: ReportR
         {rows.map((r, i) => {
           const v = r.values[m.key];
           return (
-            <div key={i} className="grid grid-cols-[minmax(0,12rem)_1fr_auto] items-center gap-2 text-xs">
+            <div key={i} className="grid grid-cols-[minmax(0,12rem)_minmax(2.5rem,1fr)_auto] items-center gap-2 text-xs">
               <span className="truncate text-zinc-600 dark:text-zinc-300" title={label(r)}>
                 {label(r)}
               </span>
@@ -73,7 +73,7 @@ export function AnalyticsChart({ result, kind, height = 220 }: { result: ReportR
         ))}
         {points.map((r, i) =>
           i % every === 0 ? (
-            <text key={i} x={x(i)} y={H - 8} textAnchor="middle" className="fill-zinc-500 text-[10px]">
+            <text key={i} x={x(i)} y={H - 8} textAnchor={points.length > 1 && i === points.length - 1 ? "end" : points.length > 1 && i === 0 ? "start" : "middle"} className="fill-zinc-500 text-[10px]">
               {label(r)}
             </text>
           ) : null

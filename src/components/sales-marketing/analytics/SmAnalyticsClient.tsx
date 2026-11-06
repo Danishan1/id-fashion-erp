@@ -10,12 +10,12 @@ import type { DashboardWidget } from "@/modules/sales-marketing/analytics/analyt
 import { AnalyticsChart } from "./AnalyticsChart";
 import { ReportBuilder } from "./ReportBuilder";
 import { ResultView } from "./ResultView";
-import { AN_API, Badge, CARD, ChangeChip, FreshnessBadges, formatValue, metricColumns, send, useApi, type Catalog, type ReportResult, type SavedReport } from "./analytics-ui";
+import { AN_API, Badge, CARD, ChangeChip, FreshnessBadges, formatValue, metricColumns, send, useApi, type Catalog, type ReportResult, type SavedDefinition, type SavedReport } from "./analytics-ui";
 
 export type AnalyticsTab = "dashboards" | "builder" | "saved" | "deliveries" | "glossary" | "usage";
 
 /** Phase 17 — Sales & Marketing → Analytics. */
-export function SmAnalyticsClient({ initialTab = "dashboards", initialReportId = null }: { initialTab?: AnalyticsTab; initialReportId?: string | null }) {
+export function SmAnalyticsClient({ initialTab = "dashboards", initialReportId = null, initialQuery = null }: { initialTab?: AnalyticsTab; initialReportId?: string | null; initialQuery?: SavedDefinition["query"] | null }) {
   const cat = useApi<Catalog>(`${AN_API}/catalog`);
   const [tab, setTab] = useState<AnalyticsTab>(initialTab);
   const [editing, setEditing] = useState<SavedReport | null>(null);
@@ -50,7 +50,7 @@ export function SmAnalyticsClient({ initialTab = "dashboards", initialReportId =
         ))}
       </div>
       {tab === "dashboards" && <DashboardsPanel catalog={catalog} />}
-      {tab === "builder" && <ReportBuilder key={editing?.id ?? "new"} catalog={catalog} initial={editing} onSaved={() => (setEditing(null), setTab("saved"))} />}
+      {tab === "builder" && <ReportBuilder key={editing?.id ?? "new"} catalog={catalog} initial={editing} initialQuery={editing ? null : initialQuery} onSaved={() => (setEditing(null), setTab("saved"))} />}
       {tab === "saved" && (
         <SavedReportsPanel
           catalog={catalog}

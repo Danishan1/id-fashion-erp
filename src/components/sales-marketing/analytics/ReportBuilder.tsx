@@ -39,12 +39,16 @@ const fromDefinition = (d: SavedDefinition): Draft => ({
   filters: d.query.filters ?? {},
 });
 
-export function ReportBuilder({ catalog, initial, onSaved }: { catalog: Catalog; initial?: SavedReport | null; onSaved?: (r: SavedReport) => void }) {
+export function ReportBuilder({ catalog, initial, initialQuery, onSaved }: { catalog: Catalog; initial?: SavedReport | null; initialQuery?: SavedDefinition["query"] | null; onSaved?: (r: SavedReport) => void }) {
   const firstDs = catalog.datasets.find((d) => d.available) ?? catalog.datasets[0];
+  // A query handed over by a link (e.g. a dashboard tile) — still validated by the server when run.
+  const linked = initialQuery && catalog.datasets.some((d) => d.key === initialQuery.dataset) ? initialQuery : null;
   const [draft, setDraft] = useState<Draft>(() =>
     initial
       ? fromDefinition(initial.definition)
-      : { dataset: firstDs.key, metrics: [firstDs.metrics.find((m) => m.available)?.id ?? firstDs.metrics[0].id], groupBy: ["period"], timeGrain: "month", timeField: "", period: { mode: "relative", preset: "this_fiscal_year" }, from: daysAgo(89), to: today(), compare: "none", filters: {} }
+      : linked
+        ? fromDefinition({ query: linked, period: { mode: "fixed" } })
+        : { dataset: firstDs.key, metrics: [firstDs.metrics.find((m) => m.available)?.id ?? firstDs.metrics[0].id], groupBy: ["period"], timeGrain: "month", timeField: "", period: { mode: "relative", preset: "this_fiscal_year" }, from: daysAgo(89), to: today(), compare: "none", filters: {} }
   );
   const [result, setResult] = useState<ReportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
