@@ -136,6 +136,8 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Campaign Budgets", href: "/sales-marketing/budgets", modules: ["marketing_campaigns"] },
       { label: "Attribution & ROI", href: "/sales-marketing/attribution", modules: ["marketing_attribution"] },
       { label: "Delivery Runs", href: "/sales-marketing/delivery", modules: ["marketing_delivery"] },
+      // Phase 14: background bulk jobs + saved schedules for S&M records (the jobs a user sees depend on the record types they can view).
+      { label: "Bulk Jobs", href: "/sales-marketing/bulk-jobs", modules: ["sales_marketing", "sales_quotations", "marketing_campaigns", "marketing_promotions", "marketing_attribution"] },
       { label: "Channel Connections", href: "/sales-marketing/delivery/connections", modules: ["sales_marketing_settings"] },
       { label: "Settings", href: "/sales-marketing/settings", modules: ["sales_marketing_settings"] },
     ],

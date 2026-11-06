@@ -7,7 +7,7 @@ import { PermissionService } from "@/core/rbac/PermissionService";
 import { getTeamScope } from "@/core/hierarchy/team-scope";
 import { branchScopeWhere } from "@/lib/branch-access";
 import { todayIsoDate } from "@/lib/date";
-import { createBuyerEnquiry } from "@/modules/buyer-enquiries/buyer-enquiry.service";
+import { createBuyerEnquiry, validateBuyerEnquiryInput } from "@/modules/buyer-enquiries/buyer-enquiry.service";
 import { crmOwnerWhere, getCrmRecordScope, isWithinCrmScope, type CrmRecordScope } from "@/modules/crm/core/crm-visibility";
 import { linkErpDocument, unlinkErpDocument } from "@/modules/crm/opportunities/crm-opportunity-erp.service";
 import {
@@ -221,7 +221,8 @@ const LIST_INCLUDE = {
   _count: { select: { lines: true } },
 } satisfies Prisma.BuyerEnquiryInclude;
 
-function buildListWhere(actor: SalesActor, scope: SalesEnquiryScope, filter: SalesEnquiryListFilter, search?: string): Prisma.BuyerEnquiryWhereInput {
+/** The list's filter → where (also used by bulk "all matching the filter", Phase 14). */
+export function buildSalesEnquiryListWhere(actor: SalesActor, scope: SalesEnquiryScope, filter: SalesEnquiryListFilter, search?: string): Prisma.BuyerEnquiryWhereInput {
   const and: Prisma.BuyerEnquiryWhereInput[] = [];
   const stages = parseEnumList(filter.stage, STAGE_KEYS);
   if (stages.length) and.push({ salesStage: { in: stages } });
@@ -267,7 +268,7 @@ export async function listSalesEnquiries(
   page: SalesEnquiryPage
 ) {
   const scope = await getSalesEnquiryScope(actor);
-  const where = buildListWhere(actor, scope, filter, page.search);
+  const where = buildSalesEnquiryListWhere(actor, scope, filter, page.search);
   const [rows, totalCount] = await Promise.all([
     prisma.buyerEnquiry.findMany({ where, include: LIST_INCLUDE, orderBy: buildOrderBy(sort.sortBy, sort.sortOrder), skip: page.skip, take: page.take }),
     prisma.buyerEnquiry.count({ where }),
@@ -375,11 +376,22 @@ async function listLinkedOpportunities(actor: SalesActor, buyerEnquiryId: string
 
 // ── Create ───────────────────────────────────────────────────────
 
-export async function createSalesEnquiry(actor: SalesActor, raw: unknown) {
+/**
+ * `dryRun` (Phase 14 enquiry import validation): every check a real create
+ * makes — payload, owner, CRM links, customer / buyer / style / size — and
+ * nothing is written. Returns null.
+ */
+export async function createSalesEnquiry(actor: SalesActor, raw: unknown, opts: { dryRun: true }): Promise<null>;
+export async function createSalesEnquiry(actor: SalesActor, raw: unknown, opts?: { dryRun?: false }): Promise<Awaited<ReturnType<typeof createBuyerEnquiry>>>;
+export async function createSalesEnquiry(actor: SalesActor, raw: unknown, opts: { dryRun?: boolean } = {}) {
   const input = salesEnquiryCreateSchema.parse(raw);
   const ownerUserId = input.ownerUserId || actor.userId;
   const owner = await assertEligibleOwner(actor, ownerUserId);
   await assertCrmLinks(actor, { crmCompanyId: input.crmCompanyId || null, crmContactId: input.crmContactId || null, customerId: input.customerId || null });
+  if (opts.dryRun) {
+    await validateBuyerEnquiryInput({ companyId: actor.companyId, userId: actor.userId, branchId: actor.branchId ?? null }, input);
+    return null;
+  }
 
   const enquiry = await createBuyerEnquiry(
     { companyId: actor.companyId, userId: actor.userId, branchId: actor.branchId ?? null },
@@ -576,13 +588,23 @@ export async function reopenSalesEnquiry(actor: SalesActor, id: string, raw: unk
 
 // ── Owner ────────────────────────────────────────────────────────
 
-export async function assignSalesEnquiry(actor: SalesActor, id: string, raw: unknown) {
+/**
+ * The reassignment rules without changing anything (Phase 14 bulk dry run):
+ * visible, not cancelled, open, eligible owner. `unchanged` = already that owner.
+ */
+export async function checkSalesEnquiryAssign(actor: SalesActor, id: string, raw: unknown) {
   const input = salesEnquiryAssignSchema.parse(raw);
   const enquiry = await loadEditable(actor, id, "reassigned");
   assertOpen(enquiry, "reassigning it");
   const ownerUserId = input.ownerUserId || null;
-  if (ownerUserId === enquiry.ownerUserId) return getSalesEnquiry(actor, id);
+  if (ownerUserId === enquiry.ownerUserId) return { enquiry, ownerUserId, owner: null, unchanged: true as const };
   const owner = ownerUserId ? await assertEligibleOwner(actor, ownerUserId) : null;
+  return { enquiry, ownerUserId, owner, unchanged: false as const };
+}
+
+export async function assignSalesEnquiry(actor: SalesActor, id: string, raw: unknown) {
+  const { enquiry, ownerUserId, owner, unchanged } = await checkSalesEnquiryAssign(actor, id, raw);
+  if (unchanged) return getSalesEnquiry(actor, id);
   const previous = enquiry.ownerUserId
     ? await prisma.user.findFirst({ where: { id: enquiry.ownerUserId }, select: { fullName: true } })
     : null;

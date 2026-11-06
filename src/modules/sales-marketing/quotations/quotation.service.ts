@@ -603,13 +603,8 @@ const SUMMARY_REVISION = {
   select: { revisionNumber: true, status: true, title: true, quotationDate: true, validUntil: true, currencyCode: true, grandTotal: true },
 };
 
-export async function listQuotations(
-  actor: SalesActor,
-  filter: QuotationListFilter,
-  sort: { sortBy: QuotationSortField; sortOrder: "asc" | "desc" },
-  page: { skip: number; take: number; search?: string }
-) {
-  const scope = await getQuotationScope(actor);
+/** The list's filter → where (also used by bulk "all matching the filter", Phase 14). */
+export function buildQuotationListWhere(actor: SalesActor, scope: QuotationScope, filter: QuotationListFilter, search?: string): Prisma.QuotationWhereInput {
   const and: Prisma.QuotationWhereInput[] = [];
   const statuses = (filter.status ?? "").split(",").filter((s): s is QuotationStatus => (QUOTATION_STATUS_KEYS as readonly string[]).includes(s));
   if (statuses.length) and.push({ status: { in: statuses } });
@@ -620,14 +615,24 @@ export async function listQuotations(
   else if (filter.owner && /^[0-9a-f-]{36}$/i.test(filter.owner)) and.push({ ownerUserId: filter.owner });
   if (filter.customerId) and.push({ customerId: filter.customerId });
   if (filter.buyerEnquiryId) and.push({ buyerEnquiryId: filter.buyerEnquiryId });
-  const term = page.search?.trim();
+  const term = search?.trim();
   if (term) {
     const c = { contains: term, mode: "insensitive" as const };
     and.push({
       OR: [{ quotationNumber: c }, { prospectName: c }, { customer: { name: c } }, { buyerEnquiry: { enquiryNumber: c } }, { revisions: { some: { title: c } } }],
     });
   }
-  const where = scopedWhere(actor, scope, { AND: and });
+  return scopedWhere(actor, scope, { AND: and });
+}
+
+export async function listQuotations(
+  actor: SalesActor,
+  filter: QuotationListFilter,
+  sort: { sortBy: QuotationSortField; sortOrder: "asc" | "desc" },
+  page: { skip: number; take: number; search?: string }
+) {
+  const scope = await getQuotationScope(actor);
+  const where = buildQuotationListWhere(actor, scope, filter, page.search);
   const [rows, totalCount] = await Promise.all([
     prisma.quotation.findMany({
       where,

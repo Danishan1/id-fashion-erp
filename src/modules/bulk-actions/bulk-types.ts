@@ -27,7 +27,7 @@ export interface BulkPermission {
 
 export type BulkSelectionMode = "IDS" | "PAGE" | "FILTER";
 
-export type BulkActionKind = "update" | "assign" | "status" | "stage" | "tags" | "archive" | "restore" | "delete" | "export" | "workflow" | "sequence" | "communication";
+export type BulkActionKind = "update" | "assign" | "status" | "stage" | "tags" | "archive" | "restore" | "delete" | "export" | "workflow" | "sequence" | "communication" | "validate" | "recalculate";
 
 /** Parameter inputs the generic bulk dialog knows how to render. Options are resolved per user. */
 export type BulkParamField =
@@ -59,6 +59,12 @@ export interface BulkItemContext<P> {
   params: P;
   /** Stable for a job item across retries/recovery: `bulk:<jobId>:<entityId>`. */
   idempotencyKey: string;
+  /**
+   * Long-running records (an attribution recalculation) call this now and then
+   * to keep the job's lease. Returns false when another worker took the job
+   * over — stop as soon as it is safe.
+   */
+  keepAlive: () => Promise<boolean>;
 }
 
 /** For actions that are much cheaper per batch than per record (exports). */
@@ -116,6 +122,16 @@ export interface BulkActionDefinition<P = Record<string, unknown>> {
   /** Validates referenced data (owner active, status exists…) and normalises params. Runs at submit and at job start. */
   prepare?: (actor: BulkActor, params: P) => Promise<BulkPrepared<P>>;
   executeItem?: (ctx: BulkItemContext<P>) => Promise<BulkItemOutcome>;
+  /**
+   * Dry run (Phase 14, S&M): checks one record with the SAME rules executeItem
+   * would apply and changes nothing. SUCCEEDED = would succeed, SKIPPED = would
+   * be skipped, throw = would fail. Without it the action can't be dry-run.
+   */
+  validateItem?: (ctx: BulkItemContext<P>) => Promise<BulkItemOutcome>;
+  /** Shown when a dry run isn't offered (e.g. "An export changes nothing — just run it."). */
+  dryRunUnavailableReason?: string;
+  /** Can be saved as a recurring schedule (exports, recalculations). Only over a list filter. */
+  schedulable?: boolean;
   /** Alternative to executeItem: one call per batch. Returns an outcome (or an Error) per item id; a thrown error fails the whole batch. */
   executeBatch?: (ctx: BulkBatchContext<P>) => Promise<Map<string, BulkItemOutcome | Error>>;
   /** Runs once after all items (e.g. builds the export file). Returns the job's `result`. */

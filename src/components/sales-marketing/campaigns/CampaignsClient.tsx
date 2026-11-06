@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { SmBulkActions, bulkFilterQuery } from "@/components/sales-marketing/bulk/SmBulkActions";
 import { DataTable } from "@/components/ui/DataTable";
 import { ErrorState, LoadingState } from "@/components/ui/PageStates";
 import { CAMPAIGN_STATUSES, CAMPAIGN_STATUS_KEYS, PRIORITY_LABELS, type CampaignPriorityKey } from "@/modules/sales-marketing/campaigns/campaign-registry";
@@ -84,6 +85,8 @@ export function CampaignsClient() {
   const [ownerUserId, setOwner] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState<string[]>([]);
   const c = (k: string) => o?.counts[k] ?? 0;
 
   return (
@@ -120,6 +123,8 @@ export function CampaignsClient() {
         searchPlaceholder="Search code or name…"
         rowHref={(r) => `/sales-marketing/campaigns/${r.id}`}
         extraParams={{ status, typeId, ownerUserId, from, to }}
+        onSearchChange={setSearch}
+        selection={{ selectedIds: selected, onChange: setSelected, label: (r) => r.code }}
         toolbar={
           <div className="flex flex-wrap gap-2">
             <select aria-label="Status" value={status} onChange={(e) => setStatus(e.target.value)} className={selectClass}>
@@ -149,6 +154,7 @@ export function CampaignsClient() {
             </select>
             <input aria-label="Planned from" type="date" value={from} onChange={(e) => setFrom(e.target.value)} className={selectClass} />
             <input aria-label="Planned to" type="date" value={to} onChange={(e) => setTo(e.target.value)} className={selectClass} />
+            <SmBulkActions entityType="CAMPAIGN" selectedIds={selected} filterQuery={bulkFilterQuery({ status, typeId, ownerUserId, from, to, search: search.trim() })} onDone={() => setSelected([])} />
           </div>
         }
         columns={[

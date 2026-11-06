@@ -14,6 +14,7 @@ import {
   type SalesEnquiryPriority,
   type SalesEnquiryStage,
 } from "@/modules/sales-marketing/enquiries/sales-enquiry-registry";
+import { SmBulkActions, bulkFilterQuery } from "@/components/sales-marketing/bulk/SmBulkActions";
 import { useEnquiryOwners } from "./SalesEnquiryFields";
 import { PriorityBadge, StageBadge } from "./SalesEnquiryBadges";
 
@@ -50,6 +51,8 @@ export function SalesEnquiriesListClient({ viewAll }: { viewAll: boolean }) {
   const [priority, setPriority] = useState("");
   const [source, setSource] = useState("");
   const [overdue, setOverdue] = useState(false);
+  const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState<string[]>([]);
   const owners = useEnquiryOwners(viewAll);
 
   const stageOptions = SALES_ENQUIRY_STAGE_KEYS.filter((s) =>
@@ -62,6 +65,8 @@ export function SalesEnquiriesListClient({ viewAll }: { viewAll: boolean }) {
       searchPlaceholder="Search number, subject, customer, prospect or CRM contact…"
       rowHref={(row) => `/sales-marketing/enquiries/${row.id}`}
       initialSort={{ sortBy: "enquiryDate", sortOrder: "desc" }}
+      onSearchChange={setSearch}
+      selection={{ selectedIds: selected, onChange: setSelected, label: (r) => r.enquiryNumber }}
       extraParams={{
         view,
         stage: stage || undefined,
@@ -129,6 +134,12 @@ export function SalesEnquiriesListClient({ viewAll }: { viewAll: boolean }) {
             <input type="checkbox" checked={overdue} onChange={(e) => setOverdue(e.target.checked)} />
             Overdue follow-ups
           </label>
+          <SmBulkActions
+            entityType="ENQUIRY"
+            selectedIds={selected}
+            filterQuery={bulkFilterQuery({ view, stage, owner, priority, source, overdue: overdue && "1", search: search.trim() })}
+            onDone={() => setSelected([])}
+          />
         </div>
       }
       columns={[

@@ -3,7 +3,7 @@ import { Worker, type Job } from "bullmq";
 import { createRedisConnection, BULK_IMPORT_QUEUE_NAME } from "./queue";
 import { processBulkImportJob } from "@/modules/import/bulk-import.service";
 import type { BulkImportActorContext } from "@/modules/import/bulk-import.service";
-import type { BulkImportMasterType } from "@/modules/import/import.schema";
+import type { BulkImportType } from "@/modules/import/import.schema";
 import { startCrmIngestWorker } from "@/modules/crm/imports/crm-import.worker";
 import { startPlatformJobsWorker } from "@/modules/platform/platform-jobs.worker";
 import { startBulkActionWorker } from "@/modules/bulk-actions/bulk-actions.worker";
@@ -28,7 +28,7 @@ import { startAttributionJobsWorker } from "@/modules/sales-marketing/attributio
  */
 interface BulkImportJobData {
   batchId: string;
-  masterType: BulkImportMasterType;
+  masterType: BulkImportType;
   actor: BulkImportActorContext;
   rows: Record<string, string>[];
 }

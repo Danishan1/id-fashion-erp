@@ -109,7 +109,8 @@ export type BuyerEnquirySalesCreateData = Pick<
   "subject" | "priority" | "ownerUserId" | "nextFollowUpDate" | "crmCompanyId" | "crmContactId"
 >;
 
-export async function createBuyerEnquiry(actor: ActorContext, input: BuyerEnquiryInput, sales?: BuyerEnquirySalesCreateData) {
+/** Every reference / content check of a create, without writing (also used by the Phase 14 enquiry import's validation). */
+export async function validateBuyerEnquiryInput(actor: ActorContext, input: BuyerEnquiryInput) {
   // A real Customer or at least a prospect name is required — an enquiry with
   // neither would be an anonymous, unreferenceable record. This is a plain
   // "not both empty" check, not a promotion mechanism: a prospect stays a
@@ -144,6 +145,12 @@ export async function createBuyerEnquiry(actor: ActorContext, input: BuyerEnquir
       if (!size) throw new BusinessRuleError("NOT_FOUND", "Size not found.", { id: line.sizeId });
     }
   }
+
+  return customer;
+}
+
+export async function createBuyerEnquiry(actor: ActorContext, input: BuyerEnquiryInput, sales?: BuyerEnquirySalesCreateData) {
+  await validateBuyerEnquiryInput(actor, input);
 
   const enquiryNumber = await generateDocumentNumber({
     companyId: actor.companyId,

@@ -31,11 +31,18 @@ export const createBulkJobSchema = bulkPreviewSchema
     idempotencyKey: z.string().trim().min(8).max(100).optional(),
     /** For actions that ask the user to type the number of records. */
     confirmCount: z.number().int().min(0).optional(),
+    /** Phase 14 (S&M): check every record with the action's rules, change nothing. */
+    dryRun: z.boolean().optional(),
   })
   .strict();
 export type CreateBulkJobInput = z.infer<typeof createBulkJobSchema>;
 
 export const retryBulkJobSchema = z.object({ idempotencyKey: z.string().trim().min(8).max(100).optional() }).strict();
+export const runForRealSchema = z.object({ idempotencyKey: z.string().trim().min(8).max(100).optional(), confirmCount: z.number().int().min(0).optional() }).strict();
+
+/** Running jobs one user / one company may have at once (queued, validating, running, cancelling). */
+export const BULK_MAX_ACTIVE_PER_USER = 5;
+export const BULK_MAX_ACTIVE_PER_COMPANY = 20;
 
 export const BULK_JOB_STATUSES = {
   QUEUED: { label: "Queued", tone: "neutral" },
@@ -61,7 +68,10 @@ export const bulkJobFilterSchema = z
   .object({
     statuses: z.array(z.enum(Object.keys(BULK_JOB_STATUSES) as [keyof typeof BULK_JOB_STATUSES, ...(keyof typeof BULK_JOB_STATUSES)[]])).max(8).optional(),
     entityType: z.string().max(40).optional(),
+    /** Several entity types (a module's jobs page, e.g. Sales & Marketing). */
+    entityTypes: z.array(z.string().max(40)).max(20).optional(),
     mine: z.boolean().optional(),
+    scheduleId: z.string().uuid().optional(),
   })
   .strict();
 export type BulkJobFilters = z.infer<typeof bulkJobFilterSchema>;
@@ -71,7 +81,9 @@ export function parseBulkJobFilters(sp: URLSearchParams): BulkJobFilters {
   return bulkJobFilterSchema.parse({
     statuses: statuses?.length ? statuses : undefined,
     entityType: sp.get("entityType")?.trim() || undefined,
+    entityTypes: sp.get("entityTypes")?.split(",").map((s) => s.trim()).filter(Boolean) || undefined,
     mine: sp.get("mine") === "true" ? true : undefined,
+    scheduleId: sp.get("scheduleId")?.trim() || undefined,
   });
 }
 

@@ -171,17 +171,37 @@ async function usageByPromotion(companyId: string, ids: string[]) {
   return out;
 }
 
+/**
+ * The list's filter → where (also used by bulk "all matching the filter",
+ * Phase 14). The derived SCHEDULED / EXPIRED statuses are expressed on the
+ * approved version's dates here, so the database answers them directly.
+ */
+export function buildPromotionListWhere(actor: SalesActor, q: z.infer<typeof listQuerySchema>, today: string): Prisma.MarketingPromotionWhereInput {
+  const day = new Date(`${today}T00:00:00Z`);
+  const status: Prisma.MarketingPromotionWhereInput =
+    q.status && ["DRAFT", "ACTIVE", "PAUSED", "ARCHIVED"].includes(q.status)
+      ? { status: q.status as MarketingPromotion["status"] }
+      : q.status === "SCHEDULED"
+        ? { status: "ACTIVE", approvedVersion: { validFrom: { gt: day } } }
+        : q.status === "EXPIRED"
+          ? { status: "ACTIVE", approvedVersion: { validTo: { lt: day } } }
+          : q.status
+            ? {}
+            : { status: { not: "ARCHIVED" } };
+  return {
+    companyId: actor.companyId,
+    ...status,
+    ...(q.search ? { OR: [{ code: { contains: q.search, mode: "insensitive" } }, { name: { contains: q.search, mode: "insensitive" } }] } : {}),
+    ...(q.campaignId ? { approvedVersion: { ...(status.approvedVersion as object | undefined), campaignIds: { has: q.campaignId } } } : {}),
+  };
+}
+
 export async function listPromotions(actor: SalesActor, raw: unknown) {
   await PermissionService.assert(actor.userId, "marketing_promotions", "view");
   const q = listQuerySchema.parse(raw ?? {});
   const today = todayIsoDate();
   const rows = await prisma.marketingPromotion.findMany({
-    where: {
-      companyId: actor.companyId,
-      ...(q.status && ["DRAFT", "ACTIVE", "PAUSED", "ARCHIVED"].includes(q.status) ? { status: q.status } : q.status ? {} : { status: { not: "ARCHIVED" } }),
-      ...(q.search ? { OR: [{ code: { contains: q.search, mode: "insensitive" } }, { name: { contains: q.search, mode: "insensitive" } }] } : {}),
-      ...(q.campaignId ? { approvedVersion: { campaignIds: { has: q.campaignId } } } : {}),
-    },
+    where: buildPromotionListWhere(actor, { ...q, status: q.status === "SCHEDULED" || q.status === "EXPIRED" ? undefined : q.status }, today),
     orderBy: [{ updatedAt: "desc" }],
     take: 500,
     include: { approvedVersion: true, owner: { select: { fullName: true } }, versions: { where: { status: { in: ["DRAFT", "PENDING_APPROVAL"] } }, select: { status: true, versionNumber: true } } },
@@ -505,14 +525,20 @@ const ACTION_PERMISSION: Record<PromotionAction, "approve" | "edit"> = { activat
  * Pausing / archiving stops new prices only: quotations already issued keep
  * their prices and their reservations run their course.
  */
-export async function promotionAction(actor: SalesActor, id: string, actionRaw: string, raw: unknown) {
+/** The rules of a status action, without changing anything (Phase 14 bulk dry run). */
+export async function checkPromotionAction(actor: SalesActor, id: string, actionRaw: string) {
   const action = z.enum(Object.keys(PROMOTION_ACTIONS) as [PromotionAction, ...PromotionAction[]]).parse(actionRaw);
   await PermissionService.assert(actor.userId, "marketing_promotions", ACTION_PERMISSION[action]);
-  const { comment } = commentSchema.parse(raw ?? {});
   const p = await loadPromotion(actor, id);
   const def = PROMOTION_ACTIONS[action];
   if (!canPromotionMove(p.status, action)) throw new BusinessRuleError("INVALID_STATE_TRANSITION", `A ${p.status.toLowerCase()} promotion can't be ${def.label.toLowerCase()}d.`, { status: p.status });
   if (action === "activate" && !p.approvedVersionId) throw new BusinessRuleError("INVALID_STATE_TRANSITION", "Approve a version first — a promotion without approved terms can't be switched on.");
+  return { action, p, def };
+}
+
+export async function promotionAction(actor: SalesActor, id: string, actionRaw: string, raw: unknown) {
+  const { comment } = commentSchema.parse(raw ?? {});
+  const { action, p, def } = await checkPromotionAction(actor, id, actionRaw);
   await prisma.$transaction(async (tx) => {
     const { count } = await tx.marketingPromotion.updateMany({
       where: { id: p.id, status: p.status, version: p.version },

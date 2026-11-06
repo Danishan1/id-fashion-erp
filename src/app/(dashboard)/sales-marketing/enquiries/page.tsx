@@ -15,9 +15,14 @@ export default async function SalesEnquiriesPage() {
         breadcrumbs={[{ label: "Enquiries" }]}
         actions={
           permissions.create ? (
-            <Link href="/sales-marketing/enquiries/new" className={buttonClasses("primary", "sm")}>
-              New enquiry
-            </Link>
+            <div className="flex gap-2">
+              <Link href="/sales-marketing/enquiries/import" className={buttonClasses("secondary", "sm")}>
+                Import
+              </Link>
+              <Link href="/sales-marketing/enquiries/new" className={buttonClasses("primary", "sm")}>
+                New enquiry
+              </Link>
+            </div>
           ) : undefined
         }
       />

@@ -5,6 +5,7 @@ import { getCrmPageContext } from "@/modules/crm/core/crm-page";
 /** Phase 14 — background bulk jobs (own jobs; CRM admins see everyone's). */
 export default async function CrmBulkJobsPage() {
   await getCrmPageContext();
+  // CRM record types only; Sales & Marketing jobs have their own page (S&M Phase 14).
   return (
     <>
       <CrmPageHeader

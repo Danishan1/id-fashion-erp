@@ -1,8 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/core/db/client";
-import { saveFile } from "@/core/file-storage/FileStorage";
-import { buildXlsxBuffer, type XlsxColumn } from "@/lib/xlsx";
-import { buildSafeCsv, sanitizeSpreadsheetCell } from "@/modules/bulk-actions/bulk-safety";
+import { writeBulkExportFile } from "@/modules/bulk-actions/bulk-export-file";
 import type { BulkActor, BulkItemOutcome } from "@/modules/bulk-actions/bulk-types";
 import { crmEntityWhere, type CrmBulkEntityKey } from "./crm-bulk-entities";
 
@@ -98,45 +96,5 @@ export function exportOutcome(row: Cell[] | undefined): BulkItemOutcome {
 
 /** Builds the file from the SUCCEEDED items' rows (in selection order), stores it privately and clears the per-item copies. */
 export async function writeExportFile(job: { id: string; companyId: string; createdAt: Date }, entityType: CrmBulkEntityKey, format: "CSV" | "XLSX", pluralLabel: string) {
-  const columns = COLUMNS[entityType];
-  const rows: Cell[][] = [];
-  let cursor = 0;
-  for (;;) {
-    const batch = await prisma.bulkJobItem.findMany({ where: { jobId: job.id, status: "SUCCEEDED", sequence: { gt: cursor } }, orderBy: { sequence: "asc" }, take: 2000, select: { sequence: true, result: true } });
-    if (!batch.length) break;
-    for (const it of batch) {
-      const row = (it.result as { row?: Cell[] } | null)?.row;
-      if (row) rows.push(row);
-    }
-    cursor = batch[batch.length - 1].sequence;
-  }
-  const stamp = job.createdAt.toISOString().slice(0, 16).replace(/[-:T]/g, "");
-  const base = `${pluralLabel.toLowerCase()}-export-${stamp}`;
-  const safe = rows.map((r) =>
-    r.map((v, i) => {
-      const col = columns[i];
-      if (v === null || v === undefined) return null;
-      if (col?.type === "date") return format === "XLSX" ? new Date(String(v)) : String(v).slice(0, 10);
-      if (col?.type === "number") return typeof v === "number" ? v : Number(v);
-      return sanitizeSpreadsheetCell(v);
-    })
-  );
-  let buffer: Buffer;
-  let mimeType: string;
-  let fileName: string;
-  if (format === "XLSX") {
-    const xcols: XlsxColumn[] = columns.map((c, i) => ({ header: c.header, key: `c${i}`, width: c.width, ...(c.type ? { type: c.type } : {}) }));
-    buffer = await buildXlsxBuffer(pluralLabel, xcols, safe.map((r) => Object.fromEntries(r.map((v, i) => [`c${i}`, v]))));
-    mimeType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-    fileName = `${base}.xlsx`;
-  } else {
-    buffer = buildSafeCsv(columns.map((c) => c.header), safe);
-    mimeType = "text/csv";
-    fileName = `${base}.csv`;
-  }
-  const stored = await saveFile(buffer, fileName, mimeType);
-  // The file is the export now; don't keep a second copy of the data on the items.
-  await prisma.bulkJobItem.updateMany({ where: { jobId: job.id, status: "SUCCEEDED" }, data: { result: { exported: true } } });
-  const expiresAt = new Date(Date.now() + EXPORT_TTL_DAYS * 24 * 3600 * 1000).toISOString();
-  return { file: { storageKey: stored.storageKey, fileName, mimeType, sizeBytes: stored.fileSizeBytes, rowCount: rows.length, expiresAt } };
+  return writeBulkExportFile(job, COLUMNS[entityType], format, pluralLabel);
 }

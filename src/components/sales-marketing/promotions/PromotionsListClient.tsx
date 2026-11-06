@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { SmBulkActions, bulkFilterQuery, toggleId } from "@/components/sales-marketing/bulk/SmBulkActions";
 import { textInputClass } from "@/components/ui/FormField";
 import { ErrorState, LoadingState } from "@/components/ui/PageStates";
 import { formatDate } from "@/lib/date-format";
@@ -27,6 +28,7 @@ export function PromotionsListClient() {
   const [status, setStatus] = useState("");
   const [search, setSearch] = useState("");
   const [q, setQ] = useState("");
+  const [selected, setSelected] = useState<string[]>([]);
   const params = new URLSearchParams({ ...(status ? { status } : {}), ...(q ? { search: q } : {}) });
   const { data, error, reload } = useApi<Row[]>(`/api/v1/sales-marketing/promotions?${params}`);
   return (
@@ -48,6 +50,9 @@ export function PromotionsListClient() {
           <option value="PAUSED">Paused</option>
           <option value="ARCHIVED">Archived</option>
         </select>
+        <div className="ml-auto">
+          <SmBulkActions entityType="PROMOTION" selectedIds={selected} filterQuery={bulkFilterQuery({ status, search: q })} onDone={() => setSelected([])} />
+        </div>
       </form>
       {error ? (
         <ErrorState message={error} onRetry={reload} />
@@ -60,6 +65,9 @@ export function PromotionsListClient() {
           <table className="w-full min-w-[56rem] text-sm">
             <thead>
               <tr className="border-b border-zinc-200 text-left text-xs text-zinc-500 dark:border-zinc-800">
+                <th className="w-8 py-2 pr-2">
+                  <input type="checkbox" aria-label="Select all promotions shown" checked={data.length > 0 && data.every((r) => selected.includes(r.id))} onChange={(e) => setSelected(e.target.checked ? [...new Set([...selected, ...data.map((r) => r.id)])] : selected.filter((id) => !data.some((r) => r.id === id)))} />
+                </th>
                 <th className="py-2 pr-3 font-medium">Promotion</th>
                 <th className="py-2 pr-3 font-medium">Applies</th>
                 <th className="py-2 pr-3 font-medium">Approved terms</th>
@@ -72,6 +80,9 @@ export function PromotionsListClient() {
             <tbody>
               {data.map((r) => (
                 <tr key={r.id} className="border-b border-zinc-100 align-top last:border-0 dark:border-zinc-800">
+                  <td className="py-2 pr-2">
+                    <input type="checkbox" aria-label={`Select ${r.code}`} checked={selected.includes(r.id)} onChange={(e) => setSelected(toggleId(selected, r.id, e.target.checked))} />
+                  </td>
                   <td className="py-2 pr-3">
                     <Link href={`/sales-marketing/promotions/${r.id}`} className="font-medium text-indigo-600 hover:underline dark:text-indigo-400">
                       {r.code}

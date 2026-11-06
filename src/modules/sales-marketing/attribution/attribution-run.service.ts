@@ -29,8 +29,12 @@ export const runRequestSchema = z.object({ from: isoDate, to: isoDate, idempoten
 
 const days = (from: string, to: string) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / DAY_MS);
 
-/** Queues a calculation. Returns the run and whether it was created now (false = same idempotency key). */
-export async function requestRun(actor: SalesActor, modelId: string, raw: unknown, trigger: "MANUAL" | "SCHEDULED" = "MANUAL") {
+/**
+ * The rules of a calculation request, without queuing anything (also the
+ * Phase 14 bulk recalculation's dry run). `busy` = a run of the model's
+ * current version is already queued or running.
+ */
+export async function checkRunRequest(actor: SalesActor, modelId: string, raw: unknown, trigger: "MANUAL" | "SCHEDULED" = "MANUAL") {
   if (trigger === "MANUAL") await PermissionService.assert(actor.userId, "marketing_attribution", "edit");
   const input = runRequestSchema.parse(raw);
   if (input.to < input.from) throw new BusinessRuleError("VALIDATION_ERROR", "The period ends before it starts.", { fieldErrors: { to: "Before the start." } });
@@ -39,6 +43,13 @@ export async function requestRun(actor: SalesActor, modelId: string, raw: unknow
   const m = await prisma.marketingAttributionModel.findFirst({ where: { id: modelId, companyId: actor.companyId } });
   if (!m) throw new BusinessRuleError("NOT_FOUND", "Attribution model not found.", { id: modelId });
   if (m.status !== "ACTIVE" || !m.approvedVersionId) throw new BusinessRuleError("INVALID_STATE_TRANSITION", "Only a model with approved rules that isn't retired can be calculated.");
+  const busy = await prisma.marketingAttributionRun.findFirst({ where: { modelVersionId: m.approvedVersionId, status: { in: ["QUEUED", "RUNNING"] } }, select: { id: true, status: true, idempotencyKey: true } });
+  return { input, m, busy };
+}
+
+/** Queues a calculation. Returns the run and whether it was created now (false = same idempotency key). */
+export async function requestRun(actor: SalesActor, modelId: string, raw: unknown, trigger: "MANUAL" | "SCHEDULED" = "MANUAL") {
+  const { input, m } = await checkRunRequest(actor, modelId, raw, trigger);
   if (input.idempotencyKey) {
     const existing = await prisma.marketingAttributionRun.findFirst({ where: { companyId: actor.companyId, idempotencyKey: input.idempotencyKey } });
     if (existing) return { run: existing, created: false };
@@ -115,8 +126,12 @@ export function attributeBatch(conversions: ConversionRow[], touches: Touch[], r
   return { results, credits, quality };
 }
 
-/** Runs a queued calculation. Returns false when the run wasn't QUEUED (someone else has it). */
-export async function executeRun(runId: string) {
+/**
+ * Runs a queued calculation. Returns false when the run wasn't QUEUED (someone
+ * else has it) or it failed. `onBatch` is called after each batch (Phase 14:
+ * a bulk recalculation keeps its job lease alive with it).
+ */
+export async function executeRun(runId: string, opts: { onBatch?: () => Promise<unknown> } = {}) {
   const claim = await prisma.marketingAttributionRun.updateMany({ where: { id: runId, status: "QUEUED" }, data: { status: "RUNNING", startedAt: new Date() } });
   if (claim.count === 0) return false;
   const run = await prisma.marketingAttributionRun.findUniqueOrThrow({ where: { id: runId }, include: { modelVersion: true } });
@@ -157,6 +172,7 @@ export async function executeRun(runId: string) {
       quality.noValue += out.quality.noValue;
       quality.unreconciled += out.quality.unreconciled;
       quality.credits += out.credits.length;
+      if (opts.onBatch) await opts.onBatch();
     }
     await prisma.marketingAttributionRun.update({
       where: { id: run.id },

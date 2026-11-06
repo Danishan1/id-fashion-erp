@@ -208,6 +208,18 @@ async function revalidateDraft(actor: SalesActor, quotation: Quotation, revision
   return { values, lineRows, reasons };
 }
 
+/**
+ * Phase 14 bulk "Check drafts": runs the same checks issue / submit would
+ * (valid-until, references, GST rates, unchanged price-list prices) on the
+ * current draft and changes nothing. Returns null when it isn't a draft.
+ */
+export async function checkQuotationDraft(actor: SalesActor, id: string) {
+  const { quotation, revision } = await loadForAction(actor, id);
+  if (quotation.status !== "DRAFT") return null;
+  const r = await revalidateDraft(actor, quotation, revision);
+  return { quotationNumber: quotation.quotationNumber, grandTotal: Number(r.values.grandTotal), approvalReasons: r.reasons };
+}
+
 /** Writes recomputed numbers back onto the draft (inside the transition). */
 async function storeRecomputed(tx: Prisma.TransactionClient, revision: QuotationRevision, recomputed: Awaited<ReturnType<typeof revalidateDraft>>) {
   await tx.quotationLine.deleteMany({ where: { revisionId: revision.id } });

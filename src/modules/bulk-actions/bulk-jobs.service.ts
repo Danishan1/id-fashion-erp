@@ -8,7 +8,19 @@ import { PermissionService } from "@/core/rbac/PermissionService";
 import type { ListQuery } from "@/lib/list-query";
 import "./bulk-registrations";
 import { isTerminalBulkStatus, refreshBulkCounters } from "./bulk-engine";
-import { BULK_ABSOLUTE_MAX_ITEMS, BULK_ITEM_STATUSES, BULK_JOB_STATUSES, bulkPreviewSchema, createBulkJobSchema, retryBulkJobSchema, type BulkJobFilters, type BulkSelectionInput } from "./bulk-job.schema";
+import {
+  BULK_ABSOLUTE_MAX_ITEMS,
+  BULK_ITEM_STATUSES,
+  BULK_JOB_STATUSES,
+  BULK_MAX_ACTIVE_PER_COMPANY,
+  BULK_MAX_ACTIVE_PER_USER,
+  bulkPreviewSchema,
+  createBulkJobSchema,
+  retryBulkJobSchema,
+  runForRealSchema,
+  type BulkJobFilters,
+  type BulkSelectionInput,
+} from "./bulk-job.schema";
 import { enqueueBulkJob } from "./bulk-queue";
 import { actionAvailability, getAvailableActions, getEntity, getHandler, listEntities } from "./bulk-registry";
 import { buildSafeCsv, sanitizeSpreadsheetCell } from "./bulk-safety";
@@ -25,7 +37,7 @@ import type { BulkActionDefinition, BulkActor, BulkEntityDefinition } from "./bu
 
 type Handler = BulkActionDefinition<Record<string, unknown>>;
 
-function resolveDefinitions(entityType: string, actionKey: string): { entity: BulkEntityDefinition; handler: Handler } {
+export function resolveDefinitions(entityType: string, actionKey: string): { entity: BulkEntityDefinition; handler: Handler } {
   const entity = getEntity(entityType);
   const handler = entity ? getHandler(entityType, actionKey) : null;
   // Same answer for "unknown entity", "unknown action" and "action of another entity".
@@ -33,7 +45,7 @@ function resolveDefinitions(entityType: string, actionKey: string): { entity: Bu
   return { entity, handler };
 }
 
-async function assertCanUse(actor: BulkActor, entity: BulkEntityDefinition, handler: Handler) {
+export async function assertCanUse(actor: BulkActor, entity: BulkEntityDefinition, handler: Handler) {
   if (!(await PermissionService.can(actor.userId, entity.viewPermission.module, entity.viewPermission.action))) throw new BusinessRuleError("PERMISSION_DENIED", `You can't view ${entity.pluralLabel.toLowerCase()}.`);
   const av = await actionAvailability(actor, handler);
   if (!av.available) {
@@ -46,7 +58,7 @@ function maxItemsFor(handler: Handler) {
   return Math.min(handler.maxItems, BULK_ABSOLUTE_MAX_ITEMS);
 }
 
-async function parseParams(actor: BulkActor, handler: Handler, raw: unknown) {
+export async function parseParams(actor: BulkActor, handler: Handler, raw: unknown) {
   let parsed: Record<string, unknown>;
   try {
     parsed = handler.paramsSchema.parse(raw ?? {});
@@ -119,7 +131,32 @@ export async function previewBulkJob(actor: BulkActor, raw: unknown) {
 
 // ── Submit ───────────────────────────────────────────────────────
 
-export async function createBulkJob(actor: BulkActor, raw: unknown) {
+const ACTIVE_STATUSES: BulkJobStatus[] = ["QUEUED", "VALIDATING", "RUNNING", "CANCEL_REQUESTED"];
+
+/**
+ * Phase 14 (S&M): a user may have BULK_MAX_ACTIVE_PER_USER jobs going at once
+ * and a company BULK_MAX_ACTIVE_PER_COMPANY, so one person (or a schedule
+ * storm) can't fill the queue for everyone.
+ */
+export async function assertBulkCapacity(actor: BulkActor) {
+  const [mine, company] = await Promise.all([
+    prisma.bulkJob.count({ where: { companyId: actor.companyId, requestedByUserId: actor.userId, status: { in: ACTIVE_STATUSES } } }),
+    prisma.bulkJob.count({ where: { companyId: actor.companyId, status: { in: ACTIVE_STATUSES } } }),
+  ]);
+  if (mine >= BULK_MAX_ACTIVE_PER_USER) throw new BusinessRuleError("RATE_LIMITED", `You already have ${mine} bulk jobs running. Wait for one to finish (or cancel one) before starting another.`, { active: mine, limit: BULK_MAX_ACTIVE_PER_USER });
+  if (company >= BULK_MAX_ACTIVE_PER_COMPANY) throw new BusinessRuleError("RATE_LIMITED", `${company} bulk jobs are running in your company right now. Try again in a few minutes.`, { active: company, limit: BULK_MAX_ACTIVE_PER_COMPANY });
+}
+
+function assertDryRunSupported(handler: Handler) {
+  if (!handler.validateItem) throw new BusinessRuleError("VALIDATION_ERROR", handler.dryRunUnavailableReason ?? "This action can't be tried out first.", { fieldErrors: { dryRun: "Not available for this action." } });
+}
+
+export interface CreateBulkJobOptions {
+  /** Set by the schedule runner (never from a client). */
+  scheduleId?: string;
+}
+
+export async function createBulkJob(actor: BulkActor, raw: unknown, opts: CreateBulkJobOptions = {}) {
   const input = createBulkJobSchema.parse(raw);
   if (input.idempotencyKey) {
     const existing = await prisma.bulkJob.findFirst({ where: { companyId: actor.companyId, requestedByUserId: actor.userId, idempotencyKey: input.idempotencyKey } });
@@ -127,10 +164,14 @@ export async function createBulkJob(actor: BulkActor, raw: unknown) {
   }
   const { entity, handler } = resolveDefinitions(input.entityType, input.actionKey);
   await assertCanUse(actor, entity, handler);
+  const dryRun = Boolean(input.dryRun);
+  if (dryRun) assertDryRunSupported(handler);
+  await assertBulkCapacity(actor);
   const prepared = await parseParams(actor, handler, input.params);
   const sel = await resolveSelection(actor, entity, handler, input.selection);
-  if (sel.ids.length === 0) throw new BusinessRuleError("VALIDATION_ERROR", "No records to process: none of the selected records are available to you.", { fieldErrors: { selection: "Nothing selected." } });
-  if (handler.confirmation === "type_count" && input.confirmCount !== sel.ids.length) {
+  if (sel.ids.length === 0) throw new BusinessRuleError("VALIDATION_ERROR", "No records to process: none of the selected records are available to you.", { fieldErrors: { selection: "Nothing selected." }, empty: true });
+  // A dry run changes nothing, so it never needs the typed confirmation; "Run for real" asks for it.
+  if (!dryRun && !opts.scheduleId && handler.confirmation === "type_count" && input.confirmCount !== sel.ids.length) {
     throw new BusinessRuleError("VALIDATION_ERROR", `Type ${sel.ids.length} to confirm this action on ${sel.ids.length} ${entity.pluralLabel.toLowerCase()}.`, { fieldErrors: { confirmCount: "Doesn't match the number of records." }, count: sel.ids.length });
   }
 
@@ -150,13 +191,15 @@ export async function createBulkJob(actor: BulkActor, raw: unknown) {
             totalCount: sel.ids.length,
             idempotencyKey: input.idempotencyKey ?? null,
             requestedByUserId: actor.userId,
+            dryRun,
+            scheduleId: opts.scheduleId ?? null,
           },
         });
         for (let i = 0; i < sel.ids.length; i += 1000) {
           await tx.bulkJobItem.createMany({ data: sel.ids.slice(i, i + 1000).map((entityId, k) => ({ companyId: actor.companyId, jobId: created.id, entityId, sequence: i + k + 1 })) });
         }
         await writeAuditLog(
-          { companyId: actor.companyId, userId: actor.userId, tableName: "bulk_jobs", recordId: created.id, action: "CREATE", newValues: { entityType: entity.entityType, actionKey: handler.key, selectionMode: input.selection.mode, totalCount: sel.ids.length, params: prepared.params, summary: prepared.summary } },
+          { companyId: actor.companyId, userId: actor.userId, tableName: "bulk_jobs", recordId: created.id, action: "CREATE", newValues: { entityType: entity.entityType, actionKey: handler.key, selectionMode: input.selection.mode, totalCount: sel.ids.length, params: prepared.params, summary: prepared.summary, dryRun, scheduleId: opts.scheduleId ?? null } },
           tx
         );
         return created;
@@ -178,7 +221,7 @@ export async function createBulkJob(actor: BulkActor, raw: unknown) {
 // ── Read ─────────────────────────────────────────────────────────
 
 /** Entity types whose jobs this user may manage for everyone. */
-async function adminEntityTypes(actor: BulkActor): Promise<string[]> {
+export async function adminEntityTypes(actor: BulkActor): Promise<string[]> {
   const out: string[] = [];
   for (const e of listEntities()) if (await PermissionService.can(actor.userId, e.adminPermission.module, e.adminPermission.action)) out.push(e.entityType);
   return out;
@@ -239,6 +282,9 @@ async function presentJob(job: BulkJob, actor: BulkActor, names?: Map<string, st
     requestedBy: { id: job.requestedByUserId, name: userNames.get(job.requestedByUserId) ?? null },
     isMine: job.requestedByUserId === actor.userId,
     retryOfJobId: job.retryOfJobId,
+    dryRun: job.dryRun,
+    dryRunOfJobId: job.dryRunOfJobId,
+    scheduleId: job.scheduleId,
     canCancel: !terminal && job.status !== "CANCEL_REQUESTED" && (handler?.cancellable ?? true),
     canRetry: terminal && job.failedCount > 0 && Boolean(handler && !handler.unavailableReason),
     download: file ? { fileName: file.fileName, mimeType: file.mimeType, sizeBytes: file.sizeBytes, rowCount: file.rowCount, expiresAt: file.expiresAt, expired, available: !expired && job.requestedByUserId === actor.userId } : null,
@@ -257,7 +303,8 @@ export async function listBulkJobs(actor: BulkActor, filters: BulkJobFilters, qu
     companyId: actor.companyId,
     OR: [{ requestedByUserId: actor.userId }, ...(adminTypes.length ? [{ entityType: { in: adminTypes } }] : [])],
     ...(filters.statuses?.length ? { status: { in: filters.statuses as BulkJobStatus[] } } : {}),
-    ...(filters.entityType ? { entityType: filters.entityType } : {}),
+    ...(filters.entityType ? { entityType: filters.entityType } : filters.entityTypes?.length ? { entityType: { in: filters.entityTypes } } : {}),
+    ...(filters.scheduleId ? { scheduleId: filters.scheduleId } : {}),
     ...(query.search ? { summary: { contains: query.search.slice(0, 100), mode: "insensitive" as const } } : {}),
   };
   const [rows, totalCount] = await Promise.all([prisma.bulkJob.findMany({ where, orderBy: { createdAt: "desc" }, skip: query.skip, take: query.take }), prisma.bulkJob.count({ where })]);
@@ -267,14 +314,22 @@ export async function listBulkJobs(actor: BulkActor, filters: BulkJobFilters, qu
 
 export async function getBulkJob(actor: BulkActor, id: string) {
   const job = await loadJobForActor(actor, id);
-  const [dto, retries, itemCounts] = await Promise.all([
+  const [dto, retries, itemCounts, realRun, schedule] = await Promise.all([
     presentJob(job, actor),
     prisma.bulkJob.findMany({ where: { retryOfJobId: id, companyId: actor.companyId }, select: { id: true, status: true, createdAt: true }, orderBy: { createdAt: "asc" } }),
     prisma.bulkJobItem.groupBy({ by: ["status"], where: { jobId: id }, _count: { _all: true } }),
+    job.dryRun ? prisma.bulkJob.findFirst({ where: { dryRunOfJobId: id, companyId: actor.companyId }, select: { id: true, status: true, createdAt: true } }) : null,
+    job.scheduleId ? prisma.bulkJobSchedule.findFirst({ where: { id: job.scheduleId, companyId: actor.companyId }, select: { id: true, name: true } }) : null,
   ]);
   const handler = getHandler(job.entityType, job.actionKey);
+  const wouldSucceed = itemCounts.find((g) => g.status === "SUCCEEDED")?._count._all ?? 0;
   return {
     ...dto,
+    realRun: realRun ? { id: realRun.id, status: realRun.status, statusLabel: BULK_JOB_STATUSES[realRun.status].label, createdAt: realRun.createdAt } : null,
+    canRunForReal: job.dryRun && !realRun && isTerminalBulkStatus(job.status) && job.status !== "CANCELLED" && job.requestedByUserId === actor.userId && wouldSucceed > 0,
+    wouldSucceedCount: job.dryRun ? wouldSucceed : null,
+    confirmation: handler?.confirmation ?? "confirm",
+    schedule,
     selection: job.selectionMode === "FILTER" ? { filterQuery: (job.selection as { filterQuery?: string }).filterQuery ?? "" } : null,
     params: job.params,
     retries: retries.map((r) => ({ id: r.id, status: r.status, statusLabel: BULK_JOB_STATUSES[r.status].label, createdAt: r.createdAt })),
@@ -351,6 +406,7 @@ export async function retryBulkJob(actor: BulkActor, id: string, raw: unknown) {
   await assertCanUse(actor, entity, handler);
   const failed = await prisma.bulkJobItem.findMany({ where: { jobId: id, status: "FAILED" }, orderBy: { sequence: "asc" }, select: { entityId: true } });
   if (!failed.length) throw new BusinessRuleError("VALIDATION_ERROR", "This job has no failed records to retry.");
+  await assertBulkCapacity(actor);
   const prepared = await parseParams(actor, handler, job.params);
   // Visibility is re-checked for the person retrying.
   const visible = await entity.visibleIds(actor, failed.map((f) => f.entityId));
@@ -370,6 +426,7 @@ export async function retryBulkJob(actor: BulkActor, id: string, raw: unknown) {
         idempotencyKey: input.idempotencyKey ?? `retry:${id}`,
         requestedByUserId: actor.userId,
         retryOfJobId: id,
+        dryRun: job.dryRun,
       },
     });
     for (let i = 0; i < ids.length; i += 1000) {
@@ -380,6 +437,73 @@ export async function retryBulkJob(actor: BulkActor, id: string, raw: unknown) {
   });
   const queued = await enqueueBulkJob(created.id);
   return { ...(await presentJob(created, actor)), duplicate: false, queued, warnings: [] as string[] };
+}
+
+/**
+ * Phase 14 (S&M) — "Run for real": after a dry run, starts the real job on the
+ * records that would have succeeded (same action, same settings). Only the
+ * person who ran the dry run, only once per dry run, and every record is
+ * checked again by the action's own rules when it runs — anything that changed
+ * since the dry run simply skips or fails as usual.
+ */
+export async function runBulkJobForReal(actor: BulkActor, id: string, raw: unknown) {
+  const input = runForRealSchema.parse(raw ?? {});
+  const job = await loadJobForActor(actor, id);
+  if (!job.dryRun) throw new BusinessRuleError("INVALID_STATE_TRANSITION", "This job wasn't a dry run.");
+  if (job.requestedByUserId !== actor.userId) throw new BusinessRuleError("PERMISSION_DENIED", "Only the person who ran the dry run can run it for real.");
+  if (!isTerminalBulkStatus(job.status) || job.status === "CANCELLED") throw new BusinessRuleError("INVALID_STATE_TRANSITION", "Wait for the dry run to finish (a cancelled dry run can't be run for real — start a new one).");
+  const existing = await prisma.bulkJob.findFirst({ where: { dryRunOfJobId: id, companyId: actor.companyId } });
+  if (existing) return { ...(await presentJob(existing, actor)), duplicate: true, queued: true, warnings: [] as string[] };
+  const { entity, handler } = resolveDefinitions(job.entityType, job.actionKey);
+  await assertCanUse(actor, entity, handler);
+  const ok = await prisma.bulkJobItem.findMany({ where: { jobId: id, status: "SUCCEEDED" }, orderBy: { sequence: "asc" }, select: { entityId: true } });
+  if (!ok.length) throw new BusinessRuleError("VALIDATION_ERROR", "No record would succeed — there is nothing to run.");
+  if (handler.confirmation === "type_count" && input.confirmCount !== ok.length) {
+    throw new BusinessRuleError("VALIDATION_ERROR", `Type ${ok.length} to confirm this action on ${ok.length} ${entity.pluralLabel.toLowerCase()}.`, { fieldErrors: { confirmCount: "Doesn't match the number of records." }, count: ok.length });
+  }
+  await assertBulkCapacity(actor);
+  const prepared = await parseParams(actor, handler, job.params);
+  const visible = await entity.visibleIds(actor, ok.map((o) => o.entityId));
+  const ids = ok.map((o) => o.entityId).filter((x) => visible.has(x));
+  if (!ids.length) throw new BusinessRuleError("VALIDATION_ERROR", "None of those records are available to you any more.");
+  let created: BulkJob;
+  try {
+    created = await prisma.$transaction(
+      async (tx) => {
+        const j = await tx.bulkJob.create({
+          data: {
+            companyId: actor.companyId,
+            entityType: job.entityType,
+            actionKey: job.actionKey,
+            selectionMode: "IDS",
+            selection: { dryRunOf: id, requested: ids.length } as Prisma.InputJsonValue,
+            params: prepared.params as Prisma.InputJsonValue,
+            summary: prepared.summary.slice(0, 500),
+            totalCount: ids.length,
+            idempotencyKey: input.idempotencyKey ?? `real:${id}`,
+            requestedByUserId: actor.userId,
+            dryRunOfJobId: id,
+          },
+        });
+        for (let i = 0; i < ids.length; i += 1000) {
+          await tx.bulkJobItem.createMany({ data: ids.slice(i, i + 1000).map((entityId, k) => ({ companyId: actor.companyId, jobId: j.id, entityId, sequence: i + k + 1 })) });
+        }
+        await writeAuditLog({ companyId: actor.companyId, userId: actor.userId, tableName: "bulk_jobs", recordId: j.id, action: "CREATE", newValues: { dryRunOf: id, actionKey: job.actionKey, totalCount: ids.length, params: prepared.params } }, tx);
+        return j;
+      },
+      { timeout: 60_000 }
+    );
+  } catch (e) {
+    // Two clicks racing: the partial unique index on dry_run_of_job_id lets one win.
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+      const won = await prisma.bulkJob.findFirst({ where: { dryRunOfJobId: id, companyId: actor.companyId } });
+      if (won) return { ...(await presentJob(won, actor)), duplicate: true, queued: true, warnings: [] as string[] };
+    }
+    throw e;
+  }
+  const queued = await enqueueBulkJob(created.id);
+  const left = ok.length - ids.length;
+  return { ...(await presentJob(created, actor)), duplicate: false, queued, warnings: left ? [`${left} record(s) are no longer visible to you and were left out.`] : [] };
 }
 
 // ── Reports & downloads ──────────────────────────────────────────

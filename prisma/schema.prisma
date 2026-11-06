@@ -160,6 +160,7 @@ model Company {
   crmWorkflowExecutions               CrmWorkflowExecution[]
   bulkJobs                            BulkJob[]
   bulkJobItems                        BulkJobItem[]
+  bulkJobSchedules                    BulkJobSchedule[]
   crmWebhookSubscriptions             CrmWebhookSubscription[]
   crmWebhookDeliveries                CrmWebhookDelivery[]
   crmUserPreferences                  CrmUserPreference[]
@@ -12428,6 +12429,8 @@ model CrmSavedView {
 }
 
 enum ImportBatchType {
+  // Phase 14 (Sales & Marketing): enquiry CSV import (S&M permissions, not Admin).
+  BUYER_ENQUIRY
   CUSTOMER
   SUPPLIER
   PRODUCT
@@ -14617,6 +14620,12 @@ model BulkJob {
   idempotencyKey    String?       @map("idempotency_key")
   requestedByUserId String        @map("requested_by_user_id") @db.Uuid
   retryOfJobId      String?       @map("retry_of_job_id") @db.Uuid
+  // Phase 14 (S&M): a dry run checks every record with the action's own rules and changes nothing.
+  dryRun            Boolean       @default(false) @map("dry_run")
+  // The real job started from a dry run's would-succeed records ("Run for real").
+  dryRunOfJobId     String?       @map("dry_run_of_job_id") @db.Uuid
+  // Set when a saved schedule started the job.
+  scheduleId        String?       @map("schedule_id") @db.Uuid
   // Worker lease (crash recovery): a RUNNING job whose lease expired is resumed.
   lockToken         String?       @map("lock_token") @db.Uuid
   lockedAt          DateTime?     @map("locked_at")
@@ -14635,13 +14644,77 @@ model BulkJob {
   company Company       @relation(fields: [companyId], references: [id])
   retryOf BulkJob?      @relation("BulkJobRetry", fields: [retryOfJobId], references: [id], onDelete: SetNull)
   retries BulkJob[]     @relation("BulkJobRetry")
+  dryRunOf  BulkJob?    @relation("BulkJobDryRun", fields: [dryRunOfJobId], references: [id], onDelete: SetNull)
+  realRuns  BulkJob[]   @relation("BulkJobDryRun")
+  schedule  BulkJobSchedule? @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
   items   BulkJobItem[]
 
   @@unique([companyId, requestedByUserId, idempotencyKey])
   @@index([companyId, createdAt])
   @@index([companyId, requestedByUserId, createdAt])
   @@index([status, lockedAt])
+  @@index([scheduleId, createdAt])
   @@map("bulk_jobs")
+}
+
+// ── Phase 14 (Sales & Marketing): saved bulk-job schedules (2026-11-06) ─────
+// See docs/sales-marketing/PHASE_14_BULK_OPERATIONS.md. Only registered actions
+// marked `schedulable` (exports, attribution recalculation). Each run is a
+// normal bulk job (same validation, permissions, audit) started as the owner,
+// over the saved list filter. No overlap: a run is skipped while the previous
+// job is still going. Times are India time (Asia/Kolkata, no DST).
+
+enum BulkScheduleFrequency {
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
+enum BulkScheduleStatus {
+  ACTIVE
+  PAUSED
+}
+
+model BulkJobSchedule {
+  id                  String                @id @default(uuid()) @db.Uuid
+  companyId           String                @map("company_id") @db.Uuid
+  name                String
+  entityType          String                @map("entity_type")
+  actionKey           String                @map("action_key")
+  // The list API's query string — records are resolved at each run.
+  filterQuery         String                @default("") @map("filter_query")
+  params              Json                  @default("{}")
+  summary             String?
+  frequency           BulkScheduleFrequency
+  // "HH:MM", 24h, in `timezone`.
+  timeOfDay           String                @map("time_of_day")
+  // 1 = Monday … 7 = Sunday (WEEKLY).
+  dayOfWeek           Int?                  @map("day_of_week")
+  // 1–28 (MONTHLY).
+  dayOfMonth          Int?                  @map("day_of_month")
+  timezone            String                @default("Asia/Kolkata")
+  status              BulkScheduleStatus    @default(ACTIVE)
+  nextRunAt           DateTime?             @map("next_run_at")
+  lastRunAt           DateTime?             @map("last_run_at")
+  lastJobId           String?               @map("last_job_id") @db.Uuid
+  // STARTED / SKIPPED_OVERLAP / FAILED_TO_START / COMPLETED / COMPLETED_WITH_ERRORS / FAILED / CANCELLED
+  lastOutcome         String?               @map("last_outcome")
+  lastMessage         String?               @map("last_message")
+  consecutiveFailures Int                   @default(0) @map("consecutive_failures")
+  ownerUserId         String                @map("owner_user_id") @db.Uuid
+  createdByUserId     String                @map("created_by_user_id") @db.Uuid
+  updatedByUserId     String?               @map("updated_by_user_id") @db.Uuid
+  version             Int                   @default(1)
+  archivedAt          DateTime?             @map("archived_at")
+  createdAt           DateTime              @default(now()) @map("created_at")
+  updatedAt           DateTime              @updatedAt @map("updated_at")
+
+  company Company   @relation(fields: [companyId], references: [id])
+  jobs    BulkJob[]
+
+  @@index([status, nextRunAt])
+  @@index([companyId, entityType, createdAt])
+  @@map("bulk_job_schedules")
 }
 
 model BulkJobItem {

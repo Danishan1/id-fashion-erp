@@ -19,11 +19,18 @@ function bytes(n: number) {
   return n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
-/** Phase 14 — one bulk job: live progress (polled while running), outcome per record, cancel, retry, error report, download. */
-export function BulkJobDetailClient({ id }: { id: string }) {
+/**
+ * Phase 14 — one bulk job: live progress (polled while running), outcome per
+ * record, cancel, retry, error report, download. S&M Phase 14 adds dry runs
+ * ("would succeed / would be skipped / would fail", then "Run for real") and
+ * the link to the schedule that started a job. `basePath` is the module's jobs
+ * page (CRM by default).
+ */
+export function BulkJobDetailClient({ id, basePath = BULK_JOBS_PAGE, schedulesHref }: { id: string; basePath?: string; schedulesHref?: string }) {
   const [job, setJob] = useState<BulkJobDetailDto | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [confirm, setConfirm] = useState<"cancel" | "retry" | null>(null);
+  const [confirm, setConfirm] = useState<"cancel" | "retry" | "real" | null>(null);
+  const [typedCount, setTypedCount] = useState("");
   const [busy, setBusy] = useState(false);
   const [itemsKey, setItemsKey] = useState(0);
   const lastProcessed = useRef(-1);
@@ -76,8 +83,19 @@ export function BulkJobDetailClient({ id }: { id: string }) {
     const r = await crmRequest<BulkJobDto>(`${BULK_JOBS_API}/${id}/retry`, { method: "POST", body: {} });
     setBusy(false);
     setConfirm(null);
-    if (r.ok) router.push(`${BULK_JOBS_PAGE}/${r.data.id}`);
+    if (r.ok) router.push(`${basePath}/${r.data.id}`);
   };
+  const doRunForReal = async () => {
+    setBusy(true);
+    const body = job.confirmation === "type_count" ? { confirmCount: Number(typedCount) } : {};
+    const r = await crmRequest<BulkJobDto>(`${BULK_JOBS_API}/${id}/run-for-real`, { method: "POST", body, successMessage: "Started." });
+    setBusy(false);
+    if (r.ok) {
+      setConfirm(null);
+      router.push(`${basePath}/${r.data.id}`);
+    }
+  };
+  const dry = Boolean(job.dryRun);
 
   return (
     <div className="space-y-4">
@@ -86,6 +104,7 @@ export function BulkJobDetailClient({ id }: { id: string }) {
           <div>
             <h2 className="text-lg font-semibold">
               {job.actionLabel} · {job.entityLabel}
+              {dry && <span className="ml-2 rounded bg-sky-100 px-1.5 py-0.5 align-middle text-xs font-medium text-sky-800 dark:bg-sky-500/15 dark:text-sky-300">Dry run</span>}
             </h2>
             {job.summary && <p className="text-sm text-zinc-600 dark:text-zinc-400">{job.summary}</p>}
             {job.action?.description && <p className="mt-1 text-xs text-zinc-500">{job.action.description}</p>}
@@ -95,6 +114,11 @@ export function BulkJobDetailClient({ id }: { id: string }) {
             {job.canCancel && (
               <Button size="xs" variant="danger" onClick={() => setConfirm("cancel")} disabled={busy}>
                 Cancel job
+              </Button>
+            )}
+            {job.canRunForReal && (
+              <Button size="xs" variant="primary" onClick={() => setConfirm("real")} disabled={busy}>
+                Run for real ({(job.wouldSucceedCount ?? 0).toLocaleString()})
               </Button>
             )}
             {job.canRetry && job.retries.length === 0 && (
@@ -110,13 +134,31 @@ export function BulkJobDetailClient({ id }: { id: string }) {
           </div>
         </div>
 
+        {dry && (
+          <p className="rounded-md bg-sky-50 px-3 py-2 text-sm text-sky-800 dark:bg-sky-500/10 dark:text-sky-200">
+            Dry run — every record was checked with the action&apos;s own rules and <strong>nothing was changed</strong>.
+            {job.realRun ? (
+              <>
+                {" "}
+                Run for real:{" "}
+                <Link className="font-medium underline" href={`${basePath}/${job.realRun.id}`}>
+                  {job.realRun.statusLabel}
+                </Link>
+                .
+              </>
+            ) : job.canRunForReal ? (
+              " Use “Run for real” to apply it to the records that would succeed; each is checked again when it runs."
+            ) : null}
+          </p>
+        )}
+
         <BulkProgress job={job} />
 
         <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-5">
           <Stat label="Records" value={job.totalCount} />
-          <Stat label="Succeeded" value={job.succeededCount} tone="text-green-700 dark:text-green-400" />
-          <Stat label="Skipped" value={job.skippedCount} tone="text-amber-700 dark:text-amber-300" />
-          <Stat label="Failed" value={job.failedCount} tone={job.failedCount ? "text-red-600 dark:text-red-400" : undefined} />
+          <Stat label={dry ? "Would succeed" : "Succeeded"} value={job.succeededCount} tone="text-green-700 dark:text-green-400" />
+          <Stat label={dry ? "Would be skipped" : "Skipped"} value={job.skippedCount} tone="text-amber-700 dark:text-amber-300" />
+          <Stat label={dry ? "Would fail" : "Failed"} value={job.failedCount} tone={job.failedCount ? "text-red-600 dark:text-red-400" : undefined} />
           <Stat label="Not processed" value={job.itemCounts.CANCELLED ?? 0} />
         </dl>
 
@@ -158,10 +200,30 @@ export function BulkJobDetailClient({ id }: { id: string }) {
               Finished: <ClientDateTime value={job.finishedAt} />
             </div>
           )}
+          {job.dryRunOfJobId && (
+            <div>
+              Started from{" "}
+              <Link className="text-indigo-600 hover:underline dark:text-indigo-400" href={`${basePath}/${job.dryRunOfJobId}`}>
+                a dry run
+              </Link>
+            </div>
+          )}
+          {job.schedule && (
+            <div>
+              Started by the schedule{" "}
+              {schedulesHref ? (
+                <Link className="text-indigo-600 hover:underline dark:text-indigo-400" href={schedulesHref}>
+                  {job.schedule.name}
+                </Link>
+              ) : (
+                job.schedule.name
+              )}
+            </div>
+          )}
           {job.retryOfJobId && (
             <div>
               Retry of{" "}
-              <Link className="text-indigo-600 hover:underline dark:text-indigo-400" href={`${BULK_JOBS_PAGE}/${job.retryOfJobId}`}>
+              <Link className="text-indigo-600 hover:underline dark:text-indigo-400" href={`${basePath}/${job.retryOfJobId}`}>
                 an earlier job
               </Link>
             </div>
@@ -169,7 +231,7 @@ export function BulkJobDetailClient({ id }: { id: string }) {
           {job.retries.map((r) => (
             <div key={r.id}>
               Retried:{" "}
-              <Link className="text-indigo-600 hover:underline dark:text-indigo-400" href={`${BULK_JOBS_PAGE}/${r.id}`}>
+              <Link className="text-indigo-600 hover:underline dark:text-indigo-400" href={`${basePath}/${r.id}`}>
                 {r.statusLabel}
               </Link>
             </div>
@@ -236,6 +298,32 @@ export function BulkJobDetailClient({ id }: { id: string }) {
         onConfirm={doCancel}
         onCancel={() => setConfirm(null)}
       />
+      {confirm === "real" && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-labelledby="bulk-real-title">
+          <div className="w-full max-w-md space-y-3 rounded-lg bg-white p-5 shadow-xl dark:bg-zinc-900">
+            <h3 id="bulk-real-title" className="text-base font-semibold">
+              Run “{job.actionLabel}” for real on {(job.wouldSucceedCount ?? 0).toLocaleString()} record(s)?
+            </h3>
+            <p className="text-sm text-zinc-600 dark:text-zinc-400">
+              Only the records that would have succeeded are included, with the same settings ({job.summary ?? job.actionLabel}). Each is checked again when it runs — anything that changed since the dry run is skipped or fails as usual.
+            </p>
+            {job.confirmation === "type_count" && (
+              <label className="block text-sm">
+                Type <strong>{job.wouldSucceedCount}</strong> to confirm
+                <input className="mt-1 block w-full rounded-md border border-zinc-300 px-2 py-1 dark:border-zinc-700 dark:bg-zinc-800" inputMode="numeric" value={typedCount} onChange={(e) => setTypedCount(e.target.value)} aria-label="Number of records" />
+              </label>
+            )}
+            <div className="flex justify-end gap-2">
+              <Button size="sm" variant="secondary" onClick={() => setConfirm(null)} disabled={busy}>
+                Back
+              </Button>
+              <Button size="sm" variant={job.action?.destructive ? "danger" : "primary"} onClick={doRunForReal} disabled={busy || (job.confirmation === "type_count" && Number(typedCount) !== job.wouldSucceedCount)}>
+                Run for real
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
       <ConfirmModal
         open={confirm === "retry"}
         title={`Retry ${job.failedCount} failed record(s)?`}

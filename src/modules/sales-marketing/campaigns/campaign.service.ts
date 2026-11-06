@@ -17,6 +17,7 @@ import {
   notifyCampaignApprovers,
   notifyUsers,
   recordCampaignEvent,
+  type CampaignScope,
 } from "./campaign-common";
 import { ensureCampaignLookups } from "./campaign-lookup.service";
 import { CAMPAIGN_ACTIONS, CAMPAIGN_STATUSES, CAMPAIGN_STATUS_KEYS, type CampaignActionKey, type CampaignStatusKey } from "./campaign-registry";
@@ -485,10 +486,8 @@ export async function revisionAction(actor: SalesActor, id: string, revisionId: 
 
 // ── List ─────────────────────────────────────────────────────────
 
-export async function listCampaigns(actor: SalesActor, raw: unknown, page: { skip: number; take: number }) {
-  await PermissionService.assert(actor.userId, "marketing_campaigns", "view");
-  const f = listCampaignsSchema.parse(raw ?? {});
-  const scope = await getCampaignScope(actor);
+/** The list's filter → where (also used by bulk "all matching the filter", Phase 14). */
+export function buildCampaignListWhere(actor: SalesActor, scope: CampaignScope, f: z.infer<typeof listCampaignsSchema>): Prisma.MarketingCampaignWhereInput {
   const statuses = (f.status ?? "").split(",").filter((s): s is CampaignStatusKey => (CAMPAIGN_STATUS_KEYS as string[]).includes(s));
   const where: Prisma.MarketingCampaignWhereInput = {
     AND: [
@@ -505,6 +504,13 @@ export async function listCampaigns(actor: SalesActor, raw: unknown, page: { ski
       f.search ? { OR: [{ code: { contains: f.search, mode: "insensitive" } }, { name: { contains: f.search, mode: "insensitive" } }] } : {},
     ],
   };
+  return where;
+}
+
+export async function listCampaigns(actor: SalesActor, raw: unknown, page: { skip: number; take: number }) {
+  await PermissionService.assert(actor.userId, "marketing_campaigns", "view");
+  const f = listCampaignsSchema.parse(raw ?? {});
+  const where = buildCampaignListWhere(actor, await getCampaignScope(actor), f);
   const [rows, total] = await Promise.all([
     prisma.marketingCampaign.findMany({
       where,

@@ -1,5 +1,6 @@
 "use client";
 
+import { SmBulkActions, bulkFilterQuery, toggleId } from "@/components/sales-marketing/bulk/SmBulkActions";
 import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -26,6 +27,7 @@ export function AttributionModelsClient({ canCreate }: { canCreate: boolean }) {
   const router = useRouter();
   const [all, setAll] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [selected, setSelected] = useState<string[]>([]);
   const { data, error, reload } = useApi<Row[]>(`/api/v1/sales-marketing/attribution/models${all ? "?all=1" : ""}`);
   if (error) return <ErrorState message={error} onRetry={reload} />;
   if (!data) return <LoadingState />;
@@ -35,7 +37,10 @@ export function AttributionModelsClient({ canCreate }: { canCreate: boolean }) {
         <label className="flex items-center gap-1.5 text-sm">
           <input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> Show retired models
         </label>
-        {canCreate && !creating && <Button onClick={() => setCreating(true)}>New model</Button>}
+        <div className="flex items-center gap-2">
+          <SmBulkActions entityType="ATTRIBUTION_MODEL" selectedIds={selected} filterQuery={bulkFilterQuery({ all: all && "1" })} onDone={() => setSelected([])} />
+          {canCreate && !creating && <Button onClick={() => setCreating(true)}>New model</Button>}
+        </div>
       </div>
       {creating && <CreateModel onCancel={() => setCreating(false)} onCreated={(id) => router.push(`/sales-marketing/attribution/models/${id}`)} />}
       {data.length === 0 && !creating ? (
@@ -45,6 +50,9 @@ export function AttributionModelsClient({ canCreate }: { canCreate: boolean }) {
           <table className="w-full min-w-[48rem] text-sm">
             <thead>
               <tr className="border-b border-zinc-200 text-left text-xs text-zinc-500 dark:border-zinc-800">
+                <th className="w-8 py-1.5 pr-2">
+                  <input type="checkbox" aria-label="Select all models" checked={data.length > 0 && data.every((m) => selected.includes(m.id))} onChange={(e) => setSelected(e.target.checked ? data.map((m) => m.id) : [])} />
+                </th>
                 <th className="py-1.5 pr-3 font-medium">Model</th>
                 <th className="py-1.5 pr-3 font-medium">Approved rules</th>
                 <th className="py-1.5 pr-3 font-medium">Status</th>
@@ -54,6 +62,9 @@ export function AttributionModelsClient({ canCreate }: { canCreate: boolean }) {
             <tbody>
               {data.map((m) => (
                 <tr key={m.id} className="border-b border-zinc-100 align-top last:border-0 dark:border-zinc-800">
+                  <td className="py-2 pr-2">
+                    <input type="checkbox" aria-label={`Select ${m.code}`} checked={selected.includes(m.id)} onChange={(e) => setSelected(toggleId(selected, m.id, e.target.checked))} />
+                  </td>
                   <td className="py-2 pr-3">
                     <Link href={`/sales-marketing/attribution/models/${m.id}`} className="font-medium text-indigo-600 hover:underline dark:text-indigo-400">
                       {m.code}

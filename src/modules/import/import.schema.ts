@@ -509,3 +509,75 @@ export const BULK_IMPORT_SAMPLE_ROWS: Record<BulkImportMasterType, Record<string
   },
 };
 
+
+// ---------------------------------------------------------------------------
+// Phase 14 (Sales & Marketing, 2026-11-06): enquiry CSV / Excel import.
+// Same pipeline as the masters above (server-side parse → per-row dry-run
+// validation preview → queued commit → per-row isolation → batch history),
+// but reached from Sales & Marketing → Enquiries with sales_marketing.create,
+// not from the Admin portal, and each row is created through the S&M enquiry
+// service (createSalesEnquiry) — owner eligibility, CRM links, customer /
+// buyer / style / size checks and the enquiry's own numbering all apply.
+// One row = one enquiry with one line (more lines can be added afterwards).
+// ---------------------------------------------------------------------------
+export const SALES_IMPORT_TYPES = ["BUYER_ENQUIRY"] as const;
+export type SalesImportType = (typeof SALES_IMPORT_TYPES)[number];
+export type BulkImportType = BulkImportMasterType | SalesImportType;
+
+export const SALES_IMPORT_COLUMNS: Record<SalesImportType, ImportColumnSpec[]> = {
+  BUYER_ENQUIRY: [
+    { key: "enquiryDate", label: "Enquiry Date (YYYY-MM-DD)", required: true },
+    { key: "customerCode", label: "Customer Code (blank for a prospect)", required: false },
+    { key: "buyerName", label: "Buyer (of that customer)", required: false },
+    { key: "prospectName", label: "Prospect Name (when no customer)", required: false },
+    { key: "prospectContactPerson", label: "Prospect Contact Person", required: false },
+    { key: "prospectEmail", label: "Prospect Email", required: false },
+    { key: "prospectPhone", label: "Prospect Phone", required: false },
+    { key: "prospectCountry", label: "Prospect Country", required: false },
+    { key: "source", label: "Source (EMAIL / PHONE / TRADE_SHOW / REFERRAL / WEBSITE / OTHER)", required: false },
+    { key: "subject", label: "Subject", required: false },
+    { key: "priority", label: "Priority (LOW / NORMAL / HIGH / URGENT)", required: false },
+    { key: "ownerEmail", label: "Owner Email (blank = you)", required: false },
+    { key: "nextFollowUpDate", label: "Next Follow-up (YYYY-MM-DD)", required: false },
+    { key: "styleCode", label: "Style Code (existing style)", required: false },
+    { key: "styleName", label: "Style / Item (free text)", required: false },
+    { key: "description", label: "Description", required: false },
+    { key: "colorRemarks", label: "Colour", required: false },
+    { key: "sizeCode", label: "Size Code", required: false },
+    { key: "targetQuantity", label: "Target Quantity", required: false },
+    { key: "targetUnitPrice", label: "Target Unit Price", required: false },
+    { key: "targetDeliveryDate", label: "Target Delivery (YYYY-MM-DD)", required: false },
+    { key: "remarks", label: "Remarks", required: false },
+  ],
+};
+
+export const SALES_IMPORT_SAMPLE_ROWS: Record<SalesImportType, Record<string, string>> = {
+  BUYER_ENQUIRY: {
+    enquiryDate: "2026-11-02",
+    customerCode: "",
+    buyerName: "",
+    prospectName: "Blue Harbour Retail",
+    prospectContactPerson: "Asha Menon",
+    prospectEmail: "asha@blueharbour.example",
+    prospectPhone: "+91 98450 00000",
+    prospectCountry: "India",
+    source: "TRADE_SHOW",
+    subject: "Summer linen shirts",
+    priority: "HIGH",
+    ownerEmail: "",
+    nextFollowUpDate: "2026-11-10",
+    styleCode: "",
+    styleName: "Linen camp-collar shirt",
+    description: "100% linen, garment washed",
+    colorRemarks: "Sand, Olive",
+    sizeCode: "",
+    targetQuantity: "1200",
+    targetUnitPrice: "540",
+    targetDeliveryDate: "2027-02-15",
+    remarks: "Met at the Bengaluru trade fair",
+  },
+};
+
+export function importColumnsFor(type: BulkImportType): ImportColumnSpec[] {
+  return (SALES_IMPORT_TYPES as readonly string[]).includes(type) ? SALES_IMPORT_COLUMNS[type as SalesImportType] : BULK_IMPORT_COLUMNS[type as BulkImportMasterType];
+}

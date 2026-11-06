@@ -5,6 +5,7 @@ import { DataTable } from "@/components/ui/DataTable";
 import { textInputClass } from "@/components/ui/FormField";
 import { formatDate } from "@/lib/date-format";
 import { QUOTATION_STATUSES, QUOTATION_STATUS_KEYS, type QuotationStatus } from "@/modules/sales-marketing/quotations/quotation-registry";
+import { SmBulkActions, bulkFilterQuery } from "@/components/sales-marketing/bulk/SmBulkActions";
 import { QuotationStatusBadge, formatInr } from "./QuotationStatusBadge";
 
 interface QuotationRow {
@@ -27,6 +28,8 @@ export function QuotationsListClient({ viewAll }: { viewAll: boolean }) {
   const [view, setView] = useState<View>("open");
   const [status, setStatus] = useState("");
   const [owner, setOwner] = useState("");
+  const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState<string[]>([]);
   const statusOptions = QUOTATION_STATUS_KEYS.filter((s) => (view === "all" ? true : view === "open" ? QUOTATION_STATUSES[s].open : !QUOTATION_STATUSES[s].open));
 
   return (
@@ -36,6 +39,8 @@ export function QuotationsListClient({ viewAll }: { viewAll: boolean }) {
       rowHref={(row) => `/sales-marketing/quotations/${row.id}`}
       initialSort={{ sortBy: "createdAt", sortOrder: "desc" }}
       extraParams={{ view, status: status || undefined, owner: owner || undefined }}
+      onSearchChange={setSearch}
+      selection={{ selectedIds: selected, onChange: setSelected, label: (r) => r.quotationNumber }}
       toolbar={
         <div className="flex flex-wrap items-center gap-2">
           <div className="inline-flex rounded-md border border-zinc-300 p-0.5 dark:border-zinc-700" role="tablist" aria-label="Quotation view">
@@ -68,6 +73,7 @@ export function QuotationsListClient({ viewAll }: { viewAll: boolean }) {
             <option value="me">Owned by me</option>
             <option value="unassigned">Unassigned</option>
           </select>
+          <SmBulkActions entityType="QUOTATION" selectedIds={selected} filterQuery={bulkFilterQuery({ view, status, owner, search: search.trim() })} onDone={() => setSelected([])} />
         </div>
       }
       columns={[
