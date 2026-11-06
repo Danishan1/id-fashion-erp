@@ -4,7 +4,7 @@ import { PermissionService } from "@/core/rbac/PermissionService";
 import { handleApiError, requireSession } from "@/lib/api-route";
 import type { SalesActor } from "./enquiries/sales-enquiry.service";
 
-type SalesMarketingModule = Extract<Module, "sales_marketing" | "sales_quotations" | "sales_marketing_settings" | "sales_pricing" | "sales_performance" | "sales_commissions" | "marketing_campaigns" | "marketing_segments" | "marketing_delivery" | "marketing_content" | "marketing_promotions" | "marketing_attribution" | "sales_workflows">;
+type SalesMarketingModule = Extract<Module, "sales_marketing" | "sales_quotations" | "sales_marketing_settings" | "sales_pricing" | "sales_performance" | "sales_commissions" | "marketing_campaigns" | "marketing_segments" | "marketing_delivery" | "marketing_content" | "marketing_promotions" | "marketing_attribution" | "sales_workflows" | "sales_integrations">;
 /** One permission, or a list where any one is enough (e.g. pricing calculate). */
 export type SalesMarketingPermission = { module: SalesMarketingModule; action: Action };
 

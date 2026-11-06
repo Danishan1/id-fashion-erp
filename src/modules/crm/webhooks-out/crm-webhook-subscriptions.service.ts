@@ -8,6 +8,8 @@ import { encryptSecret } from "@/core/security/encryption";
 import type { CrmActor } from "../core/crm-actor";
 import { WebhookBlockedError, assertWebhookUrlShape, resolveSafeAddress } from "../workflows/workflow-webhook";
 import { deliverNow } from "./webhook-delivery";
+import { SM_PUBLIC_EVENT_TYPES, isSmPublicEventType, type SmPublicEventType } from "@/modules/sales-marketing/integrations/integration-registry";
+import { sampleSmEnvelope } from "@/modules/sales-marketing/integrations/public-events";
 import { WEBHOOK_ATTENTION_THRESHOLD, WEBHOOK_EVENTS, WEBHOOK_MAX_SUBSCRIPTIONS, isWebhookEventType, sampleEnvelope } from "./webhook-events";
 
 /**
@@ -40,39 +42,56 @@ const SAFE_SELECT = {
   createdAt: true,
   updatedAt: true,
   createdByUserId: true,
+  scope: true,
+  payloadVersion: true,
 } satisfies Prisma.CrmWebhookSubscriptionSelect;
 type SafeRow = Prisma.CrmWebhookSubscriptionGetPayload<{ select: typeof SAFE_SELECT }>;
 
 const newSecret = () => `whsec_${randomBytes(32).toString("base64url")}`;
 
-const eventTypes = z
-  .array(z.string())
-  .min(1, "Choose at least one event.")
-  .max(WEBHOOK_EVENTS.length)
-  .transform((v) => [...new Set(v)])
-  .refine((v) => v.every(isWebhookEventType), { message: "One or more events are not available." });
+/**
+ * Phase 16: a subscription is CRM-scoped (CRM events, CRM Settings) or
+ * SALES_MARKETING-scoped (public S&M events, S&M → Integrations). Each scope
+ * only accepts its own registered event types and only ever sees its own
+ * subscriptions; the delivery engine, signing and SSRF rules are shared.
+ */
+export type WebhookScope = "CRM" | "SALES_MARKETING";
+const isTypeFor = (scope: WebhookScope) => (t: unknown) => (scope === "CRM" ? isWebhookEventType(t) : isSmPublicEventType(t));
+const catalogueSize = (scope: WebhookScope) => (scope === "CRM" ? WEBHOOK_EVENTS.length : SM_PUBLIC_EVENT_TYPES.length);
 
-export const createSubscriptionSchema = z
-  .object({
-    name: z.string().trim().min(1, "Name is required").max(80),
-    description: z.string().trim().max(500).optional().or(z.literal("")).nullable(),
-    url: z.string().trim().min(1, "URL is required").max(2000),
-    eventTypes,
-    isActive: z.boolean().optional(),
-  })
-  .strict();
+const eventTypesFor = (scope: WebhookScope) =>
+  z
+    .array(z.string())
+    .min(1, "Choose at least one event.")
+    .max(catalogueSize(scope))
+    .transform((v) => [...new Set(v)])
+    .refine((v) => v.every(isTypeFor(scope)), { message: "One or more events are not available." });
+
+export const createSubscriptionSchemaFor = (scope: WebhookScope) =>
+  z
+    .object({
+      name: z.string().trim().min(1, "Name is required").max(80),
+      description: z.string().trim().max(500).optional().or(z.literal("")).nullable(),
+      url: z.string().trim().min(1, "URL is required").max(2000),
+      eventTypes: eventTypesFor(scope),
+      isActive: z.boolean().optional(),
+    })
+    .strict();
+export const createSubscriptionSchema = createSubscriptionSchemaFor("CRM");
 
 /** No secret field: an edit can never set or return the secret (rotation is its own action). */
-export const updateSubscriptionSchema = z
-  .object({
-    version: z.number().int().min(1),
-    name: z.string().trim().min(1).max(80).optional(),
-    description: z.string().trim().max(500).optional().or(z.literal("")).nullable(),
-    url: z.string().trim().min(1).max(2000).optional(),
-    eventTypes: eventTypes.optional(),
-    isActive: z.boolean().optional(),
-  })
-  .strict();
+export const updateSubscriptionSchemaFor = (scope: WebhookScope) =>
+  z
+    .object({
+      version: z.number().int().min(1),
+      name: z.string().trim().min(1).max(80).optional(),
+      description: z.string().trim().max(500).optional().or(z.literal("")).nullable(),
+      url: z.string().trim().min(1).max(2000).optional(),
+      eventTypes: eventTypesFor(scope).optional(),
+      isActive: z.boolean().optional(),
+    })
+    .strict();
+export const updateSubscriptionSchema = updateSubscriptionSchemaFor("CRM");
 
 /** URL rules shared with the workflow webhook action: https, public address only, no credentials, standard ports, no redirects (at send time). */
 export async function assertSafeDestination(raw: string) {
@@ -106,20 +125,20 @@ function present(row: SafeRow, names?: Map<string, string>) {
 }
 export type WebhookSubscriptionDto = ReturnType<typeof present>;
 
-async function load(actor: CrmActor, id: string): Promise<SafeRow> {
-  const row = await prisma.crmWebhookSubscription.findFirst({ where: { id, companyId: actor.companyId }, select: SAFE_SELECT });
+async function load(actor: CrmActor, id: string, scope: WebhookScope = "CRM"): Promise<SafeRow> {
+  const row = await prisma.crmWebhookSubscription.findFirst({ where: { id, companyId: actor.companyId, scope }, select: SAFE_SELECT });
   if (!row) throw new BusinessRuleError("NOT_FOUND", "Webhook subscription not found.", { id });
   return row;
 }
 
-export async function listSubscriptions(actor: CrmActor) {
-  const rows = await prisma.crmWebhookSubscription.findMany({ where: { companyId: actor.companyId }, select: SAFE_SELECT, orderBy: { createdAt: "asc" } });
+export async function listSubscriptions(actor: CrmActor, scope: WebhookScope = "CRM") {
+  const rows = await prisma.crmWebhookSubscription.findMany({ where: { companyId: actor.companyId, scope }, select: SAFE_SELECT, orderBy: { createdAt: "asc" } });
   const names = new Map((await prisma.user.findMany({ where: { id: { in: [...new Set(rows.map((r) => r.createdByUserId))] } }, select: { id: true, fullName: true } })).map((u) => [u.id, u.fullName]));
   return rows.map((r) => present(r, names));
 }
 
-export async function getSubscription(actor: CrmActor, id: string) {
-  const row = await load(actor, id);
+export async function getSubscription(actor: CrmActor, id: string, scope: WebhookScope = "CRM") {
+  const row = await load(actor, id, scope);
   const [names, counts] = await Promise.all([
     prisma.user.findMany({ where: { id: row.createdByUserId }, select: { id: true, fullName: true } }),
     prisma.crmWebhookDelivery.groupBy({ by: ["status"], where: { subscriptionId: id }, _count: { _all: true } }),
@@ -128,10 +147,10 @@ export async function getSubscription(actor: CrmActor, id: string) {
 }
 
 /** Creates a subscription; the response is the ONLY place its signing secret is ever returned. */
-export async function createSubscription(actor: CrmActor, raw: unknown) {
-  const input = createSubscriptionSchema.parse(raw);
+export async function createSubscription(actor: CrmActor, raw: unknown, scope: WebhookScope = "CRM") {
+  const input = createSubscriptionSchemaFor(scope).parse(raw);
   const url = await assertSafeDestination(input.url);
-  const count = await prisma.crmWebhookSubscription.count({ where: { companyId: actor.companyId } });
+  const count = await prisma.crmWebhookSubscription.count({ where: { companyId: actor.companyId, scope } });
   if (count >= WEBHOOK_MAX_SUBSCRIPTIONS) throw new BusinessRuleError("VALIDATION_ERROR", `A company can have at most ${WEBHOOK_MAX_SUBSCRIPTIONS} webhook subscriptions.`);
   const secret = newSecret();
   try {
@@ -145,6 +164,7 @@ export async function createSubscription(actor: CrmActor, raw: unknown) {
         isActive: input.isActive ?? true,
         secretEncrypted: encryptSecret(secret),
         createdByUserId: actor.userId,
+        scope,
       },
       select: SAFE_SELECT,
     });
@@ -156,9 +176,9 @@ export async function createSubscription(actor: CrmActor, raw: unknown) {
   }
 }
 
-export async function updateSubscription(actor: CrmActor, id: string, raw: unknown) {
-  const input = updateSubscriptionSchema.parse(raw);
-  const before = await load(actor, id);
+export async function updateSubscription(actor: CrmActor, id: string, raw: unknown, scope: WebhookScope = "CRM") {
+  const input = updateSubscriptionSchemaFor(scope).parse(raw);
+  const before = await load(actor, id, scope);
   const data: Prisma.CrmWebhookSubscriptionUpdateManyMutationInput = { updatedByUserId: actor.userId, version: { increment: 1 } };
   if (input.name !== undefined) data.name = input.name;
   if (input.description !== undefined) data.description = input.description || null;
@@ -170,7 +190,7 @@ export async function updateSubscription(actor: CrmActor, id: string, raw: unkno
   if ((input.isActive && !before.isActive) || addedTypes) data.activeSince = new Date();
   if (input.isActive && !before.isActive) data.consecutiveFailures = 0;
   try {
-    const { count } = await prisma.crmWebhookSubscription.updateMany({ where: { id, companyId: actor.companyId, version: input.version }, data });
+    const { count } = await prisma.crmWebhookSubscription.updateMany({ where: { id, companyId: actor.companyId, scope, version: input.version }, data });
     if (!count) throw new BusinessRuleError("RECORD_VERSION_CONFLICT", "This subscription was changed by someone else. Reload and try again.");
   } catch (e) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") throw new BusinessRuleError("VALIDATION_ERROR", "Another webhook subscription already has this name.", { fieldErrors: { name: "Choose a different name." } });
@@ -179,7 +199,7 @@ export async function updateSubscription(actor: CrmActor, id: string, raw: unkno
   // Disabling drops what is still queued: re-enabling later never sends stale events.
   if (input.isActive === false && before.isActive)
     await prisma.crmWebhookDelivery.updateMany({ where: { subscriptionId: id, status: { in: ["PENDING", "RETRYING"] } }, data: { status: "CANCELLED", errorCode: "SUBSCRIPTION_DISABLED", errorMessage: "The subscription was disabled before this was sent.", lockedAt: null, lockToken: null } });
-  const after = await load(actor, id);
+  const after = await load(actor, id, scope);
   await writeAuditLog({
     companyId: actor.companyId,
     userId: actor.userId,
@@ -197,19 +217,19 @@ export async function updateSubscription(actor: CrmActor, id: string, raw: unkno
  * next delivery is signed with the new one), so update the receiver right
  * after rotating. The new secret is returned once, here.
  */
-export async function rotateSubscriptionSecret(actor: CrmActor, id: string, raw: unknown) {
+export async function rotateSubscriptionSecret(actor: CrmActor, id: string, raw: unknown, scope: WebhookScope = "CRM") {
   const { version } = z.object({ version: z.number().int().min(1) }).strict().parse(raw ?? {});
-  await load(actor, id);
+  await load(actor, id, scope);
   const secret = newSecret();
   const { count } = await prisma.crmWebhookSubscription.updateMany({ where: { id, companyId: actor.companyId, version }, data: { secretEncrypted: encryptSecret(secret), secretRotatedAt: new Date(), version: { increment: 1 }, updatedByUserId: actor.userId } });
   if (!count) throw new BusinessRuleError("RECORD_VERSION_CONFLICT", "This subscription was changed by someone else. Reload and try again.");
   await writeAuditLog({ companyId: actor.companyId, userId: actor.userId, tableName: "crm_webhook_subscriptions", recordId: id, action: "UPDATE", newValues: { secret: "rotated" } });
-  return { ...present(await load(actor, id)), secretOnce: secret };
+  return { ...present(await load(actor, id, scope)), secretOnce: secret };
 }
 
 /** Deletes the subscription and its delivery log; queued deliveries are dropped. */
-export async function deleteSubscription(actor: CrmActor, id: string) {
-  const before = await load(actor, id);
+export async function deleteSubscription(actor: CrmActor, id: string, scope: WebhookScope = "CRM") {
+  const before = await load(actor, id, scope);
   await prisma.crmWebhookSubscription.delete({ where: { id } });
   await writeAuditLog({ companyId: actor.companyId, userId: actor.userId, tableName: "crm_webhook_subscriptions", recordId: id, action: "DELETE", oldValues: { name: before.name, url: before.url, eventTypes: before.eventTypes } });
   return { deleted: true };
@@ -219,13 +239,20 @@ export async function deleteSubscription(actor: CrmActor, id: string) {
  * Sends a signed, clearly-marked test event (test: true, synthetic data) right
  * now and returns the outcome. Recorded in the delivery log; never retried.
  */
-export async function sendTestDelivery(actor: CrmActor, id: string, raw: unknown) {
+export async function sendTestDelivery(actor: CrmActor, id: string, raw: unknown, scope: WebhookScope = "CRM") {
   const { eventType } = z.object({ eventType: z.string().optional() }).strict().parse(raw ?? {});
-  const sub = await load(actor, id);
-  const type = eventType && isWebhookEventType(eventType) ? eventType : (sub.eventTypes[0] ?? "lead.created");
-  const envelope = { ...sampleEnvelope(type, true), id: randomUUID() };
+  const sub = await load(actor, id, scope);
+  let type: string;
+  let envelope: unknown;
+  if (scope === "CRM") {
+    type = eventType && isWebhookEventType(eventType) ? eventType : (sub.eventTypes[0] ?? "lead.created");
+    envelope = { ...sampleEnvelope(type, true), id: randomUUID() };
+  } else {
+    type = eventType && isSmPublicEventType(eventType) ? eventType : (sub.eventTypes.find(isSmPublicEventType) ?? "sm.quotation.accepted");
+    envelope = { ...sampleSmEnvelope(type as SmPublicEventType, true, actor.companyId), id: randomUUID() };
+  }
   const delivery = await prisma.crmWebhookDelivery.create({
-    data: { companyId: actor.companyId, subscriptionId: id, eventId: null, eventType: type, isTest: true, payload: envelope as unknown as Prisma.InputJsonValue, status: "PENDING", nextAttemptAt: new Date() },
+    data: { companyId: actor.companyId, subscriptionId: id, eventId: null, eventType: type, eventSource: scope === "CRM" ? "CRM" : "INTEGRATION", isTest: true, payload: envelope as Prisma.InputJsonValue, status: "PENDING", nextAttemptAt: new Date() },
     select: { id: true },
   });
   await writeAuditLog({ companyId: actor.companyId, userId: actor.userId, tableName: "crm_webhook_subscriptions", recordId: id, action: "UPDATE", newValues: { testDelivery: delivery.id, eventType: type } });
@@ -234,8 +261,8 @@ export async function sendTestDelivery(actor: CrmActor, id: string, raw: unknown
 
 export const DELIVERY_STATUSES = { PENDING: "Queued", RETRYING: "Retrying", SUCCEEDED: "Delivered", FAILED: "Failed", CANCELLED: "Cancelled" } as const;
 
-export async function listDeliveries(actor: CrmActor, id: string, q: { status?: string; skip: number; take: number }) {
-  await load(actor, id);
+export async function listDeliveries(actor: CrmActor, id: string, q: { status?: string; skip: number; take: number }, scope: WebhookScope = "CRM") {
+  await load(actor, id, scope);
   const where: Prisma.CrmWebhookDeliveryWhereInput = { subscriptionId: id, companyId: actor.companyId, ...(q.status && q.status in DELIVERY_STATUSES ? { status: q.status } : {}) };
   const [rows, totalCount] = await Promise.all([
     prisma.crmWebhookDelivery.findMany({
@@ -252,8 +279,8 @@ export async function listDeliveries(actor: CrmActor, id: string, q: { status?: 
 }
 
 /** Queues a failed (or delivered) event again, now. Receivers must de-duplicate on Idempotency-Key. */
-export async function redeliver(actor: CrmActor, id: string, deliveryId: string) {
-  const sub = await load(actor, id);
+export async function redeliver(actor: CrmActor, id: string, deliveryId: string, scope: WebhookScope = "CRM") {
+  const sub = await load(actor, id, scope);
   if (!sub.isActive) throw new BusinessRuleError("INVALID_STATE_TRANSITION", "Enable the subscription before redelivering.");
   const d = await prisma.crmWebhookDelivery.findFirst({ where: { id: deliveryId, subscriptionId: id, companyId: actor.companyId }, select: { id: true, status: true, isTest: true } });
   if (!d) throw new BusinessRuleError("NOT_FOUND", "Delivery not found.");

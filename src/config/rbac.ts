@@ -65,6 +65,12 @@ export const MODULES = [
   // start; approve = operator actions (retry, cancel, resolve exceptions).
   // Approvals of quotations, campaigns etc. stay in their own modules.
   "sales_workflows",
+  // Sales & Marketing → Integrations (Phase 16, 2026-11-06): the integration
+  // registry, S&M API keys, S&M outgoing webhook subscriptions, enquiry-intake
+  // sync and its conflicts. view = status, logs, conflicts; edit = configure,
+  // keys, subscriptions, enable / disable, connection checks; approve =
+  // resolve conflicts, replay deliveries, revoke credentials.
+  "sales_integrations",
   // HRMS is split into one module per screen (2026-10-27) so a role can be
   // given each attendance/leave screen separately. "hrms_attendance" is My
   // Attendance (punch + own records); "hrms_leave" is Leave Requests.
@@ -279,6 +285,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     marketing_promotions: ["view", "create", "edit", "delete", "approve", "reject", "export"],
     marketing_attribution: ["view", "create", "edit", "approve", "reject", "export"],
     sales_workflows: ["view", "edit", "approve"],
+    sales_integrations: ["view", "edit", "approve"],
     // No dedicated HR role exists yet in this system — MANAGEMENT owns
     // attendance/leave for now (same "closest existing manager role" default
     // used for crm above), including leave approval.

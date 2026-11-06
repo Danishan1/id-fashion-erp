@@ -1,5 +1,6 @@
 import type { MarketingDeliveryEvent, Prisma } from "@prisma/client";
 import { prisma } from "@/core/db/client";
+import { recordUsage } from "@/modules/sales-marketing/integrations/integration-registry.service";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { logger } from "@/core/logging/logger";
 import { recordSystemContactRestriction } from "@/modules/crm/contacts/crm-contacts.service";
@@ -58,6 +59,8 @@ export async function receiveWebhook(connectionId: string, token: string, req: W
   const verified = adapter.verifyWebhook ? adapter.verifyWebhook(req, runtime) : ({ ok: true } as const);
   if (!verified.ok) {
     logger.warn("Marketing webhook rejected", { connectionId: c.id, provider: c.providerKey, reason: verified.reason });
+    // Phase 16: counted per connection, shown on the integration registry.
+    await recordUsage({ companyId: c.companyId, clientId: c.id, endpoint: "inbound:callback", outcome: "denied", status: 403 });
     throw new BusinessRuleError("PERMISSION_DENIED", "Webhook signature is not valid.");
   }
   const events = adapter.parseWebhook(req, runtime);
@@ -77,6 +80,7 @@ export async function receiveWebhook(connectionId: string, token: string, req: W
     })),
     skipDuplicates: true,
   });
+  await recordUsage({ companyId: c.companyId, clientId: c.id, endpoint: "inbound:callback", outcome: "ok", status: 200 });
   return { received: events.length, stored: res.count };
 }
 

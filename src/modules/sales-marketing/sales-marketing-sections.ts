@@ -52,6 +52,6 @@ export const SALES_MARKETING_SECTIONS: readonly SalesMarketingSection[] = [
   { key: "workflows", label: "Workflows", area: "PLATFORM", phase: 15, status: "AVAILABLE", href: "/sales-marketing/workflows", description: "Quotation follow-up, quotation-to-order, campaign readiness, budget exceptions and processing follow-up — tasks, reminders and escalations through the existing approvals; people still approve, convert and launch." },
   { key: "reports", label: "Sales & Marketing Reports", area: "ANALYTICS", phase: 17, status: "PLANNED", description: "Reports and dashboards across sales and marketing." },
   { key: "ai-insights", label: "AI-Assisted Insights", area: "ANALYTICS", phase: 18, status: "PLANNED", description: "AI help for sales and marketing decisions." },
-  { key: "integrations", label: "Integrations & Webhooks", area: "PLATFORM", phase: 16, status: "PLANNED", description: "External systems, webhooks and APIs." },
+  { key: "integrations", label: "Integrations & Webhooks", area: "PLATFORM", phase: 16, status: "AVAILABLE", href: "/sales-marketing/integrations", description: "Scoped API keys for a versioned S&M API, signed outgoing webhooks for S&M events, enquiry intake from other systems with conflict review, and one registry with the health of every integration." },
   { key: "settings", label: "Settings", area: "PLATFORM", phase: 2, status: "AVAILABLE", href: "/sales-marketing/settings", description: "Module configuration, added with the first features that need it." },
 ];

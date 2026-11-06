@@ -15,6 +15,9 @@ const KEY_RE = /^crmk_([0-9a-f]{12})_([A-Za-z0-9_-]{32})$/;
 export const API_KEY_SCOPE = "leads:ingest";
 
 const hashKey = (key: string) => createHash("sha256").update(key).digest("hex");
+/** Phase 16: shared with the S&M API keys (same table, same format, same hash). */
+export const hashApiKey = hashKey;
+export const parseApiKey = (presented: string | null | undefined) => presented?.trim().match(KEY_RE) ?? null;
 
 export function generateApiKey() {
   const prefix = randomBytes(6).toString("hex");
@@ -88,7 +91,7 @@ export async function authenticateApiKey(presented: string | null | undefined) {
   if (record.revokedAt || (record.expiresAt && record.expiresAt < new Date())) return null;
   // A key stops working when the person who created it is deactivated.
   if (record.createdBy.status !== "ACTIVE") return null;
-  if (!record.scopes.includes(API_KEY_SCOPE)) return null;
+  if (!record.scopes.includes(API_KEY_SCOPE) || record.purpose !== "CRM_CAPTURE") return null;
   if (!record.lastUsedAt || Date.now() - record.lastUsedAt.getTime() > 60_000) {
     await CrmCaptureRepository.updateApiKey(record.id, { lastUsedAt: new Date() }).catch(() => undefined);
   }

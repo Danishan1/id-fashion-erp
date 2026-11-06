@@ -11,6 +11,7 @@ import { executeRun, requestRun } from "@/modules/sales-marketing/attribution/at
 import { canSeeCampaign } from "@/modules/sales-marketing/campaigns/campaign-common";
 import { assertSalesEnquiryVisible, type SalesActor } from "@/modules/sales-marketing/enquiries/sales-enquiry.service";
 import { assertQuotationVisible } from "@/modules/sales-marketing/quotations/quotation.service";
+import { publishWorkflowEvent } from "@/modules/sales-marketing/integrations/public-events";
 import { compensateInstance, operatorTransition, runAsProblem, runInstance, startInstance } from "./sm-workflow-engine";
 import "./sm-workflow-impls";
 import {
@@ -468,6 +469,7 @@ export async function instanceAction(actor: SalesActor, id: string, raw: unknown
     await operatorTransition(i, "COMPLETED", { outcome: "RESOLVED_MANUALLY", outcomeMessage: note, completedAt: now, nextRunAt: null });
     await operatorStep(i, actor, `Resolved by a person: ${note}`);
     await writeAuditLog({ companyId: actor.companyId, userId: actor.userId, tableName: TABLE_INST, recordId: i.id, action: "UPDATE", oldValues: { status: i.status }, newValues: { action: "resolve", note } });
+    await publishWorkflowEvent(i, "completed", { outcome: "RESOLVED_MANUALLY" }, now);
   } else if (input.action === "cancel") {
     if (!(SM_WF_OPERATOR_ACTIONS.cancel.from as readonly string[]).includes(i.status)) throw new BusinessRuleError("INVALID_STATE_TRANSITION", "This workflow has already ended.");
     // Claim it first (never while a worker runs it), then undo what is safely undoable.

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Prisma, type RelatedModule, type SmWorkflowInstance } from "@prisma/client";
 import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { prisma } from "@/core/db/client";
+import { publishFromWorkflowEvent, publishWorkflowEvent } from "@/modules/sales-marketing/integrations/public-events";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { runWithRequestContext } from "@/core/logging/requestContext";
 import { createNotification } from "@/core/notifications/NotificationService";
@@ -242,6 +243,8 @@ export async function dispatchEvents(now: Date = new Date()): Promise<DispatchRe
       });
       if (!claim.count) continue;
       out.read++;
+      // Phase 16: the same claim feeds the public event outbox (outgoing S&M webhooks).
+      await publishFromWorkflowEvent(ev).catch((e) => console.error(JSON.stringify({ level: "error", message: "Public S&M event not written", source: ev.source, sourceKey: ev.sourceKey, error: (e as Error).message })));
       let started = 0;
       for (const def of await activeDefs(ev.companyId)) {
         const wf = SM_WORKFLOWS[def.workflowKey as SmWorkflowKey];
@@ -342,6 +345,7 @@ export async function runInstance(id: string, opts: RunOptions = {}): Promise<Sm
         await prisma.smWorkflowStepRun.create({ data: { companyId: i.companyId, instanceId: i.id, sequence: ((await prisma.smWorkflowStepRun.findFirst({ where: { instanceId: i.id }, orderBy: { sequence: "desc" } }))?.sequence ?? 0) + 1, stepKey, kind: stepDef.kind, status: "FAILED", errorCode: "RUN_AS_INVALID", errorMessage: problem, finishedAt: now } });
         await transition(i, token, "NEEDS_ATTENTION", { errorCode: "RUN_AS_INVALID", errorMessage: problem, nextRunAt: null, context: data as Prisma.InputJsonValue });
         await auditInstance(i, runAsId ?? i.id, "UPDATE", { status: "NEEDS_ATTENTION", errorCode: "RUN_AS_INVALID", step: stepKey });
+        await publishWorkflowEvent(i, "needs_attention", { errorCode: "RUN_AS_INVALID" }, now);
         await release();
         return "NEEDS_ATTENTION";
       }
@@ -398,12 +402,14 @@ export async function runInstance(id: string, opts: RunOptions = {}): Promise<Sm
       if (result.type === "complete") {
         await transition(i, token, "COMPLETED", { outcome: result.outcome, outcomeMessage: result.summary.slice(0, 500), completedAt: now, nextRunAt: null, waitingSince: null, attempts: 0, context: ctxData, watchKeys: watch, errorCode: null, errorMessage: null });
         await auditInstance(i, runAsId ?? i.id, "UPDATE", { status: "COMPLETED", outcome: result.outcome });
+        await publishWorkflowEvent(i, "completed", { outcome: result.outcome }, now);
         await release();
         return "COMPLETED";
       }
       if (result.type === "attention") {
         await transition(i, token, "NEEDS_ATTENTION", { errorCode: result.code, errorMessage: result.summary.slice(0, 500), nextRunAt: null, context: ctxData, watchKeys: watch });
         await auditInstance(i, runAsId ?? i.id, "UPDATE", { status: "NEEDS_ATTENTION", errorCode: result.code, step: stepKey });
+        await publishWorkflowEvent(i, "needs_attention", { errorCode: result.code }, now);
         await release();
         return "NEEDS_ATTENTION";
       }

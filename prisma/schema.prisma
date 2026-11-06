@@ -11058,6 +11058,14 @@ model CrmApiKey {
   prefix             String             @unique
   keyHash            String             @map("key_hash")
   scopes             String[]           @default(["leads:ingest"])
+  // Phase 16 (S&M): CRM_CAPTURE = the lead-ingest key above; SALES_MARKETING_API
+  // = a scoped key for /api/v1/integrations/sales-marketing/* acting as its
+  // creator (whose permissions are re-checked on every call).
+  purpose            String             @default("CRM_CAPTURE")
+  description        String?
+  rateLimitPerMinute Int?               @map("rate_limit_per_minute")
+  // The key this one replaced (rotation); the old key may keep working until its expiresAt (grace).
+  rotatedFromId      String?            @map("rotated_from_id") @db.Uuid
   defaultSourceId    String?            @map("default_source_id") @db.Uuid
   defaultOwnerUserId String?            @map("default_owner_user_id") @db.Uuid
   duplicatePolicy    CrmDuplicatePolicy @default(UPDATE) @map("duplicate_policy")
@@ -14778,6 +14786,11 @@ model CrmWebhookSubscription {
   version             Int       @default(1)
   createdAt           DateTime  @default(now()) @map("created_at")
   updatedAt           DateTime  @updatedAt @map("updated_at")
+  // Phase 16: CRM = CRM events (crm_events, managed in CRM Settings);
+  // SALES_MARKETING = public S&M events (integration_events, managed in
+  // S&M → Integrations). Same delivery engine, signing and SSRF rules.
+  scope               String    @default("CRM")
+  payloadVersion      Int       @default(1) @map("payload_version")
 
   company    Company              @relation(fields: [companyId], references: [id])
   deliveries CrmWebhookDelivery[]
@@ -14794,6 +14807,8 @@ model CrmWebhookDelivery {
   // The crm_events row (null for a test delivery).
   eventId        String?   @map("event_id") @db.Uuid
   eventType      String    @map("event_type")
+  // Phase 16: CRM = event_id is a crm_events row; INTEGRATION = an integration_events row.
+  eventSource    String    @default("CRM") @map("event_source")
   isTest         Boolean   @default(false) @map("is_test")
   // Only for test deliveries (real ones are built from the immutable event row).
   payload        Json?
@@ -17277,4 +17292,182 @@ model SmWorkflowCheckpoint {
   updatedAt  DateTime @updatedAt @map("updated_at")
 
   @@map("sm_workflow_checkpoints")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Sales & Marketing Phase 16 — external integrations, webhooks and API
+// (2026-11-06). See docs/sales-marketing/PHASE_16_INTEGRATIONS.md. Reuses
+// crm_api_keys (scoped keys), crm_webhook_subscriptions / deliveries (one
+// delivery engine) and the Phase 10 delivery connections; adds only the
+// registry, the public event outbox, external-id mapping, sync checkpoints,
+// conflicts, API usage counters and request idempotency.
+// ─────────────────────────────────────────────────────────────
+
+/// Public, versioned S&M events (the outbox outgoing webhooks read). Built
+/// from the Phase 15 event reader and workflow transitions — minimal payloads.
+model IntegrationEvent {
+  id            String   @id @default(uuid()) @db.Uuid
+  companyId     String   @map("company_id") @db.Uuid
+  source        String
+  sourceKey     String   @map("source_key")
+  eventType     String   @map("event_type")
+  eventVersion  Int      @default(1) @map("event_version")
+  entityType    String   @map("entity_type")
+  entityId      String   @map("entity_id") @db.Uuid
+  occurredAt    DateTime @map("occurred_at")
+  correlationId String?  @map("correlation_id")
+  payload       Json     @default("{}")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@unique([source, sourceKey])
+  @@index([companyId, occurredAt])
+  @@index([companyId, eventType, occurredAt])
+  @@map("integration_events")
+}
+
+/// One external integration (registry). Wraps an existing resource (delivery
+/// connection, API key, webhook subscription, CRM capture endpoint) — the
+/// resource keeps its own secrets; this row holds lifecycle and health only.
+model Integration {
+  id                  String    @id @default(uuid()) @db.Uuid
+  companyId           String    @map("company_id") @db.Uuid
+  // DELIVERY_PROVIDER | API_CLIENT | WEBHOOK_SUBSCRIPTION | CRM_CAPTURE_KEY | CRM_INBOUND_WEBHOOK | CRM_WEBHOOK_SUBSCRIPTION
+  kind                String
+  provider            String
+  name                String
+  // DRAFT | CONFIGURED | PENDING_VERIFICATION | CONNECTED | DEGRADED | DISABLED | REVOKED | FAILED
+  status              String    @default("CONFIGURED")
+  statusReason        String?   @map("status_reason")
+  statusChangedAt     DateTime  @default(now()) @map("status_changed_at")
+  capabilities        String[]  @default([])
+  authMethod          String    @map("auth_method")
+  // Where the credential lives ("crm_api_keys:<id>"…) — never the credential.
+  credentialRef       String?   @map("credential_ref")
+  credentialRotatedAt DateTime? @map("credential_rotated_at")
+  configSchemaVersion Int       @default(1) @map("config_schema_version")
+  // SALES_MARKETING (managed here) | CRM (read-only here, managed in CRM Settings)
+  managedIn           String    @default("SALES_MARKETING") @map("managed_in")
+  resourceType        String    @map("resource_type")
+  resourceId          String    @map("resource_id") @db.Uuid
+  lastSuccessAt       DateTime? @map("last_success_at")
+  lastErrorAt         DateTime? @map("last_error_at")
+  lastError           String?   @map("last_error")
+  lastCheckedAt       DateTime? @map("last_checked_at")
+  version             Int       @default(1)
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  @@unique([companyId, resourceType, resourceId])
+  @@index([companyId, status])
+  @@map("integrations")
+}
+
+/// External id ↔ ERP record (canonical ERP id preserved). `lastValues` = the
+/// values last received for the synced fields (conflict detection baseline).
+model IntegrationExternalRef {
+  id              String    @id @default(uuid()) @db.Uuid
+  companyId       String    @map("company_id") @db.Uuid
+  integrationId   String?   @map("integration_id") @db.Uuid
+  system          String
+  externalType    String    @map("external_type")
+  externalId      String    @map("external_id")
+  entityType      String    @map("entity_type")
+  entityId        String    @map("entity_id") @db.Uuid
+  sourceUpdatedAt DateTime? @map("source_updated_at")
+  lastValues      Json      @default("{}") @map("last_values")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  conflicts IntegrationConflict[]
+
+  @@unique([companyId, system, externalType, externalId])
+  @@index([companyId, entityType, entityId])
+  @@map("integration_external_refs")
+}
+
+/// Per integration + stream: how far the sync has got and its counters.
+model IntegrationSyncCheckpoint {
+  id            String    @id @default(uuid()) @db.Uuid
+  companyId     String    @map("company_id") @db.Uuid
+  integrationId String    @map("integration_id") @db.Uuid
+  stream        String
+  lastSourceAt  DateTime? @map("last_source_at")
+  lastRunAt     DateTime? @map("last_run_at")
+  created       Int       @default(0)
+  updated       Int       @default(0)
+  unchanged     Int       @default(0)
+  staleIgnored  Int       @default(0) @map("stale_ignored")
+  conflicts     Int       @default(0)
+  failed        Int       @default(0)
+  lastError     String?   @map("last_error")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  @@unique([integrationId, stream])
+  @@index([companyId])
+  @@map("integration_sync_checkpoints")
+}
+
+/// A difference the sync refused to apply silently. One OPEN row per (ref, field).
+model IntegrationConflict {
+  id               String    @id @default(uuid()) @db.Uuid
+  companyId        String    @map("company_id") @db.Uuid
+  integrationId    String?   @map("integration_id") @db.Uuid
+  externalRefId    String    @map("external_ref_id") @db.Uuid
+  entityType       String    @map("entity_type")
+  entityId         String    @map("entity_id") @db.Uuid
+  field            String
+  // ERP_CHANGED (edited in the ERP since the last sync) | RECORD_ADVANCED (past intake) | NOT_UPDATABLE (no service updates it)
+  reason           String
+  erpValue         Json?     @map("erp_value")
+  externalValue    Json?     @map("external_value")
+  sourceUpdatedAt  DateTime? @map("source_updated_at")
+  // OPEN | KEPT_ERP | APPLIED_EXTERNAL | DISMISSED
+  status           String    @default("OPEN")
+  resolutionNote   String?   @map("resolution_note")
+  resolvedByUserId String?   @map("resolved_by_user_id") @db.Uuid
+  resolvedAt       DateTime? @map("resolved_at")
+  detectedAt       DateTime  @default(now()) @map("detected_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  externalRef IntegrationExternalRef @relation(fields: [externalRefId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, status, detectedAt])
+  @@index([entityType, entityId])
+  @@map("integration_conflicts")
+}
+
+/// Hourly API counters per key + endpoint (volume, errors, 429s). No request bodies.
+model IntegrationApiUsage {
+  id          String   @id @default(uuid()) @db.Uuid
+  companyId   String   @map("company_id") @db.Uuid
+  apiKeyId    String   @map("api_key_id") @db.Uuid
+  endpoint    String
+  hour        DateTime
+  requests    Int      @default(0)
+  errors      Int      @default(0)
+  rateLimited Int      @default(0) @map("rate_limited")
+  denied      Int      @default(0)
+  lastStatus  Int?     @map("last_status")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@unique([apiKeyId, endpoint, hour])
+  @@index([companyId, hour])
+  @@map("integration_api_usage")
+}
+
+/// Idempotency-Key replay store for write calls (24 h).
+model IntegrationIdempotency {
+  id          String   @id @default(uuid()) @db.Uuid
+  companyId   String   @map("company_id") @db.Uuid
+  apiKeyId    String   @map("api_key_id") @db.Uuid
+  key         String
+  requestHash String   @map("request_hash")
+  // null while the first request is still running
+  status      Int?
+  response    Json?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@unique([apiKeyId, key])
+  @@index([createdAt])
+  @@map("integration_idempotency")
 }

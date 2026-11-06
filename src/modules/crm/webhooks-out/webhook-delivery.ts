@@ -4,7 +4,9 @@ import { prisma } from "@/core/db/client";
 import { logger } from "@/core/logging/logger";
 import { decryptSecret } from "@/core/security/encryption";
 import { WebhookBlockedError, WebhookCallError, postSignedWebhook } from "../workflows/workflow-webhook";
-import { WEBHOOK_DELIVERY_RETENTION_DAYS, WEBHOOK_MAX_ATTEMPTS, WEBHOOK_RETRY_DELAYS_MS, WEBHOOK_USER_AGENT, buildEnvelope, type WebhookEnvelope } from "./webhook-events";
+import { SM_WEBHOOK_LIMITS, type SmPublicEnvelope } from "@/modules/sales-marketing/integrations/integration-registry";
+import { buildSmEnvelope } from "@/modules/sales-marketing/integrations/public-events";
+import { SM_WEBHOOK_USER_AGENT, WEBHOOK_DELIVERY_RETENTION_DAYS, WEBHOOK_MAX_ATTEMPTS, WEBHOOK_RETRY_DELAYS_MS, WEBHOOK_USER_AGENT, buildEnvelope, type WebhookEnvelope } from "./webhook-events";
 
 /**
  * Phase 22 — outgoing webhook delivery, run by the worker every 15 seconds
@@ -31,21 +33,52 @@ const LOOKBACK_MS = 24 * 3_600_000;
 const QUEUE_BATCH = 1000;
 const SEND_BATCH = 50;
 const LEASE_MS = 2 * 60_000;
+/** Phase 16 backpressure / fairness (shared by CRM and S&M subscriptions). */
+const MAX_PENDING = SM_WEBHOOK_LIMITS.maxPendingPerSubscription;
+const PER_SUBSCRIPTION_PER_TICK = SM_WEBHOOK_LIMITS.maxSendsPerSubscriptionPerTick;
 
-/** Creates delivery rows for new matching events. Returns how many were queued. */
+/**
+ * Creates delivery rows for new matching events. Returns how many were queued.
+ * CRM-scoped subscriptions read crm_events; S&M-scoped ones (Phase 16) read the
+ * public integration_events outbox. Backpressure: a subscription with
+ * MAX_PENDING queued / retrying deliveries gets nothing new until it drains
+ * (events stay in the outbox and are queued later, within the look-back).
+ */
 export async function queueWebhookDeliveries(now: Date = new Date()): Promise<number> {
   const floor = new Date(now.getTime() - LOOKBACK_MS);
-  return prisma.$executeRaw`
-    INSERT INTO crm_webhook_deliveries (id, company_id, subscription_id, event_id, event_type, status, next_attempt_at, created_at)
-    SELECT gen_random_uuid(), e.company_id, s.id, e.id, e.event_type, 'PENDING', ${now}, ${now}
+  const crm = await prisma.$executeRaw`
+    WITH full_subs AS (
+      SELECT subscription_id FROM crm_webhook_deliveries WHERE status IN ('PENDING', 'RETRYING')
+      GROUP BY subscription_id HAVING count(*) >= ${MAX_PENDING}
+    )
+    INSERT INTO crm_webhook_deliveries (id, company_id, subscription_id, event_id, event_type, event_source, status, next_attempt_at, created_at)
+    SELECT gen_random_uuid(), e.company_id, s.id, e.id, e.event_type, 'CRM', 'PENDING', ${now}, ${now}
     FROM crm_webhook_subscriptions s
     JOIN crm_events e ON e.company_id = s.company_id AND e.event_type = ANY(s.event_types)
-    WHERE s.is_active
+    WHERE s.is_active AND s.scope = 'CRM'
+      AND s.id NOT IN (SELECT subscription_id FROM full_subs)
       AND e.occurred_at >= GREATEST(s.active_since, ${floor})
       AND NOT EXISTS (SELECT 1 FROM crm_webhook_deliveries d WHERE d.subscription_id = s.id AND d.event_id = e.id)
     ORDER BY e.occurred_at, e.id
     LIMIT ${QUEUE_BATCH}
     ON CONFLICT (subscription_id, event_id) DO NOTHING`;
+  const sm = await prisma.$executeRaw`
+    WITH full_subs AS (
+      SELECT subscription_id FROM crm_webhook_deliveries WHERE status IN ('PENDING', 'RETRYING')
+      GROUP BY subscription_id HAVING count(*) >= ${MAX_PENDING}
+    )
+    INSERT INTO crm_webhook_deliveries (id, company_id, subscription_id, event_id, event_type, event_source, status, next_attempt_at, created_at)
+    SELECT gen_random_uuid(), e.company_id, s.id, e.id, e.event_type, 'INTEGRATION', 'PENDING', ${now}, ${now}
+    FROM crm_webhook_subscriptions s
+    JOIN integration_events e ON e.company_id = s.company_id AND e.event_type = ANY(s.event_types)
+    WHERE s.is_active AND s.scope = 'SALES_MARKETING'
+      AND s.id NOT IN (SELECT subscription_id FROM full_subs)
+      AND e.occurred_at >= GREATEST(s.active_since, ${floor})
+      AND NOT EXISTS (SELECT 1 FROM crm_webhook_deliveries d WHERE d.subscription_id = s.id AND d.event_id = e.id)
+    ORDER BY e.occurred_at, e.id
+    LIMIT ${QUEUE_BATCH}
+    ON CONFLICT (subscription_id, event_id) DO NOTHING`;
+  return crm + sm;
 }
 
 /** Short, user-safe reason for a failure (no internal addresses, no receiver response bodies). */
@@ -74,13 +107,25 @@ export function describeFailure(e: unknown): { code: string; message: string; st
   return { code: "UNEXPECTED", message: "Unexpected error while sending.", status: null, retryable: true };
 }
 
-type DeliveryRow = Prisma.CrmWebhookDeliveryGetPayload<{ include: { subscription: { select: { id: true; url: true; isActive: true; secretEncrypted: true; companyId: true } } } }>;
+const SUB_SELECT = { id: true, url: true, isActive: true, secretEncrypted: true, companyId: true, scope: true } as const;
+type DeliveryRow = Prisma.CrmWebhookDeliveryGetPayload<{ include: { subscription: { select: typeof SUB_SELECT } } }>;
+type AnyEnvelope = (WebhookEnvelope | SmPublicEnvelope) & { id: string; type: string };
 
-async function envelopeFor(d: DeliveryRow): Promise<WebhookEnvelope | null> {
-  if (d.isTest) return d.payload as unknown as WebhookEnvelope;
+async function envelopeFor(d: DeliveryRow): Promise<AnyEnvelope | null> {
+  if (d.isTest) return d.payload as unknown as AnyEnvelope;
   if (!d.eventId) return null;
+  if (d.eventSource === "INTEGRATION") {
+    const e = await prisma.integrationEvent.findFirst({ where: { id: d.eventId, companyId: d.companyId } });
+    return e ? buildSmEnvelope(e) : null;
+  }
   const e = await prisma.crmEvent.findFirst({ where: { id: d.eventId, companyId: d.companyId } });
   return e ? buildEnvelope(e) : null;
+}
+
+/** Retry delay; S&M subscriptions add up to 10% jitter so a recovering endpoint isn't hit by every retry at once. */
+function retryDelay(attempt: number, scope: string) {
+  const base = WEBHOOK_RETRY_DELAYS_MS[attempt - 1];
+  return scope === "SALES_MARKETING" ? base + Math.floor(Math.random() * base * 0.1) : base;
 }
 
 /** Sends one claimed delivery and records the outcome. */
@@ -100,8 +145,11 @@ async function send(d: DeliveryRow, opts: { allowInactive?: boolean; retry?: boo
       secret: decryptSecret(d.subscription.secretEncrypted),
       idempotencyKey: d.id,
       eventId: envelope.id,
-      userAgent: WEBHOOK_USER_AGENT,
-      extraHeaders: { "X-CRM-Event-Type": envelope.type, "X-CRM-Delivery-Id": d.id, "X-CRM-Delivery-Attempt": String(attempt) },
+      userAgent: d.subscription.scope === "SALES_MARKETING" ? SM_WEBHOOK_USER_AGENT : WEBHOOK_USER_AGENT,
+      extraHeaders:
+        d.subscription.scope === "SALES_MARKETING"
+          ? { "X-ERP-Event-Type": envelope.type, "X-ERP-Event-Version": "1", "X-ERP-Delivery-Id": d.id, "X-ERP-Delivery-Attempt": String(attempt) }
+          : { "X-CRM-Event-Type": envelope.type, "X-CRM-Delivery-Id": d.id, "X-CRM-Delivery-Attempt": String(attempt) },
     });
     await finish(
       { status: "SUCCEEDED", attempts: attempt, responseStatus: res.status, durationMs: res.durationMs, errorCode: null, errorMessage: null, lastAttemptAt: now, deliveredAt: new Date() },
@@ -121,7 +169,7 @@ async function send(d: DeliveryRow, opts: { allowInactive?: boolean; retry?: boo
         errorCode: f.code,
         errorMessage: f.message,
         lastAttemptAt: now,
-        nextAttemptAt: willRetry ? new Date(now.getTime() + WEBHOOK_RETRY_DELAYS_MS[attempt - 1]) : now,
+        nextAttemptAt: willRetry ? new Date(now.getTime() + retryDelay(attempt, d.subscription.scope)) : now,
       },
       { lastDeliveryAt: now, lastDeliveryStatus: "FAILED", lastError: f.message, consecutiveFailures: { increment: 1 } }
     );
@@ -133,27 +181,37 @@ async function send(d: DeliveryRow, opts: { allowInactive?: boolean; retry?: boo
 export async function sendDueWebhookDeliveries(now: Date = new Date()): Promise<number> {
   const token = randomUUID();
   const stale = new Date(now.getTime() - LEASE_MS);
+  // At most PER_SUBSCRIPTION_PER_TICK per subscription, so one busy or slow
+  // endpoint can't take the whole batch. The outer WHERE re-checks the lease
+  // under the row lock, so two workers never claim the same row.
   const claimed = await prisma.$queryRaw<{ id: string }[]>`
     UPDATE crm_webhook_deliveries SET locked_at = ${now}, lock_token = ${token}::uuid
     WHERE id IN (
-      SELECT id FROM crm_webhook_deliveries
-      WHERE status IN ('PENDING', 'RETRYING') AND next_attempt_at <= ${now} AND (locked_at IS NULL OR locked_at < ${stale})
-      ORDER BY next_attempt_at, created_at
+      SELECT id FROM (
+        SELECT id, next_attempt_at, created_at, row_number() OVER (PARTITION BY subscription_id ORDER BY next_attempt_at, created_at) AS rn
+        FROM crm_webhook_deliveries
+        WHERE status IN ('PENDING', 'RETRYING') AND next_attempt_at <= ${now} AND (locked_at IS NULL OR locked_at < ${stale})
+      ) due
+      WHERE due.rn <= ${PER_SUBSCRIPTION_PER_TICK}
+      ORDER BY due.next_attempt_at, due.created_at
       LIMIT ${SEND_BATCH}
-      FOR UPDATE SKIP LOCKED
     )
+      AND status IN ('PENDING', 'RETRYING') AND (locked_at IS NULL OR locked_at < ${stale})
     RETURNING id`;
   if (!claimed.length) return 0;
   const rows = await prisma.crmWebhookDelivery.findMany({
     where: { id: { in: claimed.map((c) => c.id) }, lockToken: token },
-    include: { subscription: { select: { id: true, url: true, isActive: true, secretEncrypted: true, companyId: true } } },
+    include: { subscription: { select: SUB_SELECT } },
     orderBy: [{ createdAt: "asc" }],
   });
-  // Small concurrency: one slow endpoint shouldn't hold up everyone else's deliveries.
-  const queue = [...rows];
+  // Up to 5 endpoints at a time, each endpoint one request at a time (in order):
+  // one slow endpoint never holds up the others, and no endpoint gets parallel requests.
+  const bySub = new Map<string, DeliveryRow[]>();
+  for (const r of rows) bySub.set(r.subscriptionId, [...(bySub.get(r.subscriptionId) ?? []), r]);
+  const groups = [...bySub.values()];
   await Promise.all(
-    Array.from({ length: Math.min(5, queue.length) }, async () => {
-      for (let d = queue.shift(); d; d = queue.shift()) await send(d);
+    Array.from({ length: Math.min(5, groups.length) }, async () => {
+      for (let g = groups.shift(); g; g = groups.shift()) for (const d of g) await send(d);
     })
   );
   return rows.length;
@@ -161,7 +219,7 @@ export async function sendDueWebhookDeliveries(now: Date = new Date()): Promise<
 
 /** Sends one delivery immediately (test events). */
 export async function deliverNow(deliveryId: string, opts: { allowInactive?: boolean; retry?: boolean } = {}) {
-  const d = await prisma.crmWebhookDelivery.findUniqueOrThrow({ where: { id: deliveryId }, include: { subscription: { select: { id: true, url: true, isActive: true, secretEncrypted: true, companyId: true } } } });
+  const d = await prisma.crmWebhookDelivery.findUniqueOrThrow({ where: { id: deliveryId }, include: { subscription: { select: SUB_SELECT } } });
   const r = await send(d, opts);
   return { deliveryId, ...(r ?? { status: "CANCELLED" as const, responseStatus: null, durationMs: null, message: null }) };
 }
