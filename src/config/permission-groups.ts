@@ -59,6 +59,7 @@ const MODULE_LABELS: Record<string, string> = {
   marketing_attribution: "Marketing Attribution & ROI",
   sales_workflows: "Sales & Marketing Workflows",
   sales_integrations: "Sales & Marketing Integrations",
+  sales_analytics: "Sales & Marketing Analytics",
   payment_requests: "Payment Requests",
   payment_request_settings: "Payment Approval Matrix",
 };

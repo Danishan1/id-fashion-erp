@@ -60,8 +60,8 @@ describe("SalesMarketingDashboardClient", () => {
     expect(screen.getByText("Zenith")).toBeTruthy();
     expect(screen.queryByText("Not available yet")).toBeNull();
     expect(screen.getByText("Quotations & Proposals")).toBeTruthy();
-    expect(screen.getAllByText(/Planned · Phase 17/).length).toBeGreaterThan(0);
-    expect(screen.queryByText(/Planned · Phase (0[5-9]|1[0-6])/)).toBeNull();
+    expect(screen.getAllByText(/Planned · Phase 18/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Planned · Phase (0[5-9]|1[0-7])/)).toBeNull();
     expect(screen.getByRole("link", { name: /Customers/ }).getAttribute("href")).toBe("/masters/customers");
   });
 

@@ -1,5 +1,6 @@
 import { Queue, Worker, type Job } from "bullmq";
 import { createRedisConnection, databaseScopedQueueName } from "@/core/jobs/queue";
+import { tickAnalytics } from "@/modules/sales-marketing/analytics/analytics-maintenance";
 import { tickIntegrations } from "@/modules/sales-marketing/integrations/integration-maintenance";
 import { tickSmWorkflows } from "./sm-workflow-engine";
 import "./sm-workflow-impls";
@@ -11,7 +12,8 @@ import "./sm-workflow-impls";
  *    instances, run what is due, tidy the event log (and, since Phase 16,
  *    publish the public S&M events outgoing webhooks deliver);
  *  - `sm-integrations.tick` every 5 min (Phase 16): integration registry
- *    health and retention.
+ *    health and retention;
+ *  - `sm-analytics.tick` hourly (Phase 17): analytics run-log and delivery-file retention.
  * The database is the source of truth (instances, steps, checkpoints): a lost
  * or duplicated tick is harmless; two workers never run one instance at once
  * (lease in Postgres).
@@ -22,6 +24,8 @@ export async function handleSmWorkflowJob(job: Pick<Job, "name">) {
   if (job.name === "sm-workflow.tick") return tickSmWorkflows(new Date());
   // Phase 16: integration registry health + retention, on the same queue.
   if (job.name === "sm-integrations.tick") return tickIntegrations(new Date());
+  // Phase 17: analytics retention.
+  if (job.name === "sm-analytics.tick") return tickAnalytics(new Date());
   throw new Error(`Unknown S&M workflow job "${job.name}"`);
 }
 
@@ -39,6 +43,9 @@ export function startSmWorkflowWorker() {
   );
   q.upsertJobScheduler("sm-integrations-tick", { every: 5 * 60_000 }, { name: "sm-integrations.tick", data: {}, opts: { attempts: 1, removeOnComplete: { count: 20 }, removeOnFail: { age: 24 * 3600 } } }).catch((e: Error) =>
     console.error(JSON.stringify({ level: "error", message: "Could not schedule the S&M integrations tick", error: e.message }))
+  );
+  q.upsertJobScheduler("sm-analytics-tick", { every: 60 * 60_000 }, { name: "sm-analytics.tick", data: {}, opts: { attempts: 1, removeOnComplete: { count: 20 }, removeOnFail: { age: 24 * 3600 } } }).catch((e: Error) =>
+    console.error(JSON.stringify({ level: "error", message: "Could not schedule the S&M analytics tick", error: e.message }))
   );
   console.log(JSON.stringify({ level: "info", message: `S&M workflow worker started, listening on queue "${SM_WORKFLOW_QUEUE_NAME}"` }));
   return worker;

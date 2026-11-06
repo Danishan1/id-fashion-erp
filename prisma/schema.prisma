@@ -17471,3 +17471,107 @@ model IntegrationIdempotency {
   @@index([createdAt])
   @@map("integration_idempotency")
 }
+
+// ─── Sales & Marketing Phase 17: Advanced Reporting & BI ────────────────────
+
+/// A saved report: a governed query definition (dataset, metrics, dimensions,
+/// filters, period) — never SQL. Shared PRIVATE / with USERS / COMPANY; a
+/// viewer always runs it with their own permissions.
+model SmAnalyticsReport {
+  id                String   @id @default(uuid()) @db.Uuid
+  companyId         String   @map("company_id") @db.Uuid
+  ownerUserId       String   @map("owner_user_id") @db.Uuid
+  name              String
+  description       String?
+  /// Validated against the analytics registry on save and on every run.
+  definition        Json
+  /// Version of the definition format (registry contract), not of the report.
+  definitionVersion Int      @default(1) @map("definition_version")
+  /// PRIVATE | USERS | COMPANY
+  sharing           String   @default("PRIVATE")
+  sharedUserIds     String[] @default([]) @map("shared_user_ids") @db.Uuid
+  /// Scheduled delivery recipients (each gets a copy run with their own permissions).
+  recipientUserIds  String[] @default([]) @map("recipient_user_ids") @db.Uuid
+  /// CSV | XLSX
+  deliveryFormat    String   @default("XLSX") @map("delivery_format")
+  version           Int      @default(1)
+  isArchived        Boolean  @default(false) @map("is_archived")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  versions   SmAnalyticsReportVersion[]
+  deliveries SmAnalyticsDelivery[]
+
+  @@index([companyId, ownerUserId])
+  @@index([companyId, sharing])
+  @@map("sm_analytics_reports")
+}
+
+/// Definition history of a saved report (one row per saved change).
+model SmAnalyticsReportVersion {
+  id              String   @id @default(uuid()) @db.Uuid
+  reportId        String   @map("report_id") @db.Uuid
+  version         Int
+  name            String
+  definition      Json
+  changedByUserId String   @map("changed_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  report SmAnalyticsReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@unique([reportId, version])
+  @@map("sm_analytics_report_versions")
+}
+
+/// Usage and performance log of report runs (no result data). 90-day retention.
+model SmAnalyticsRun {
+  id         String   @id @default(uuid()) @db.Uuid
+  companyId  String   @map("company_id") @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  reportId   String?  @map("report_id") @db.Uuid
+  /// INTERACTIVE | DASHBOARD | DRILL | EXPORT | DELIVERY
+  source     String
+  dataset    String
+  metrics    String[] @default([])
+  rowCount   Int      @default(0) @map("row_count")
+  durationMs Int      @default(0) @map("duration_ms")
+  /// OK | DENIED | FAILED
+  status     String
+  slow       Boolean  @default(false)
+  error      String?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([companyId, createdAt])
+  @@index([companyId, dataset, createdAt])
+  @@map("sm_analytics_runs")
+}
+
+/// One recipient's copy of a scheduled (or send-now) report delivery. The file
+/// is private storage, downloadable only by the recipient until it expires.
+model SmAnalyticsDelivery {
+  id              String    @id @default(uuid()) @db.Uuid
+  companyId       String    @map("company_id") @db.Uuid
+  reportId        String    @map("report_id") @db.Uuid
+  recipientUserId String    @map("recipient_user_id") @db.Uuid
+  /// Idempotency: one row per delivery run and recipient.
+  runKey          String    @map("run_key")
+  /// DELIVERED | SKIPPED | FAILED
+  status          String
+  reason          String?
+  storageKey      String?   @map("storage_key")
+  fileName        String?   @map("file_name")
+  mimeType        String?   @map("mime_type")
+  fileSizeBytes   Int?      @map("file_size_bytes")
+  rowCount        Int?      @map("row_count")
+  expiresAt       DateTime? @map("expires_at")
+  downloadedAt    DateTime? @map("downloaded_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  report SmAnalyticsReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@unique([runKey, recipientUserId])
+  @@index([recipientUserId, createdAt])
+  @@index([reportId, createdAt])
+  @@index([expiresAt])
+  @@map("sm_analytics_deliveries")
+}

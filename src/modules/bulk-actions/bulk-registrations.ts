@@ -1,4 +1,5 @@
 import { registerCrmBulkActions } from "@/modules/crm/bulk/crm-bulk-actions";
+import { registerAnalyticsBulkActions } from "@/modules/sales-marketing/analytics/analytics-bulk";
 import { registerSalesMarketingBulkActions } from "@/modules/sales-marketing/bulk/sm-bulk-actions";
 
 /**
@@ -9,3 +10,5 @@ import { registerSalesMarketingBulkActions } from "@/modules/sales-marketing/bul
 registerCrmBulkActions();
 // Sales & Marketing Phase 14: enquiries, quotations, campaigns, promotions, attribution models.
 registerSalesMarketingBulkActions();
+// Sales & Marketing Phase 17: scheduled delivery of saved analytics reports.
+registerAnalyticsBulkActions();

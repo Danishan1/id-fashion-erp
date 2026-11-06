@@ -71,6 +71,11 @@ export const MODULES = [
   // keys, subscriptions, enable / disable, connection checks; approve =
   // resolve conflicts, replay deliveries, revoke credentials.
   "sales_integrations",
+  // Sales & Marketing → Analytics (Phase 17, 2026-11-06): governed reports,
+  // dashboards, saved reports and scheduled delivery. view = run reports and
+  // dashboards; create = save reports; edit = share and schedule; export =
+  // CSV / Excel. Every metric still needs its source module's permission.
+  "sales_analytics",
   // HRMS is split into one module per screen (2026-10-27) so a role can be
   // given each attendance/leave screen separately. "hrms_attendance" is My
   // Attendance (punch + own records); "hrms_leave" is Leave Requests.
@@ -286,6 +291,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     marketing_attribution: ["view", "create", "edit", "approve", "reject", "export"],
     sales_workflows: ["view", "edit", "approve"],
     sales_integrations: ["view", "edit", "approve"],
+    sales_analytics: ["view", "create", "edit", "export"],
     // No dedicated HR role exists yet in this system — MANAGEMENT owns
     // attendance/leave for now (same "closest existing manager role" default
     // used for crm above), including leave approval.
@@ -386,6 +392,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     marketing_content: ["view", "create", "edit"],
     marketing_promotions: ["view", "create", "edit"],
     marketing_attribution: ["view", "export"],
+    sales_analytics: ["view", "create", "export"],
     sampling: ["view", "create", "edit", "export", "print"],
     buyer_enquiries: ["view", "create", "edit", "reject", "export", "print"],
     sales_orders: ["view", "create", "edit", "cancel", "export", "print"],
