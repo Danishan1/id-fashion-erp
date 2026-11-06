@@ -13,6 +13,7 @@ import { startSegmentJobsWorker } from "@/modules/sales-marketing/segments/segme
 import { startDeliveryJobsWorker } from "@/modules/sales-marketing/delivery/delivery-jobs.worker";
 import { startPromotionJobsWorker } from "@/modules/sales-marketing/promotions/promotion-jobs.worker";
 import { startAttributionJobsWorker } from "@/modules/sales-marketing/attribution/attribution-jobs.worker";
+import { startSmWorkflowWorker } from "@/modules/sales-marketing/workflows/sm-workflow-jobs.worker";
 
 /**
  * Standalone process for the Bulk Master Data Import background queue —
@@ -88,12 +89,15 @@ const promotionWorker = startPromotionJobsWorker();
 // Sales & Marketing Phase 13: attribution source sync, calculations, nightly recalculation.
 const attributionWorker = startAttributionJobsWorker();
 
+// Sales & Marketing Phase 15: workflow orchestration tick (events → instances → due steps).
+const smWorkflowWorker = startSmWorkflowWorker();
+
 process.on("SIGTERM", async () => {
-  await Promise.all([worker.close(), crmWorker.close(), bulkWorker.close(), platformWorker.close(), attendanceWorker.close(), forecastWorker.close(), segmentWorker.close(), deliveryWorker.close(), promotionWorker.close(), attributionWorker.close()]);
+  await Promise.all([worker.close(), crmWorker.close(), bulkWorker.close(), platformWorker.close(), attendanceWorker.close(), forecastWorker.close(), segmentWorker.close(), deliveryWorker.close(), promotionWorker.close(), attributionWorker.close(), smWorkflowWorker.close()]);
   process.exit(0);
 });
 process.on("SIGINT", async () => {
-  await Promise.all([worker.close(), crmWorker.close(), bulkWorker.close(), platformWorker.close(), attendanceWorker.close(), forecastWorker.close(), segmentWorker.close(), deliveryWorker.close(), promotionWorker.close(), attributionWorker.close()]);
+  await Promise.all([worker.close(), crmWorker.close(), bulkWorker.close(), platformWorker.close(), attendanceWorker.close(), forecastWorker.close(), segmentWorker.close(), deliveryWorker.close(), promotionWorker.close(), attributionWorker.close(), smWorkflowWorker.close()]);
   process.exit(0);
 });
 

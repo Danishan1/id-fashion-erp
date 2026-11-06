@@ -29,6 +29,9 @@ export const CRM_ENTITY_TYPE_CONFIG: Record<CrmEntityType, CrmEntityTypeConfig> 
   WORKFLOW: { label: "Workflow", pluralLabel: "Workflows", tableName: "crm_workflows", basePath: "/crm/workflows" },
   // Sales & Marketing Phase 08: CRM activities (tasks, milestones) on a marketing campaign.
   CAMPAIGN: { label: "Campaign", pluralLabel: "Campaigns", tableName: "marketing_campaigns", basePath: "/sales-marketing/campaigns" },
+  // Sales & Marketing Phase 15: CRM tasks on an enquiry / a quotation (workflow follow-ups and by hand).
+  ENQUIRY: { label: "Enquiry", pluralLabel: "Enquiries", tableName: "buyer_enquiries", basePath: "/sales-marketing/enquiries" },
+  QUOTATION: { label: "Quotation", pluralLabel: "Quotations", tableName: "quotations", basePath: "/sales-marketing/quotations" },
 };
 
 export const CRM_ENTITY_TYPES = Object.keys(CRM_ENTITY_TYPE_CONFIG) as CrmEntityType[];

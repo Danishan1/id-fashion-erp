@@ -161,6 +161,7 @@ model Company {
   bulkJobs                            BulkJob[]
   bulkJobItems                        BulkJobItem[]
   bulkJobSchedules                    BulkJobSchedule[]
+  smWorkflowDefinitions               SmWorkflowDefinition[]
   crmWebhookSubscriptions             CrmWebhookSubscription[]
   crmWebhookDeliveries                CrmWebhookDelivery[]
   crmUserPreferences                  CrmUserPreference[]
@@ -10801,6 +10802,9 @@ enum CrmEntityType {
   WORKFLOW
   // Sales & Marketing Phase 08: CRM activities (tasks, milestones) on a marketing campaign.
   CAMPAIGN
+  // Sales & Marketing Phase 15: CRM tasks on an enquiry / a quotation (workflow follow-ups and by hand).
+  ENQUIRY
+  QUOTATION
 }
 
 // Append-only business event log for the CRM. One row per thing that
@@ -17105,4 +17109,172 @@ model MarketingAttributionCheckpoint {
 
   @@id([companyId, source])
   @@map("marketing_attribution_checkpoints")
+}
+
+// ── Sales & Marketing Phase 15: workflow integration (2026-11-06) ──────────
+// See docs/sales-marketing/PHASE_15_WORKFLOWS.md. A small, durable orchestrator
+// for registered S&M workflow types (code: src/modules/sales-marketing/workflows).
+// Definitions hold only typed settings + allow-listed conditions (never code);
+// versions are frozen once activated (trigger). Instances coordinate the
+// authoritative module services and never copy their records. Events are read
+// from the tables S&M already writes in the same transaction as each change
+// (quotation_events, sales_performance_events, buyer_enquiry_activities, budget
+// alerts, attribution runs, bulk jobs); the event log makes each one count once.
+
+model SmWorkflowDefinition {
+  id              String    @id @default(uuid()) @db.Uuid
+  companyId       String    @map("company_id") @db.Uuid
+  // Registered workflow type (sm-workflow-registry.ts).
+  workflowKey     String    @map("workflow_key")
+  name            String
+  // INACTIVE | ACTIVE
+  status          String    @default("INACTIVE")
+  activeVersionId String?   @unique @map("active_version_id") @db.Uuid
+  // The activator: actions run as this user (permissions re-checked before each action).
+  runAsUserId     String?   @map("run_as_user_id") @db.Uuid
+  activatedAt     DateTime? @map("activated_at")
+  version         Int       @default(1)
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  company       Company                       @relation(fields: [companyId], references: [id])
+  activeVersion SmWorkflowDefinitionVersion?  @relation("SmWorkflowActiveVersion", fields: [activeVersionId], references: [id])
+  versions      SmWorkflowDefinitionVersion[] @relation("SmWorkflowVersions")
+  instances     SmWorkflowInstance[]
+
+  @@unique([companyId, workflowKey])
+  @@map("sm_workflow_definitions")
+}
+
+model SmWorkflowDefinitionVersion {
+  id              String    @id @default(uuid()) @db.Uuid
+  companyId       String    @map("company_id") @db.Uuid
+  definitionId    String    @map("definition_id") @db.Uuid
+  versionNumber   Int       @map("version_number")
+  // DRAFT | ACTIVE | SUPERSEDED (frozen unless DRAFT — trigger)
+  status          String    @default("DRAFT")
+  settings        Json      @default("{}")
+  conditions      Json      @default("{}")
+  changeNote      String?   @map("change_note")
+  createdByUserId String    @map("created_by_user_id") @db.Uuid
+  activatedAt     DateTime? @map("activated_at")
+  activatedById   String?   @map("activated_by_id") @db.Uuid
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  definition SmWorkflowDefinition  @relation("SmWorkflowVersions", fields: [definitionId], references: [id], onDelete: Cascade)
+  activeOf   SmWorkflowDefinition? @relation("SmWorkflowActiveVersion")
+  instances  SmWorkflowInstance[]
+
+  @@unique([definitionId, versionNumber])
+  @@map("sm_workflow_definition_versions")
+}
+
+model SmWorkflowInstance {
+  id                 String    @id @default(uuid()) @db.Uuid
+  companyId          String    @map("company_id") @db.Uuid
+  definitionId       String    @map("definition_id") @db.Uuid
+  versionId          String    @map("version_id") @db.Uuid
+  workflowKey        String    @map("workflow_key")
+  // The business record it coordinates (ENQUIRY / QUOTATION / CAMPAIGN / BUDGET_ALERT / ATTRIBUTION_RUN / BULK_JOB).
+  entityType         String    @map("entity_type")
+  entityId           String    @map("entity_id") @db.Uuid
+  entityLabel        String?   @map("entity_label")
+  // RUNNING | WAITING_APPROVAL | WAITING_EVENT | SCHEDULED | RETRY_PENDING | NEEDS_ATTENTION | FAILED | COMPLETED | CANCELLED
+  status             String    @default("RUNNING")
+  currentStep        String    @map("current_step")
+  nextRunAt          DateTime? @map("next_run_at")
+  waitingSince       DateTime? @map("waiting_since")
+  lockToken          String?   @map("lock_token") @db.Uuid
+  lockedAt           DateTime? @map("locked_at")
+  // Failed attempts of the current step (transient errors back off and retry).
+  attempts           Int       @default(0)
+  // EVENT | MANUAL
+  triggerSource      String    @map("trigger_source")
+  triggerEventKey    String?   @map("trigger_event_key")
+  correlationId      String    @map("correlation_id")
+  idempotencyKey     String    @map("idempotency_key")
+  initiatedByUserId  String?   @map("initiated_by_user_id") @db.Uuid
+  // References recorded on the way (task ids, order id, reminders sent…) — never copies of records.
+  context            Json      @default("{}")
+  // "QUOTATION:<id>" … : events on these records wake the instance early.
+  watchKeys          String[]  @default([]) @map("watch_keys")
+  outcome            String?
+  outcomeMessage     String?   @map("outcome_message")
+  errorCode          String?   @map("error_code")
+  errorMessage       String?   @map("error_message")
+  // NONE | DONE | FAILED
+  compensationStatus String    @default("NONE") @map("compensation_status")
+  startedAt          DateTime  @default(now()) @map("started_at")
+  completedAt        DateTime? @map("completed_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  definition SmWorkflowDefinition        @relation(fields: [definitionId], references: [id])
+  version    SmWorkflowDefinitionVersion @relation(fields: [versionId], references: [id])
+  steps      SmWorkflowStepRun[]
+
+  @@unique([companyId, idempotencyKey])
+  @@index([status, nextRunAt])
+  @@index([companyId, workflowKey, status])
+  @@index([companyId, entityType, entityId])
+  @@map("sm_workflow_instances")
+}
+
+model SmWorkflowStepRun {
+  id           String    @id @default(uuid()) @db.Uuid
+  companyId    String    @map("company_id") @db.Uuid
+  instanceId   String    @map("instance_id") @db.Uuid
+  sequence     Int
+  stepKey      String    @map("step_key")
+  // CHECK | TASK | NOTIFY | WAIT | INVOKE | RECORD | COMPENSATE | OPERATOR
+  kind         String
+  // RUNNING | DONE | WAITING | FAILED | SKIPPED | COMPENSATED | COMPENSATION_FAILED
+  status       String
+  attempt      Int       @default(1)
+  checks       Int       @default(0)
+  summary      String?
+  result       Json?
+  errorCode    String?   @map("error_code")
+  errorMessage String?   @map("error_message")
+  actorUserId  String?   @map("actor_user_id") @db.Uuid
+  startedAt    DateTime  @default(now()) @map("started_at")
+  lastCheckAt  DateTime? @map("last_check_at")
+  finishedAt   DateTime? @map("finished_at")
+
+  instance SmWorkflowInstance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+
+  @@unique([instanceId, sequence])
+  @@index([instanceId, stepKey])
+  @@map("sm_workflow_step_runs")
+}
+
+/// Committed S&M events the dispatcher has evaluated (each counts once).
+model SmWorkflowEventLog {
+  id               String   @id @default(uuid()) @db.Uuid
+  companyId        String   @map("company_id") @db.Uuid
+  source           String
+  // Source row id (+ ":<phase>" for rows that change state, e.g. a run finishing).
+  sourceKey        String   @map("source_key")
+  eventType        String   @map("event_type")
+  entityType       String   @map("entity_type")
+  entityId         String   @map("entity_id") @db.Uuid
+  occurredAt       DateTime @map("occurred_at")
+  // PROCESSED | INVALID
+  status           String
+  startedInstances Int      @default(0) @map("started_instances")
+  wokenInstances   Int      @default(0) @map("woken_instances")
+  processedAt      DateTime @default(now()) @map("processed_at")
+
+  @@unique([source, sourceKey])
+  @@index([companyId, processedAt])
+  @@map("sm_workflow_event_log")
+}
+
+/// How far the dispatcher has read each event source (re-read with an overlap; the log dedupes).
+model SmWorkflowCheckpoint {
+  source     String   @id
+  lastSeenAt DateTime @map("last_seen_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@map("sm_workflow_checkpoints")
 }

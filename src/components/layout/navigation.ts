@@ -112,7 +112,7 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     label: "Sales & Marketing",
     href: "/sales-marketing",
-    modules: ["sales_marketing", "sales_quotations", "sales_marketing_settings", "sales_pricing", "sales_performance", "sales_commissions", "marketing_campaigns", "marketing_segments", "marketing_delivery", "marketing_content", "marketing_promotions", "marketing_attribution"],
+    modules: ["sales_marketing", "sales_quotations", "sales_marketing_settings", "sales_pricing", "sales_performance", "sales_commissions", "marketing_campaigns", "marketing_segments", "marketing_delivery", "marketing_content", "marketing_promotions", "marketing_attribution", "sales_workflows"],
     children: [
       { label: "Dashboard", href: "/sales-marketing", modules: ["sales_marketing"] },
       { label: "Enquiries", href: "/sales-marketing/enquiries", modules: ["sales_marketing"] },
@@ -136,6 +136,8 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Campaign Budgets", href: "/sales-marketing/budgets", modules: ["marketing_campaigns"] },
       { label: "Attribution & ROI", href: "/sales-marketing/attribution", modules: ["marketing_attribution"] },
       { label: "Delivery Runs", href: "/sales-marketing/delivery", modules: ["marketing_delivery"] },
+      // Phase 15: S&M workflow definitions and their running instances.
+      { label: "Workflows", href: "/sales-marketing/workflows", modules: ["sales_workflows"] },
       // Phase 14: background bulk jobs + saved schedules for S&M records (the jobs a user sees depend on the record types they can view).
       { label: "Bulk Jobs", href: "/sales-marketing/bulk-jobs", modules: ["sales_marketing", "sales_quotations", "marketing_campaigns", "marketing_promotions", "marketing_attribution"] },
       { label: "Channel Connections", href: "/sales-marketing/delivery/connections", modules: ["sales_marketing_settings"] },
