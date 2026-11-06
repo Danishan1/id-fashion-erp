@@ -54,7 +54,7 @@ interface QuotationLineView {
   priceSource?: "PRICE_LIST" | "MANUAL" | "OVERRIDE";
   calculatedUnitPrice?: Num | null;
   priceOverrideReason?: string | null;
-  pricing?: { source?: { priceListCode: string; versionNumber: number } | null; rules?: { code: string }[]; explanation?: string[] } | null;
+  pricing?: { source?: { priceListCode: string; versionNumber: number } | null; rules?: { code: string; promotionId?: string; promotionVersionNumber?: number }[]; explanation?: string[] } | null;
 }
 
 export interface QuotationDetail {
@@ -95,6 +95,7 @@ export interface QuotationDetail {
     shippingAddress: string | null;
     paymentTermsDays: number | null;
     deliveryTerms: string | null;
+    promotionCodes?: string[];
     introduction: string | null;
     customerNotes: string | null;
     internalNotes: string | null;
@@ -522,6 +523,7 @@ export function QuotationDetailClient({ initialQuotation, permissions }: { initi
               <Field label="GST">{c.isInterState ? "IGST (inter-state)" : "CGST + SGST"}</Field>
               <Field label="Payment terms">{c.paymentTermsDays !== null ? `${c.paymentTermsDays} days` : "—"}</Field>
               <Field label="Delivery terms">{c.deliveryTerms ?? "—"}</Field>
+              {c.promotionCodes && c.promotionCodes.length > 0 && <Field label="Promotion codes">{c.promotionCodes.join(", ")}</Field>}
               <Field label="CRM">{[q.crmCompany?.name, q.crmContact?.fullName].filter(Boolean).join(" · ") || "—"}</Field>
               <Field label="Billing address">{c.billingAddress ?? "—"}</Field>
               <Field label="Shipping address">{c.shippingAddress ?? "—"}</Field>
@@ -569,7 +571,8 @@ export function QuotationDetailClient({ initialQuotation, permissions }: { initi
                         {l.priceSource === "PRICE_LIST" && l.pricing?.source && (
                           <div className="text-xs text-zinc-500 dark:text-zinc-400" title={(l.pricing.explanation ?? []).join("\n")}>
                             Price list {l.pricing.source.priceListCode} v{l.pricing.source.versionNumber}
-                            {l.pricing.rules?.length ? ` · rules ${l.pricing.rules.map((r) => r.code).join(", ")}` : ""}
+                            {l.pricing.rules?.some((r) => !r.promotionId) ? ` · rules ${l.pricing.rules.filter((r) => !r.promotionId).map((r) => r.code).join(", ")}` : ""}
+                            {l.pricing.rules?.some((r) => r.promotionId) ? ` · promotion ${l.pricing.rules.filter((r) => r.promotionId).map((r) => `${r.code} v${r.promotionVersionNumber ?? "?"}`).join(", ")}` : ""}
                           </div>
                         )}
                         {l.priceSource === "OVERRIDE" && (

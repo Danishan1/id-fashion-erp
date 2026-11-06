@@ -12,6 +12,7 @@ import { linkErpDocument } from "@/modules/crm/opportunities/crm-opportunity-erp
 import { createSalesOrder } from "@/modules/sales-orders/sales-order.service";
 import { salesOrderSchema } from "@/modules/sales-orders/sales-order.schema";
 import { markEnquiryWon, type SalesActor } from "@/modules/sales-marketing/enquiries/sales-enquiry.service";
+import { redeemForOrder } from "@/modules/sales-marketing/promotions/redemption.service";
 import { getQuotation, loadVisible, recordQuotationEvent } from "./quotation.service";
 
 /**
@@ -141,6 +142,8 @@ async function markConverted(actor: SalesActor, quotationId: string, order: { id
     if (count === 0) return; // someone else finished it
     if (quotation.buyerEnquiryId) await markEnquiryWon(tx, actor, quotation.buyerEnquiryId, order.orderNumber, quotation.quotationNumber);
     await recordQuotationEvent(tx, actor, quotation, revisionNumber, "CONVERTED", null, { salesOrderId: order.id, orderNumber: order.orderNumber });
+    // Reserved promotion uses become used ones, tied to the order (Phase 12).
+    await redeemForOrder(tx, actor, quotation.id, order.id);
     await writeAuditLog(
       {
         companyId: actor.companyId,

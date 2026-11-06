@@ -17,6 +17,7 @@ import { buildReconciledItemPlan, snapshotUnsnapshottedLinesInTx } from "./sales
 import { releaseActiveReservationsForSalesOrderInTx } from "@/modules/finished-goods-inventory/finished-goods-reservation.service";
 import { SalesOrderStatus, type Prisma } from "@prisma/client";
 import { creditAfterCustomerChange, resolveDefaultChannel, resolveDefaultSalesCredit } from "@/modules/sales-marketing/performance/sales-credit.service";
+import { releaseForSalesOrder } from "@/modules/sales-marketing/promotions/redemption.service";
 
 interface ActorContext {
   companyId: string;
@@ -601,6 +602,8 @@ export async function transitionSalesOrderStatus(actor: ActorContext, id: string
 
       // Release eligible active FinishedGoodsReservation records
       await releaseActiveReservationsForSalesOrderInTx(tx, id);
+      // Promotion uses taken by this order go back to their promotions' limits (Sales & Marketing Phase 12).
+      await releaseForSalesOrder(tx, actor, id, `Sales Order ${before.orderNumber} cancelled.`);
     });
   } else {
     // Conditional on status still being `before.status` at write time — closes

@@ -1180,6 +1180,7 @@ model User {
 
   @@unique([companyId, supportForPlatformUserId])
   @@map("users")
+  marketingPromotionsOwned MarketingPromotion[] @relation("MarketingPromotionOwner")
 }
 
 model Role {
@@ -4799,6 +4800,12 @@ model PurchaseOrder {
   purchaseInvoices PurchaseInvoice[]
 
   @@unique([companyId, orderNumber])
+  // Phase 12: marketing spend — the campaign (and budget line) this order is committed for.
+  campaignId         String?                    @map("campaign_id") @db.Uuid
+  campaign           MarketingCampaign?         @relation(fields: [campaignId], references: [id])
+  budgetAllocationId String?                    @map("budget_allocation_id") @db.Uuid
+  budgetAllocation   MarketingBudgetAllocation? @relation(fields: [budgetAllocationId], references: [id])
+
   @@index([companyId, supplierId])
   @@index([companyId, status])
   @@map("purchase_orders")
@@ -7561,6 +7568,12 @@ model PurchaseInvoice {
   items         PurchaseInvoiceItem[]
   allocations   PaymentAllocation[]
 
+  // Phase 12: marketing spend. Null = inherits the purchase order's campaign / budget line.
+  campaignId         String?                    @map("campaign_id") @db.Uuid
+  campaign           MarketingCampaign?         @relation(fields: [campaignId], references: [id])
+  budgetAllocationId String?                    @map("budget_allocation_id") @db.Uuid
+  budgetAllocation   MarketingBudgetAllocation? @relation(fields: [budgetAllocationId], references: [id])
+
   @@unique([companyId, branchId, invoiceNumber])
   @@unique([companyId, idempotencyKey])
   @@map("purchase_invoices")
@@ -8151,6 +8164,9 @@ model Expense {
   // Sales & Marketing Phase 08: campaign this record came from / is spent on.
   campaignId  String?            @map("campaign_id") @db.Uuid
   campaign    MarketingCampaign? @relation(fields: [campaignId], references: [id])
+  // Phase 12: the campaign budget line this spend belongs to (null = the campaign's unallocated part).
+  budgetAllocationId String?                    @map("budget_allocation_id") @db.Uuid
+  budgetAllocation   MarketingBudgetAllocation? @relation(fields: [budgetAllocationId], references: [id])
 
   @@unique([companyId, branchId, expenseNumber])
   @@unique([companyId, idempotencyKey])
@@ -14897,6 +14913,8 @@ model QuotationRevision {
   // submitted or issued; reasons = which rule(s) triggered it.
   approvalRequired       Boolean                 @default(false) @map("approval_required")
   approvalReasons        Json                    @default("[]") @map("approval_reasons")
+  // Phase 12: promotion codes entered on this revision (upper-case, no duplicates).
+  promotionCodes         String[]                @default([]) @map("promotion_codes")
   submittedAt            DateTime?               @map("submitted_at")
   submittedByUserId      String?                 @map("submitted_by_user_id") @db.Uuid
   approvedAt             DateTime?               @map("approved_at")
@@ -15044,6 +15062,8 @@ model SalesMarketingSettings {
   forecastStaleDays                   Int      @default(60) @map("forecast_stale_days")
   // Phase 08: campaigns need approval by someone else before activation (off = submit approves at once).
   campaignApprovalRequired            Boolean  @default(true) @map("campaign_approval_required")
+  // Phase 12: warn when a campaign budget (or budget line) has used this % of its amount.
+  budgetWarnPercent                   Int      @default(80) @map("budget_warn_percent")
   updatedByUserId                     String?  @map("updated_by_user_id") @db.Uuid
   createdAt                           DateTime @default(now()) @map("created_at")
   updatedAt                           DateTime @updatedAt @map("updated_at")
@@ -15806,6 +15826,8 @@ enum MarketingCampaignPriority {
 enum MarketingLookupKind {
   TYPE
   OBJECTIVE
+  // Phase 12: budget spend categories (Media, Content, Events…).
+  SPEND_CATEGORY
 }
 
 enum MarketingRevisionStatus {
@@ -15836,6 +15858,7 @@ model MarketingCampaignLookup {
   campaignsByType      MarketingCampaign[] @relation("MarketingCampaignType")
   campaignsByObjective MarketingCampaign[] @relation("MarketingCampaignObjective")
 
+  budgetAllocations MarketingBudgetAllocation[]
   @@unique([companyId, kind, code])
   @@map("marketing_campaign_lookups")
 }
@@ -15887,6 +15910,10 @@ model MarketingCampaign {
   quotations     Quotation[]
   salesOrders    SalesOrder[]
   expenses       Expense[]
+  purchaseOrders    PurchaseOrder[]
+  purchaseInvoices  PurchaseInvoice[]
+  budgetAllocations MarketingBudgetAllocation[]
+  budgetAlerts      MarketingBudgetAlert[]
   audiences      MarketingCampaignAudience[]
   channels       MarketingCampaignChannel[]
   deliveryRuns   MarketingDeliveryRun[]
@@ -16596,4 +16623,170 @@ model MarketingContentVersionAsset {
   @@unique([contentVersionId, assetVersionId])
   @@index([assetVersionId])
   @@map("marketing_content_version_assets")
+}
+
+// ── Sales & Marketing Phase 12: promotions and campaign budgets ───────────
+// User ids are plain uuid columns with foreign keys in SQL.
+
+/// A promotion: the header (code, name, how it applies, on / paused / archived).
+/// Its commercial terms live in immutable approved versions.
+model MarketingPromotion {
+  id                   String    @id @default(uuid()) @db.Uuid
+  companyId            String    @map("company_id") @db.Uuid
+  code                 String
+  name                 String
+  description          String?
+  objective            String?
+  ownerUserId          String    @map("owner_user_id") @db.Uuid
+  /// AUTO (applies when eligible) | CODE (only when its code is entered)
+  applyMode            String    @map("apply_mode")
+  /// DRAFT (never approved) | ACTIVE | PAUSED | ARCHIVED
+  status               String    @default("DRAFT")
+  currentVersionNumber Int       @default(1) @map("current_version_number")
+  approvedVersionId    String?   @unique @map("approved_version_id") @db.Uuid
+  createdByUserId      String    @map("created_by_user_id") @db.Uuid
+  updatedByUserId      String?   @map("updated_by_user_id") @db.Uuid
+  archivedAt           DateTime? @map("archived_at")
+  version              Int       @default(1)
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  owner           User                           @relation("MarketingPromotionOwner", fields: [ownerUserId], references: [id])
+  versions        MarketingPromotionVersion[]    @relation("MarketingPromotionVersions")
+  approvedVersion MarketingPromotionVersion?     @relation("MarketingPromotionApproved", fields: [approvedVersionId], references: [id])
+  redemptions     MarketingPromotionRedemption[]
+
+  @@unique([companyId, code])
+  @@index([companyId, status])
+  @@map("marketing_promotions")
+}
+
+/// The commercial terms. Draft → pending approval → approved (immutable) | rejected; a newer approved version supersedes the older one.
+model MarketingPromotionVersion {
+  id                        String    @id @default(uuid()) @db.Uuid
+  companyId                 String    @map("company_id") @db.Uuid
+  promotionId               String    @map("promotion_id") @db.Uuid
+  versionNumber             Int       @map("version_number")
+  /// DRAFT | PENDING_APPROVAL | APPROVED | SUPERSEDED | REJECTED
+  status                    String    @default("DRAFT")
+  validFrom                 DateTime  @map("valid_from") @db.Date
+  validTo                   DateTime? @map("valid_to") @db.Date
+  /// PERCENT | AMOUNT_PER_UNIT (per base unit, like Phase 03 rules)
+  discountType              String    @map("discount_type")
+  value                     Decimal   @db.Decimal(18, 4)
+  /// EXCLUSIVE | STACKABLE (Phase 03 stacking)
+  stacking                  String
+  priority                  Int       @default(0)
+  productIds                String[]  @default([]) @map("product_ids") @db.Uuid
+  categoryIds               String[]  @default([]) @map("category_ids") @db.Uuid
+  excludedProductIds        String[]  @default([]) @map("excluded_product_ids") @db.Uuid
+  customerIds               String[]  @default([]) @map("customer_ids") @db.Uuid
+  priceListIds              String[]  @default([]) @map("price_list_ids") @db.Uuid
+  salesChannelIds           String[]  @default([]) @map("sales_channel_ids") @db.Uuid
+  campaignIds               String[]  @default([]) @map("campaign_ids") @db.Uuid
+  /// Customer segment (ERP customers) whose snapshot decides who is eligible.
+  segmentId                 String?   @map("segment_id") @db.Uuid
+  segmentEvaluationId       String?   @map("segment_evaluation_id") @db.Uuid
+  minQuantity               Decimal?  @map("min_quantity") @db.Decimal(18, 3)
+  minLineValue              Decimal?  @map("min_line_value") @db.Decimal(18, 2)
+  maxRedemptions            Int?      @map("max_redemptions")
+  maxRedemptionsPerCustomer Int?      @map("max_redemptions_per_customer")
+  changeNote                String?   @map("change_note")
+  createdByUserId           String    @map("created_by_user_id") @db.Uuid
+  updatedByUserId           String?   @map("updated_by_user_id") @db.Uuid
+  submittedByUserId         String?   @map("submitted_by_user_id") @db.Uuid
+  submittedAt               DateTime? @map("submitted_at")
+  decidedByUserId           String?   @map("decided_by_user_id") @db.Uuid
+  decidedAt                 DateTime? @map("decided_at")
+  decisionComment           String?   @map("decision_comment")
+  createdAt                 DateTime  @default(now()) @map("created_at")
+  updatedAt                 DateTime  @updatedAt @map("updated_at")
+
+  promotion   MarketingPromotion             @relation("MarketingPromotionVersions", fields: [promotionId], references: [id], onDelete: Cascade)
+  approvedOf  MarketingPromotion?            @relation("MarketingPromotionApproved")
+  redemptions MarketingPromotionRedemption[]
+
+  @@unique([promotionId, versionNumber])
+  @@map("marketing_promotion_versions")
+}
+
+/// Use of a promotion by one quotation revision: RESERVED at issue → REDEEMED when it becomes a Sales Order; RELEASED otherwise.
+model MarketingPromotionRedemption {
+  id                  String    @id @default(uuid()) @db.Uuid
+  companyId           String    @map("company_id") @db.Uuid
+  promotionId         String    @map("promotion_id") @db.Uuid
+  promotionVersionId  String    @map("promotion_version_id") @db.Uuid
+  quotationId         String    @map("quotation_id") @db.Uuid
+  quotationRevisionId String    @map("quotation_revision_id") @db.Uuid
+  customerId          String?   @map("customer_id") @db.Uuid
+  /// RESERVED | REDEEMED | RELEASED
+  status              String
+  /// Total promotional discount on the revision's lines (₹, before GST).
+  discountAmount      Decimal   @map("discount_amount") @db.Decimal(18, 2)
+  /// A reservation stops counting after the quotation's valid-until date.
+  expiresOn           DateTime  @map("expires_on") @db.Date
+  reservedAt          DateTime  @default(now()) @map("reserved_at")
+  redeemedAt          DateTime? @map("redeemed_at")
+  salesOrderId        String?   @map("sales_order_id") @db.Uuid
+  releasedAt          DateTime? @map("released_at")
+  releaseReason       String?   @map("release_reason")
+
+  promotion        MarketingPromotion        @relation(fields: [promotionId], references: [id])
+  promotionVersion MarketingPromotionVersion @relation(fields: [promotionVersionId], references: [id])
+
+  @@unique([promotionId, quotationRevisionId])
+  @@index([promotionId, status])
+  @@index([quotationId])
+  @@index([salesOrderId])
+  @@map("marketing_promotion_redemptions")
+}
+
+/// A line of a campaign's approved budget (spend category, optional delivery channel).
+model MarketingBudgetAllocation {
+  id                String    @id @default(uuid()) @db.Uuid
+  companyId         String    @map("company_id") @db.Uuid
+  campaignId        String    @map("campaign_id") @db.Uuid
+  categoryId        String    @map("category_id") @db.Uuid
+  campaignChannelId String?   @map("campaign_channel_id") @db.Uuid
+  name              String
+  amount            Decimal   @db.Decimal(18, 2)
+  notes             String?
+  /// ACTIVE | CLOSED (closed lines take no new spend; their spend still counts)
+  status            String    @default("ACTIVE")
+  createdByUserId   String    @map("created_by_user_id") @db.Uuid
+  updatedByUserId   String?   @map("updated_by_user_id") @db.Uuid
+  version           Int       @default(1)
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  campaign         MarketingCampaign       @relation(fields: [campaignId], references: [id])
+  category         MarketingCampaignLookup @relation(fields: [categoryId], references: [id])
+  expenses         Expense[]
+  purchaseOrders   PurchaseOrder[]
+  purchaseInvoices PurchaseInvoice[]
+
+  @@index([companyId, campaignId])
+  @@map("marketing_budget_allocations")
+}
+
+/// Raised once per unchanged condition; CLEARED when the condition goes away.
+model MarketingBudgetAlert {
+  id            String    @id @default(uuid()) @db.Uuid
+  companyId     String    @map("company_id") @db.Uuid
+  campaignId    String    @map("campaign_id") @db.Uuid
+  /// Allocation id, or "-" for the campaign as a whole.
+  scopeKey      String    @map("scope_key")
+  /// WARN_THRESHOLD | OVER_BUDGET | OVER_ALLOCATED | ENDED_WITH_OPEN_COMMITMENTS
+  kind          String
+  status        String    @default("OPEN")
+  message       String
+  basis         Json      @default("{}")
+  raisedAt      DateTime  @default(now()) @map("raised_at")
+  clearedAt     DateTime? @map("cleared_at")
+
+  campaign MarketingCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, status])
+  @@index([campaignId, status])
+  @@map("marketing_budget_alerts")
 }

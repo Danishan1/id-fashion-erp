@@ -46,7 +46,7 @@ beforeEach(() => {
   m.requireSession.mockResolvedValue({ user: { id: "u1", companyId: "c1", defaultBranchId: null } });
   m.assert.mockResolvedValue(undefined);
   m.assertAny.mockResolvedValue(undefined);
-  m.calc.mockResolvedValue([]);
+  m.calc.mockResolvedValue({ results: [], promotions: { invalidCodes: [], notApplicable: [] } });
 });
 
 describe("Pricing API routes", () => {

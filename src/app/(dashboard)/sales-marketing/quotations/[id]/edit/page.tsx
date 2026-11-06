@@ -35,6 +35,7 @@ export default async function EditQuotationPage({ params }: { params: Promise<{ 
         enquiry={q.buyerEnquiry ? { id: q.buyerEnquiry.id, enquiryNumber: q.buyerEnquiry.enquiryNumber, partyLabel: party } : null}
         initial={initial}
         canUseCrm={permissions.crmView}
+        pricingContext={{ salesChannelId: q.salesChannelId ?? null, campaignId: q.campaignId ?? null }}
       />
     </>
   );

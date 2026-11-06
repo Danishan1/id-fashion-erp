@@ -16,7 +16,7 @@ import { DEFAULT_LOOKUPS, type LookupKindKey } from "./campaign-registry";
  */
 
 const TABLE = "marketing_campaign_lookups";
-const kindSchema = z.enum(["TYPE", "OBJECTIVE"]);
+const kindSchema = z.enum(["TYPE", "OBJECTIVE", "SPEND_CATEGORY"]);
 export const lookupCreateSchema = z
   .object({
     kind: kindSchema,
@@ -30,7 +30,7 @@ export const lookupUpdateSchema = lookupCreateSchema.omit({ kind: true, code: tr
 
 export async function ensureCampaignLookups(companyId: string) {
   const count = await prisma.marketingCampaignLookup.groupBy({ by: ["kind"], where: { companyId }, _count: true });
-  for (const kind of ["TYPE", "OBJECTIVE"] as const) {
+  for (const kind of ["TYPE", "OBJECTIVE", "SPEND_CATEGORY"] as const) {
     if (count.some((c) => c.kind === kind)) continue;
     await prisma.marketingCampaignLookup.createMany({
       data: DEFAULT_LOOKUPS[kind].map((d, i) => ({ companyId, kind, code: d.code, name: d.name, sortOrder: (i + 1) * 10 })),
@@ -45,9 +45,9 @@ export async function listCampaignLookups(actor: SalesActor, raw: unknown) {
   const rows = await prisma.marketingCampaignLookup.findMany({
     where: { companyId: actor.companyId, ...(f.kind ? { kind: f.kind } : {}), ...(f.includeInactive === "true" ? {} : { isActive: true }) },
     orderBy: [{ kind: "asc" }, { sortOrder: "asc" }, { name: "asc" }],
-    include: { _count: { select: { campaignsByType: true, campaignsByObjective: true } } },
+    include: { _count: { select: { campaignsByType: true, campaignsByObjective: true, budgetAllocations: true } } },
   });
-  return rows.map((r) => ({ id: r.id, kind: r.kind as LookupKindKey, code: r.code, name: r.name, description: r.description, sortOrder: r.sortOrder, active: r.isActive, campaigns: r._count.campaignsByType + r._count.campaignsByObjective }));
+  return rows.map((r) => ({ id: r.id, kind: r.kind as LookupKindKey, code: r.code, name: r.name, description: r.description, sortOrder: r.sortOrder, active: r.isActive, campaigns: r._count.campaignsByType + r._count.campaignsByObjective + r._count.budgetAllocations }));
 }
 
 export async function createCampaignLookup(actor: SalesActor, raw: unknown) {

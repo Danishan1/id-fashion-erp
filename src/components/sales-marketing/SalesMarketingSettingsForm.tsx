@@ -18,6 +18,7 @@ interface Settings {
   forecastTrendLookback?: number;
   forecastStaleDays?: number;
   campaignApprovalRequired?: boolean;
+  budgetWarnPercent?: number;
   updatedAt: string | null;
 }
 
@@ -34,6 +35,7 @@ export function SalesMarketingSettingsForm({ initial, canEdit }: { initial: Sett
     forecastTrendLookback: String(initial.forecastTrendLookback ?? 3),
     forecastStaleDays: String(initial.forecastStaleDays ?? 60),
     campaignApprovalRequired: initial.campaignApprovalRequired ?? true,
+    budgetWarnPercent: String(initial.budgetWarnPercent ?? 80),
   });
   const [updatedAt, setUpdatedAt] = useState(initial.updatedAt);
   const [saving, setSaving] = useState(false);
@@ -108,6 +110,9 @@ export function SalesMarketingSettingsForm({ initial, canEdit }: { initial: Sett
           <span className="block text-xs text-zinc-500">Someone other than the preparer approves a campaign&apos;s plan (and later changes to its dates or budget) before it can start. Off: submitting approves at once, recorded as automatic.</span>
         </span>
       </label>
+      <FormField label="Warn when a campaign budget is this % used (50–99)" htmlFor="budgetWarn" required>
+        <input id="budgetWarn" type="number" min={50} max={99} step={1} required disabled={!canEdit} value={v.budgetWarnPercent} onChange={(e) => setV({ ...v, budgetWarnPercent: e.target.value })} className={textInputClass()} />
+      </FormField>
       {message && <p className={`text-sm ${message.ok ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>{message.text}</p>}
       <div className="flex items-center gap-3">
         {canEdit && (

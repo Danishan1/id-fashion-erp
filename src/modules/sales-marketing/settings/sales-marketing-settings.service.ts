@@ -25,6 +25,8 @@ export const SALES_MARKETING_SETTING_DEFAULTS = {
   forecastStaleDays: 60,
   /** Phase 08: campaigns need approval by someone else before they can be activated. */
   campaignApprovalRequired: true,
+  /** Phase 12: warn when a campaign budget or budget line has used this % (50–99). */
+  budgetWarnPercent: 80,
 };
 
 export type SalesMarketingSettingsView = typeof SALES_MARKETING_SETTING_DEFAULTS & { updatedAt: Date | null };
@@ -44,6 +46,7 @@ export async function getSalesMarketingSettings(companyId: string): Promise<Sale
     forecastTrendLookback: row.forecastTrendLookback,
     forecastStaleDays: row.forecastStaleDays,
     campaignApprovalRequired: row.campaignApprovalRequired,
+    budgetWarnPercent: row.budgetWarnPercent,
     updatedAt: row.updatedAt,
   };
 }
@@ -64,6 +67,8 @@ export const salesMarketingSettingsSchema = z
     forecastStaleDays: z.coerce.number().int().min(1).max(3650).optional(),
     // Phase 08 — omitted = keep the current value.
     campaignApprovalRequired: z.boolean().optional(),
+    // Phase 12 — omitted = keep the current value.
+    budgetWarnPercent: z.coerce.number().int().min(50).max(99).optional(),
   })
   .strict();
 

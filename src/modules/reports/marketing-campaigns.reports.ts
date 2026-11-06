@@ -4,8 +4,9 @@ import type { ReportDescriptor } from "@/core/reports/report-types";
 import { round2 } from "@/lib/money";
 import { campaignScopeWhere, getCampaignScope } from "@/modules/sales-marketing/campaigns/campaign-common";
 import { CAMPAIGN_STATUSES, METRIC_UNITS, type CampaignStatusKey, type MetricUnitKey } from "@/modules/sales-marketing/campaigns/campaign-registry";
-import { SPENT_EXPENSE_STATUSES, measureCampaigns, metricView } from "@/modules/sales-marketing/campaigns/campaign-results.service";
+import { measureCampaigns, metricView } from "@/modules/sales-marketing/campaigns/campaign-results.service";
 import { dbDate, toDbDate } from "@/modules/sales-marketing/performance/performance-common";
+import { measureBudgets } from "@/modules/sales-marketing/budgets/budget.service";
 import { registerReport, type ReportViewer } from "./registry";
 
 /**
@@ -45,11 +46,10 @@ function applied(filters: Record<string, string>) {
 
 async function getCampaignRegisterDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>, viewer: ReportViewer): Promise<ReportDescriptor> {
   const campaigns = await campaignsFor(companyId, filters, viewer);
-  const spend = campaigns.length
-    ? await prisma.expense.groupBy({ by: ["campaignId"], where: { companyId, campaignId: { in: campaigns.map((c) => c.id) }, status: { in: [...SPENT_EXPENSE_STATUSES] } }, _sum: { amount: true } })
-    : [];
+  const budgets = await measureBudgets(companyId, campaigns);
   const rows = campaigns.map((c) => {
-    const actual = round2(Number(spend.find((s) => s.campaignId === c.id)?._sum.amount ?? 0));
+    const b = budgets.get(c.id)!;
+    const actual = b.actual;
     const planned = c.plannedBudget === null ? null : round2(Number(c.plannedBudget));
     return {
       campaignId: c.id,
@@ -66,12 +66,13 @@ async function getCampaignRegisterDescriptor(companyId: string, generatedByName:
       actualEnd: c.actualEndDate ? dbDate(c.actualEndDate) : null,
       plannedBudget: planned,
       actualSpend: actual,
-      remaining: planned === null ? null : round2(planned - actual),
+      committed: b.committed,
+      remaining: planned === null ? null : round2(planned - actual - b.committed),
     };
   });
   return {
     title: "Campaign Register",
-    subtitle: "Campaigns with their status, planned and actual dates, planned budget (approved planning figure) and actual spend (approved / partly paid / paid Expenses linked to the campaign, before GST). Company currency.",
+    subtitle: "Campaigns with their status, planned and actual dates, planned budget (approved planning figure) and actual spend (approved / partly paid / paid Expenses plus posted Purchase Invoices linked to the campaign, before GST), committed (approved Purchase Orders not yet invoiced) and remaining = planned − actual − committed. Company currency.",
     filtersApplied: applied(filters),
     columns: [
       { key: "code", label: "Campaign", linkTo: "campaign" },
@@ -87,6 +88,7 @@ async function getCampaignRegisterDescriptor(companyId: string, generatedByName:
       { key: "actualEnd", label: "Actual end", type: "date" },
       { key: "plannedBudget", label: "Planned budget", type: "currency", align: "right" },
       { key: "actualSpend", label: "Actual spend", type: "currency", align: "right" },
+      { key: "committed", label: "Committed", type: "currency", align: "right" },
       { key: "remaining", label: "Remaining", type: "currency", align: "right" },
     ],
     rows,
@@ -94,6 +96,7 @@ async function getCampaignRegisterDescriptor(companyId: string, generatedByName:
       code: `${rows.length} campaigns`,
       plannedBudget: round2(rows.reduce((s, r) => s + (r.plannedBudget ?? 0), 0)),
       actualSpend: round2(rows.reduce((s, r) => s + r.actualSpend, 0)),
+      committed: round2(rows.reduce((s, r) => s + r.committed, 0)),
     },
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
     generatedAt: new Date().toISOString(),

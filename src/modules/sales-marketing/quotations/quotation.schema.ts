@@ -63,6 +63,12 @@ const quotationBody = {
   otherChargesAmount: money.default(0),
   otherChargesTaxRateId: optionalUuid,
   lines: z.array(quotationLineSchema).min(1, "Add at least one line").max(MAX_QUOTATION_LINES),
+  // Phase 12: promotion codes (each checked by the server when the draft is saved).
+  promotionCodes: z
+    .array(z.string().trim().toUpperCase().regex(/^[A-Z0-9][A-Z0-9_-]{2,29}$/, "Not a promotion code"))
+    .max(5, "At most 5 promotion codes")
+    .optional()
+    .transform((c) => [...new Set(c ?? [])]),
 };
 
 function checkDates<T extends { quotationDate: string; validUntil: string }>(v: T, ctx: z.RefinementCtx) {

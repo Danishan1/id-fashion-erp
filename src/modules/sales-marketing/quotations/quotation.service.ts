@@ -17,7 +17,7 @@ import {
 } from "@/modules/sales-marketing/enquiries/sales-enquiry.service";
 import { calculateQuotation } from "./quotation-calc";
 import { round2 } from "@/lib/money";
-import { priceLines } from "@/modules/sales-marketing/pricing/pricing.service";
+import { priceLinesDetailed } from "@/modules/sales-marketing/pricing/pricing.service";
 import { pricingSnapshot } from "@/modules/sales-marketing/pricing/pricing-snapshot";
 import { OPEN_QUOTATION_STATUSES, QUOTATION_STATUS_KEYS, isQuotationExpired, type QuotationEventType, type QuotationSortField } from "./quotation-registry";
 import { approvalReasons } from "./quotation-approval";
@@ -251,11 +251,26 @@ type ResolvedLine = Awaited<ReturnType<typeof resolveLines>>[number];
  *   MANUAL, no list price→ MANUAL
  * Free-text lines are always MANUAL. Stored with a snapshot of the result.
  */
-async function applyPricing(actor: SalesActor, input: DraftBody, lines: ResolvedLine[], customerId: string | null) {
+export interface PromotionPricingContext {
+  salesChannelId: string | null;
+  campaignId: string | null;
+  /** The revision being saved (its own reservation doesn't count against limits). */
+  quotationRevisionId?: string | null;
+}
+
+async function applyPricing(actor: SalesActor, input: DraftBody, lines: ResolvedLine[], customerId: string | null, promo: PromotionPricingContext) {
   const priced = lines.map((l, i) => ({ l, i })).filter(({ l }) => l.productId);
-  const results = priced.length
-    ? await priceLines(actor, { date: input.quotationDate, customerId }, priced.map(({ l }) => ({ productId: l.productId!, quantity: l.quantity, uomId: l.uomId })))
-    : [];
+  const codes = input.promotionCodes ?? [];
+  const { results, promotions } = await priceLinesDetailed(
+    actor,
+    { date: input.quotationDate, customerId, salesChannelId: promo.salesChannelId, campaignId: promo.campaignId, promotionCodes: codes, quotationRevisionId: promo.quotationRevisionId ?? null },
+    priced.map(({ l }) => ({ productId: l.productId!, quantity: l.quantity, uomId: l.uomId }))
+  );
+  // Phase 12: an entered code must be usable here — say why when it isn't.
+  if (promotions.invalidCodes.length) {
+    const msg = promotions.invalidCodes.map((c) => `${c.code}: ${c.reason}`).join(" ");
+    throw new BusinessRuleError("VALIDATION_ERROR", `Promotion code can't be used — ${msg}`, { fieldErrors: { promotionCodes: msg } });
+  }
   const resultByIndex = new Map(priced.map(({ i }, k) => [i, results[k]]));
   let canOverride: boolean | null = null;
   const out = [];
@@ -286,13 +301,13 @@ async function applyPricing(actor: SalesActor, input: DraftBody, lines: Resolved
 }
 
 /** Validates a full draft and computes every amount. Returns the revision data and line rows. */
-export async function buildDraft(actor: SalesActor, input: DraftBody, buyerEnquiryId: string | null, customerId: string | null) {
+export async function buildDraft(actor: SalesActor, input: DraftBody, buyerEnquiryId: string | null, customerId: string | null, promo: PromotionPricingContext = { salesChannelId: null, campaignId: null }) {
   const [rates, company] = await Promise.all([effectiveTaxRates(actor.companyId, input.quotationDate), companyStateCode(actor.companyId)]);
   const rateMap: TaxRateMap = new Map(rates.map((r) => [r.id, Number(r.ratePercentage)]));
   for (const [field, id] of [["freightTaxRateId", input.freightTaxRateId], ["otherChargesTaxRateId", input.otherChargesTaxRateId]] as const) {
     if (id && !rateMap.has(id)) throw new BusinessRuleError("VALIDATION_ERROR", "GST rate is not active on the quotation date.", { fieldErrors: { [field]: "Not active." } });
   }
-  const lines = await applyPricing(actor, input, await resolveLines(actor, input.lines, rateMap, buyerEnquiryId), customerId);
+  const lines = await applyPricing(actor, input, await resolveLines(actor, input.lines, rateMap, buyerEnquiryId), customerId, promo);
   const placeOfSupplyStateCode = input.placeOfSupplyStateCode || null;
   const freightGstRate = input.freightTaxRateId ? rateMap.get(input.freightTaxRateId)! : 0;
   const otherChargesGstRate = input.otherChargesTaxRateId ? rateMap.get(input.otherChargesTaxRateId)! : 0;
@@ -340,6 +355,7 @@ export async function buildDraft(actor: SalesActor, input: DraftBody, buyerEnqui
     igstTotal: calc.igstTotal,
     taxTotal: calc.taxTotal,
     grandTotal: calc.grandTotal,
+    promotionCodes: input.promotionCodes ?? [],
   };
   const lineRows = lines.map((l, i) => {
     const r = calc.lines[i];
@@ -457,7 +473,7 @@ export async function createQuotation(actor: SalesActor, raw: unknown) {
   }
   const ownerUserId = input.ownerUserId || actor.userId;
   await assertOwner(actor, ownerUserId);
-  const { revision, lineRows } = await buildDraft(actor, input, enquiryId, party.customerId);
+  const { revision, lineRows } = await buildDraft(actor, input, enquiryId, party.customerId, { salesChannelId: channel.salesChannelId, campaignId: channel.campaignId ?? null });
 
   // Company-wide numbering (branchId null): numbers are unique per company.
   const quotationNumber = await generateDocumentNumber({ companyId: actor.companyId, branchId: null, documentType: "QUOTATION" });
@@ -541,7 +557,7 @@ export async function updateQuotationDraft(actor: SalesActor, id: string, raw: u
   if (partyChanged) await assertParty(actor, party);
   const ownerUserId = input.ownerUserId || quotation.ownerUserId || actor.userId;
   if (ownerUserId !== quotation.ownerUserId) await assertOwner(actor, ownerUserId);
-  const { revision, lineRows } = await buildDraft(actor, input, quotation.buyerEnquiryId, party.customerId);
+  const { revision, lineRows } = await buildDraft(actor, input, quotation.buyerEnquiryId, party.customerId, { salesChannelId: quotation.salesChannelId, campaignId: quotation.campaignId, quotationRevisionId: current.id });
 
   await prisma.$transaction(async (tx) => {
     const { count } = await tx.quotationRevision.updateMany({

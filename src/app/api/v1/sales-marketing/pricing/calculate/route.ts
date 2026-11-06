@@ -5,7 +5,7 @@ import { calculatePrices } from "@/modules/sales-marketing/pricing/pricing.servi
 /**
  * POST /api/v1/sales-marketing/pricing/calculate — prices up to 200 lines for
  * one customer (or prospect) on one date, with explanations. Read-only, safe to
- * retry. Needs sales_pricing.view or sales_quotations.create / edit.
+ * retry (previewing never uses a promotion). Needs sales_pricing.view or sales_quotations.create / edit.
  */
 export const POST = salesMarketingRoute(
   [
@@ -13,6 +13,9 @@ export const POST = salesMarketingRoute(
     { module: "sales_quotations", action: "create" },
     { module: "sales_quotations", action: "edit" },
   ],
-  async ({ req, actor }) =>
-  NextResponse.json({ data: await calculatePrices(actor, await req.json().catch(() => ({}))) })
+  async ({ req, actor }) => {
+    // `data` stays the per-line results; Phase 12 adds the promotion findings beside it.
+    const r = await calculatePrices(actor, await req.json().catch(() => ({})));
+    return NextResponse.json({ data: r.results, promotions: r.promotions });
+  }
 );

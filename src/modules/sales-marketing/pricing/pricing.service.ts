@@ -5,6 +5,7 @@ import { PermissionService } from "@/core/rbac/PermissionService";
 import { toIsoDate, todayIsoDate } from "@/lib/date";
 import type { SalesActor } from "@/modules/sales-marketing/enquiries/sales-enquiry.service";
 import { getSalesMarketingSettings } from "@/modules/sales-marketing/settings/sales-marketing-settings.service";
+import { promotionsForPricing, type PromotionEligibility } from "@/modules/sales-marketing/promotions/promotion-eligibility";
 import { priceLine, versionInForce, type EngineList, type PricingData, type PricingRequestLine, type PricingResult } from "./pricing-engine";
 
 /**
@@ -26,6 +27,18 @@ export interface PricingRequestContext {
   date?: string;
   /** Null / undefined = prospect (default price lists only). */
   customerId?: string | null;
+  /** Phase 12 promotion context: the transaction's sales channel, campaign and entered codes. */
+  salesChannelId?: string | null;
+  campaignId?: string | null;
+  promotionCodes?: string[];
+  /** The quotation revision being priced (its own reservation doesn't count against limits). */
+  quotationRevisionId?: string | null;
+}
+
+export interface DetailedPricing {
+  results: PricingResult[];
+  /** Phase 12: entered codes that can't be used, and promotions that can't apply here, with why. */
+  promotions: Pick<PromotionEligibility, "invalidCodes" | "notApplicable">;
 }
 
 /** Loads lists (with only the version in force and only the requested Styles' entries), rules, units, products. */
@@ -98,6 +111,11 @@ export async function loadPricingData(companyId: string, date: string, customerI
 
 /** Prices a batch of lines for one customer (or prospect) on one date. */
 export async function priceLines(actor: Pick<SalesActor, "companyId">, context: PricingRequestContext, lines: PricingRequestLine[]): Promise<PricingResult[]> {
+  return (await priceLinesDetailed(actor, context, lines)).results;
+}
+
+/** Same, plus the promotion outcome (which codes / promotions couldn't apply and why). */
+export async function priceLinesDetailed(actor: Pick<SalesActor, "companyId">, context: PricingRequestContext, lines: PricingRequestLine[]): Promise<DetailedPricing> {
   if (lines.length > MAX_PRICING_LINES) throw new BusinessRuleError("VALIDATION_ERROR", `Price at most ${MAX_PRICING_LINES} lines at a time.`);
   const date = context.date || todayIsoDate();
   const customerId = context.customerId || null;
@@ -105,12 +123,16 @@ export async function priceLines(actor: Pick<SalesActor, "companyId">, context: 
     const ok = await prisma.customer.findFirst({ where: { id: customerId, companyId: actor.companyId, deletedAt: null }, select: { id: true } });
     if (!ok) throw new BusinessRuleError("NOT_FOUND", "Customer not found.", { id: customerId });
   }
-  if (!lines.length) return [];
-  const [data, settings] = await Promise.all([
-    loadPricingData(actor.companyId, date, customerId, lines.map((l) => l.productId)),
+  const [data, settings, promos] = await Promise.all([
+    lines.length ? loadPricingData(actor.companyId, date, customerId, lines.map((l) => l.productId)) : null,
     getSalesMarketingSettings(actor.companyId),
+    promotionsForPricing({ companyId: actor.companyId, date, customerId, salesChannelId: context.salesChannelId ?? null, campaignId: context.campaignId ?? null, codes: context.promotionCodes ?? [], excludeRevisionId: context.quotationRevisionId ?? null }),
   ]);
-  return lines.map((l) => priceLine(l, { date, customerId, maxRuleDiscountPercent: settings.pricingMaxRuleDiscountPercent }, data));
+  const promotions = { invalidCodes: promos.invalidCodes, notApplicable: promos.notApplicable };
+  if (!data) return { results: [], promotions };
+  // Promotions are extra engine inputs: same stacking, cap and rounding as discount rules.
+  const withPromotions = { ...data, rules: [...data.rules, ...promos.rules] };
+  return { results: lines.map((l) => priceLine(l, { date, customerId, maxRuleDiscountPercent: settings.pricingMaxRuleDiscountPercent }, withPromotions)), promotions };
 }
 
 // ── API: calculate / preview ─────────────────────────────────────
@@ -120,6 +142,10 @@ export const calculateSchema = z
   .object({
     date: isoDate.optional(),
     customerId: z.string().uuid().optional().or(z.literal("")).nullable(),
+    // Phase 12: promotion context (the quotation editor's channel, campaign and codes).
+    salesChannelId: z.string().uuid().optional().or(z.literal("")).nullable(),
+    campaignId: z.string().uuid().optional().or(z.literal("")).nullable(),
+    promotionCodes: z.array(z.string().trim().toUpperCase().max(30)).max(5).optional(),
     lines: z
       .array(
         z.object({
@@ -147,5 +173,9 @@ export async function calculatePrices(actor: SalesActor, raw: unknown) {
   ]);
   if (!pricingView && !qCreate && !qEdit) throw new BusinessRuleError("PERMISSION_DENIED", "You don't have access to pricing.");
   const input = calculateSchema.parse(raw);
-  return priceLines(actor, { date: input.date, customerId: input.customerId || null }, input.lines.map((l) => ({ productId: l.productId, quantity: l.quantity, uomId: l.uomId || null })));
+  return priceLinesDetailed(
+    actor,
+    { date: input.date, customerId: input.customerId || null, salesChannelId: input.salesChannelId || null, campaignId: input.campaignId || null, promotionCodes: input.promotionCodes ?? [] },
+    input.lines.map((l) => ({ productId: l.productId, quantity: l.quantity, uomId: l.uomId || null }))
+  );
 }

@@ -108,7 +108,7 @@ describe("QuotationEditor", () => {
     expect(price.readOnly).toBe(true);
     expect(screen.getByText(/Price list DEF v2/)).toBeTruthy();
     const calc = calls.find((c) => c.url.includes("/pricing/calculate"))!;
-    expect(JSON.parse(String(calc.init!.body))).toEqual({ date: "2026-10-28", customerId: "c1", lines: [{ productId: "s1", quantity: 100, uomId: "pcs" }] });
+    expect(JSON.parse(String(calc.init!.body))).toEqual({ date: "2026-10-28", customerId: "c1", salesChannelId: null, campaignId: null, promotionCodes: [], lines: [{ productId: "s1", quantity: 100, uomId: "pcs" }] });
     fireEvent.click(screen.getByRole("button", { name: "How?" }));
     expect(screen.getByText("Net price ₹90.00 per PCS")).toBeTruthy();
 

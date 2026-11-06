@@ -73,6 +73,8 @@ export interface QuotationDraftValues {
   otherChargesLabel: string;
   otherChargesAmount: string;
   otherChargesTaxRateId: string;
+  /** Phase 12: promotion codes, comma or space separated. */
+  promotionCodes: string;
   lines: QuotationLineDraft[];
 }
 
@@ -85,6 +87,8 @@ export interface QuotationEditorProps {
   enquiry?: { id: string; enquiryNumber: string; partyLabel: string } | null;
   initial: QuotationDraftValues;
   canUseCrm: boolean;
+  /** The quotation's sales channel / campaign (edit), so the preview offers the same promotions as the save. */
+  pricingContext?: { salesChannelId: string | null; campaignId: string | null };
 }
 
 interface EditorOptions {
@@ -107,6 +111,8 @@ interface Option {
 const STATE_OPTIONS = Object.entries(GST_STATE_CODES)
   .sort(([a], [b]) => a.localeCompare(b))
   .map(([code, name]) => ({ code, name }));
+/** "diwali10, VIP" → ["DIWALI10", "VIP"] (the server checks each code again). */
+export const parsePromotionCodes = (v: string) => [...new Set(v.split(/[\s,;]+/).map((c) => c.trim().toUpperCase()).filter(Boolean))];
 const num = (v: string) => (v === "" || Number.isNaN(Number(v)) ? 0 : Number(v));
 const area = `${textInputClass()} min-h-[4.5rem]`;
 
@@ -124,7 +130,7 @@ function Card({ title, children, actions }: { title: string; children: ReactNode
 
 // ── Editor ───────────────────────────────────────────────────────
 
-export function QuotationEditor({ mode, quotationId, quotationNumber, version, enquiry, initial, canUseCrm }: QuotationEditorProps) {
+export function QuotationEditor({ mode, quotationId, quotationNumber, version, enquiry, initial, canUseCrm, pricingContext }: QuotationEditorProps) {
   const router = useRouter();
   const [v, setV] = useState<QuotationDraftValues>(initial);
   const [isProspect, setIsProspect] = useState(!initial.customerId && Boolean(initial.prospectName));
@@ -136,6 +142,7 @@ export function QuotationEditor({ mode, quotationId, quotationNumber, version, e
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [pricing, setPricing] = useState<Record<string, LinePricing>>({});
+  const [invalidCodes, setInvalidCodes] = useState<{ code: string; reason: string }[]>([]);
   const [openExplain, setOpenExplain] = useState<string | null>(null);
   const partyFixed = Boolean(enquiry);
 
@@ -178,9 +185,9 @@ export function QuotationEditor({ mode, quotationId, quotationNumber, version, e
       .map((l) => ({ key: l.key, productId: pricedProductId(l), quantity: num(l.quantity), uomId: l.uomId }))
       .filter((l) => l.productId && l.quantity > 0);
     if (!lines.length || !/^\d{4}-\d{2}-\d{2}$/.test(v.quotationDate)) return null;
-    return { date: v.quotationDate, customerId: isProspect ? null : v.customerId || null, lines };
+    return { date: v.quotationDate, customerId: isProspect ? null : v.customerId || null, promotionCodes: parsePromotionCodes(v.promotionCodes), lines };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [v.lines, v.quotationDate, v.customerId, isProspect, designs]);
+  }, [v.lines, v.quotationDate, v.customerId, isProspect, designs, v.promotionCodes]);
   const pricingKey = pricingRequest ? JSON.stringify(pricingRequest) : "";
   useEffect(() => {
     if (!pricingRequest) return;
@@ -189,11 +196,19 @@ export function QuotationEditor({ mode, quotationId, quotationNumber, version, e
       fetch("/api/v1/sales-marketing/pricing/calculate", {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-toast": "off" },
-        body: JSON.stringify({ date: req.date, customerId: req.customerId, lines: req.lines.map(({ productId, quantity, uomId }) => ({ productId, quantity, uomId })) }),
+        body: JSON.stringify({
+          date: req.date,
+          customerId: req.customerId,
+          salesChannelId: pricingContext?.salesChannelId ?? null,
+          campaignId: pricingContext?.campaignId ?? null,
+          promotionCodes: req.promotionCodes,
+          lines: req.lines.map(({ productId, quantity, uomId }) => ({ productId, quantity, uomId })),
+        }),
       })
         .then((res) => (res.ok ? res.json() : null))
         .then((body) => {
           if (!body?.data) return;
+          setInvalidCodes(body.promotions?.invalidCodes ?? []);
           const byKey: Record<string, LinePricing> = Object.fromEntries(req.lines.map((l, i) => [l.key, body.data[i]]));
           setPricing(byKey);
           setV((prev) => ({
@@ -259,6 +274,7 @@ export function QuotationEditor({ mode, quotationId, quotationNumber, version, e
       otherChargesLabel: v.otherChargesLabel,
       otherChargesAmount: num(v.otherChargesAmount),
       otherChargesTaxRateId: v.otherChargesTaxRateId,
+      promotionCodes: parsePromotionCodes(v.promotionCodes),
       lines: v.lines.map((l) => ({
         productId: l.kind === "STYLE" ? l.productId : "",
         sampleRequestId: l.kind === "DESIGN" ? l.sampleRequestId : "",
@@ -409,6 +425,19 @@ export function QuotationEditor({ mode, quotationId, quotationNumber, version, e
           </FormField>
           <FormField label="Delivery terms" htmlFor="deliveryTerms">
             <input id="deliveryTerms" maxLength={1000} value={v.deliveryTerms} onChange={(e) => set({ deliveryTerms: e.target.value })} placeholder="e.g. FOB Chennai, 60 days from PO" className={textInputClass()} />
+          </FormField>
+          <FormField label="Promotion codes" htmlFor="promotionCodes">
+            <input id="promotionCodes" maxLength={200} value={v.promotionCodes} onChange={(e) => set({ promotionCodes: e.target.value.toUpperCase() })} placeholder="e.g. DIWALI10 (up to 5, comma separated)" className={textInputClass()} />
+            {invalidCodes.length > 0 && (
+              <ul className="mt-1 space-y-0.5 text-xs text-red-600 dark:text-red-400">
+                {invalidCodes.map((c) => (
+                  <li key={c.code}>
+                    {c.code}: {c.reason}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="mt-1 text-xs text-zinc-500">Automatic promotions apply without a code. A promotion is only reserved when the quotation is issued.</p>
           </FormField>
         </div>
         <FormField label="Introduction (shown to the customer)" htmlFor="introduction">

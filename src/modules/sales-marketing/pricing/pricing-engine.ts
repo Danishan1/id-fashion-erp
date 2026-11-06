@@ -72,6 +72,23 @@ export interface EngineRule {
   minQuantity: string | number | null;
   validFrom: string;
   validTo: string | null;
+  /**
+   * Phase 12: set when this "rule" is a promotion version. Promotions go
+   * through exactly the same stacking, cap and rounding as discount rules;
+   * the conditions below are line-level (context-level eligibility — code,
+   * channel, campaign, customer, usage limits — is decided before pricing).
+   */
+  promotion?: { id: string; versionId: string; versionNumber: number; code: string } | null;
+  /** Any of these Styles (empty / absent = no restriction). */
+  productIds?: string[] | null;
+  /** Any of these categories. */
+  categoryIds?: string[] | null;
+  /** Never these Styles. */
+  excludedProductIds?: string[] | null;
+  /** Only lines priced from one of these lists. */
+  priceListIds?: string[] | null;
+  /** List price × quantity of the line must reach this (₹, before any discount). */
+  minLineValue?: string | number | null;
 }
 
 export interface EngineProduct {
@@ -134,10 +151,14 @@ export interface AppliedRule {
   stacking: "EXCLUSIVE" | "STACKABLE";
   /** Discount per line unit, 4 dp (informational; only the net price is rounded to the paisa). */
   discountPerUnit: number;
+  /** Phase 12: the promotion version this discount came from (absent for a discount rule). */
+  promotionId?: string;
+  promotionVersionId?: string;
+  promotionVersionNumber?: number;
 }
 
 export interface SkippedItem {
-  kind: "PRICE_LIST" | "RULE";
+  kind: "PRICE_LIST" | "RULE" | "PROMOTION";
   id: string;
   code: string;
   reason: string;
@@ -344,15 +365,28 @@ export function priceLine(req: PricingRequestLine, ctx: PricingContext, data: Pr
   const eligible: { rule: EngineRule; perUnit: Dec }[] = [];
   for (const r of data.rules) {
     if (r.status !== "ACTIVE") continue;
-    const scoped = (!r.productId || r.productId === product.id) && (!r.categoryId || r.categoryId === product.categoryId) && (!r.customerId || r.customerId === ctx.customerId);
+    const scoped =
+      (!r.productId || r.productId === product.id) &&
+      (!r.categoryId || r.categoryId === product.categoryId) &&
+      (!r.customerId || r.customerId === ctx.customerId) &&
+      (!r.productIds?.length || r.productIds.includes(product.id)) &&
+      (!r.categoryIds?.length || (product.categoryId !== null && r.categoryIds.includes(product.categoryId)));
     if (!scoped) continue; // not about this line at all — not reported
-    const skip = (reason: string) => skipped.push({ kind: "RULE", id: r.id, code: r.code, reason });
+    const skip = (reason: string) => skipped.push({ kind: r.promotion ? "PROMOTION" : "RULE", id: r.promotion?.id ?? r.id, code: r.code, reason });
+    if (r.excludedProductIds?.includes(product.id)) {
+      skip(`${product.name} is excluded`);
+      continue;
+    }
     if (r.validFrom > ctx.date || (r.validTo && r.validTo < ctx.date)) {
       skip(`not valid on ${day(ctx.date)}`);
       continue;
     }
-    if (r.priceListId && r.priceListId !== list.id) {
+    if ((r.priceListId && r.priceListId !== list.id) || (r.priceListIds?.length && !r.priceListIds.includes(list.id))) {
       skip("only for another price list");
+      continue;
+    }
+    if (r.minLineValue !== null && r.minLineValue !== undefined && P.mul(quantity).lt(new Dec(r.minLineValue))) {
+      skip(`needs a line value of at least ${inr(new Dec(r.minLineValue))} at list price (this line: ${inr(money(P.mul(quantity)))})`);
       continue;
     }
     const needsBase = r.discountType === "AMOUNT_PER_UNIT" || r.minQuantity !== null;
@@ -386,14 +420,15 @@ export function priceLine(req: PricingRequestLine, ctx: PricingContext, data: Pr
   let applied: { rule: EngineRule; perUnit: Dec }[] = [];
   if (bestExclusive && bestExclusive.perUnit.gte(chainTotal)) {
     applied = [bestExclusive];
-    for (const e of exclusive.slice(1)) skipped.push({ kind: "RULE", id: e.rule.id, code: e.rule.code, reason: `${bestExclusive.rule.code} gives a bigger discount` });
-    for (const e of chain) skipped.push({ kind: "RULE", id: e.rule.id, code: e.rule.code, reason: `exclusive rule ${bestExclusive.rule.code} gives a bigger discount than the stackable rules together` });
+    for (const e of exclusive.slice(1)) skipped.push({ kind: e.rule.promotion ? "PROMOTION" : "RULE", id: e.rule.promotion?.id ?? e.rule.id, code: e.rule.code, reason: `${bestExclusive.rule.code} gives a bigger discount` });
+    for (const e of chain) skipped.push({ kind: e.rule.promotion ? "PROMOTION" : "RULE", id: e.rule.promotion?.id ?? e.rule.id, code: e.rule.code, reason: `exclusive ${bestExclusive.rule.code} gives a bigger discount than the stackable discounts together` });
   } else if (chain.length) {
     applied = chain;
-    for (const e of exclusive) skipped.push({ kind: "RULE", id: e.rule.id, code: e.rule.code, reason: "the stackable rules together give a bigger discount" });
+    for (const e of exclusive) skipped.push({ kind: e.rule.promotion ? "PROMOTION" : "RULE", id: e.rule.promotion?.id ?? e.rule.id, code: e.rule.code, reason: "the stackable discounts together give a bigger discount" });
   }
 
-  let discount = applied.reduce((s, a) => s.add(a.perUnit), ZERO);
+  const uncapped = applied.reduce((s, a) => s.add(a.perUnit), ZERO);
+  let discount = uncapped;
   let capped = false;
   if (ctx.maxRuleDiscountPercent !== null && ctx.maxRuleDiscountPercent !== undefined) {
     const cap = P.mul(new Dec(ctx.maxRuleDiscountPercent)).div(HUNDRED);
@@ -405,7 +440,7 @@ export function priceLine(req: PricingRequestLine, ctx: PricingContext, data: Pr
   const listUnitPrice = money(P);
   let net = money(Dec.max(P.sub(discount), ZERO));
   if (net.gt(listUnitPrice)) net = listUnitPrice;
-  for (const a of applied) explanation.push(`Rule ${a.rule.code} (${ruleLabel(a.rule)}, ${a.rule.stacking.toLowerCase()}): −${inr(a.perUnit)} per ${lineUnit.code}`);
+  for (const a of applied) explanation.push(`${a.rule.promotion ? `Promotion ${a.rule.code} v${a.rule.promotion.versionNumber}` : `Rule ${a.rule.code}`} (${ruleLabel(a.rule)}, ${a.rule.stacking.toLowerCase()}): −${inr(a.perUnit)} per ${lineUnit.code}`);
   if (capped) explanation.push(`Rule discount capped at ${ctx.maxRuleDiscountPercent}% of the list price`);
   explanation.push(`Net price ${inr(net)} per ${lineUnit.code}`);
 
@@ -435,7 +470,9 @@ export function priceLine(req: PricingRequestLine, ctx: PricingContext, data: Pr
       discountType: a.rule.discountType,
       value: Number(a.rule.value),
       stacking: a.rule.stacking,
-      discountPerUnit: Number(a.perUnit.toDecimalPlaces(4, Dec.ROUND_HALF_UP)),
+      // With the company cap, each discount reports its share of what was actually given.
+      discountPerUnit: Number((capped && uncapped.gt(0) ? a.perUnit.mul(discount).div(uncapped) : a.perUnit).toDecimalPlaces(4, Dec.ROUND_HALF_UP)),
+      ...(a.rule.promotion ? { promotionId: a.rule.promotion.id, promotionVersionId: a.rule.promotion.versionId, promotionVersionNumber: a.rule.promotion.versionNumber } : {}),
     })),
     ruleDiscountAmount: Number(listUnitPrice.sub(net)),
     ruleDiscountCapped: capped,

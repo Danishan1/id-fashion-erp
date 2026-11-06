@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { ActivityPanel } from "@/components/crm/activities/ActivityPanel";
 import { Button, buttonClasses } from "@/components/ui/Button";
 import { FormField, textInputClass } from "@/components/ui/FormField";
@@ -85,6 +85,7 @@ export interface CampaignView {
   budget: {
     planned: number | null;
     actual: number;
+    committed?: number;
     pending: number;
     remaining: number | null;
     expenses: { id: string; number: string; date: string; description: string; supplier: string | null; amount: number; tax: number; status: string; counts: boolean }[];
@@ -168,8 +169,6 @@ export function CampaignDetailClient({ initial, currentUserId }: { initial: Camp
   const [revDialog, setRevDialog] = useState<{ spec: TextDialogSpec; id: string } | null>(null);
   const [metricDialog, setMetricDialog] = useState<"add" | Metric | null>(null);
   const [resultDialog, setResultDialog] = useState<Metric | null>(null);
-  const [expenseDialog, setExpenseDialog] = useState(false);
-  const [unlinkDialog, setUnlinkDialog] = useState<string | null>(null);
   const [milestoneDialog, setMilestoneDialog] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -257,7 +256,7 @@ export function CampaignDetailClient({ initial, currentUserId }: { initial: Camp
             ))}
           </ul>
         )}
-        {error && !dialog && !dateDialog && !planDialog && !revDialog && !metricDialog && !resultDialog && !expenseDialog && !unlinkDialog && !milestoneDialog && <ERR e={error} />}
+        {error && !dialog && !dateDialog && !planDialog && !revDialog && !metricDialog && !resultDialog && !milestoneDialog && <ERR e={error} />}
       </section>
 
       <Section title="Details">
@@ -429,11 +428,12 @@ export function CampaignDetailClient({ initial, currentUserId }: { initial: Camp
         <p className="mt-2 text-xs text-zinc-500">Counts of records linked to this campaign, up to today — not campaign attribution or ROI.</p>
       </Section>
 
-      <Section title="Budget" actions={c.can.linkExpenses && <Button size="xs" variant="secondary" onClick={() => (setError(null), setExpenseDialog(true))}>Link expense</Button>}>
-        <div className="grid gap-3 sm:grid-cols-4">
+      <Section title="Budget">
+        <div className="grid gap-3 sm:grid-cols-5">
           {[
             ["Planned (approved plan)", c.budget.planned === null ? "—" : inr(c.budget.planned)],
             ["Actual spend", inr(c.budget.actual)],
+            ["Committed", inr(c.budget.committed ?? 0)],
             ["Waiting for approval", inr(c.budget.pending)],
             ["Remaining", c.budget.remaining === null ? "—" : inr(c.budget.remaining)],
           ].map(([k, val]) => (
@@ -443,49 +443,9 @@ export function CampaignDetailClient({ initial, currentUserId }: { initial: Camp
             </div>
           ))}
         </div>
-        <p className="mt-1 text-xs text-zinc-500">Actual = approved, partly paid and paid Expenses linked here, before GST. Rejected and cancelled expenses don&apos;t count.</p>
-        {c.budget.expenses.length > 0 && (
-          <table className="mt-2 w-full text-sm">
-            <thead>
-              <tr className="border-b border-zinc-200 text-left text-xs uppercase text-zinc-500 dark:border-zinc-800">
-                <th className="py-1 pr-3">Expense</th>
-                <th className="py-1 pr-3">Date</th>
-                <th className="py-1 pr-3">Description</th>
-                <th className="py-1 pr-3 text-right">Amount</th>
-                <th className="py-1 pr-3">Status</th>
-                {c.can.linkExpenses && <th />}
-              </tr>
-            </thead>
-            <tbody>
-              {c.budget.expenses.map((e) => (
-                <tr key={e.id} className="border-b border-zinc-100 last:border-0 dark:border-zinc-800">
-                  <td className="py-2 pr-3">
-                    <Link href={`/accounts/expenses/${e.id}`} className="text-indigo-600 hover:underline dark:text-indigo-400">
-                      {e.number}
-                    </Link>
-                  </td>
-                  <td className="py-2 pr-3 whitespace-nowrap">{e.date}</td>
-                  <td className="py-2 pr-3">
-                    {e.description}
-                    {e.supplier && <span className="block text-xs text-zinc-500">{e.supplier}</span>}
-                  </td>
-                  <td className="py-2 pr-3 text-right tabular-nums">{inr(e.amount)}</td>
-                  <td className="py-2 pr-3">
-                    {e.status.toLowerCase().replace(/_/g, " ")}
-                    {!e.counts && <span className="block text-xs text-zinc-500">not counted yet</span>}
-                  </td>
-                  {c.can.linkExpenses && (
-                    <td className="py-2 text-right">
-                      <Button size="xs" variant="secondary" onClick={() => (setError(null), setUnlinkDialog(e.id))}>
-                        Unlink
-                      </Button>
-                    </td>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+        <p className="mt-1 text-xs text-zinc-500">
+          Actual = approved, partly paid and paid Expenses plus posted Purchase Invoices linked here; committed = approved Purchase Orders not yet invoiced; all before GST. Budget lines and the linked records are in <a href="#budget" className="text-indigo-600 hover:underline dark:text-indigo-400">Budget</a> below.
+        </p>
       </Section>
 
       <Section
@@ -588,16 +548,6 @@ export function CampaignDetailClient({ initial, currentUserId }: { initial: Camp
         />
       )}
       {resultDialog && <ResultDialog m={resultDialog} busy={busy} error={error} onClose={() => (setResultDialog(null), setError(null))} onSubmit={(body) => run(() => send(`${base}/metrics/${resultDialog.id}/result`, "POST", body), () => setResultDialog(null))} />}
-      {expenseDialog && <ExpenseDialog base={base} busy={busy} error={error} onClose={() => (setExpenseDialog(false), setError(null))} onSubmit={(expenseId) => run(() => send(`${base}/expenses`, "POST", { expenseId }), () => setExpenseDialog(false))} />}
-      {unlinkDialog && (
-        <TextDialog
-          spec={{ action: "unlink", title: "Unlink expense", help: "The expense stays in Accounts; it just stops counting for this campaign.", field: { name: "reason", label: "Reason", required: true }, submitLabel: "Unlink", danger: true }}
-          busy={busy}
-          error={error}
-          onClose={() => (setUnlinkDialog(null), setError(null))}
-          onSubmit={(body) => run(() => send(`${base}/expenses/${unlinkDialog}/unlink`, "POST", body), () => setUnlinkDialog(null))}
-        />
-      )}
       {milestoneDialog && <MilestoneDialog c={c} busy={busy} error={error} onClose={() => (setMilestoneDialog(false), setError(null))} onSubmit={(body) => run(async () => (await send(`${base}/milestones`, "POST", body), (await fetch(base, { headers: { "x-toast": "off" } }).then((r) => r.json())).data), () => setMilestoneDialog(false))} />}
     </div>
   );
@@ -750,32 +700,6 @@ function ResultDialog({ m, busy, error, onClose, onSubmit }: { m: Metric } & Dia
           </FormField>
         </div>
         <Footer busy={busy} onClose={onClose} error={error} label="Save result" />
-      </form>
-    </Modal>
-  );
-}
-
-function ExpenseDialog({ base, busy, error, onClose, onSubmit }: { base: string } & DialogProps<string>) {
-  const [options, setOptions] = useState<{ id: string; label: string; sublabel?: string }[] | null>(null);
-  const [pick, setPick] = useState("");
-  const [loadError, setLoadError] = useState<string | null>(null);
-  useEffect(() => {
-    fetch(`${base}/expenses`, { headers: { "x-toast": "off" } })
-      .then(async (r) => (r.ok ? setOptions((await r.json()).data) : setLoadError("You need access to Expenses to link them.")))
-      .catch(() => setLoadError("Couldn't load expenses."));
-  }, [base]);
-  return (
-    <Modal open onClose={onClose} title="Link an expense">
-      <form className="space-y-3" onSubmit={(e) => (e.preventDefault(), pick && onSubmit(pick))}>
-        <p className="text-sm text-zinc-600 dark:text-zinc-300">Choose an existing expense (recorded in Accounts → Expenses) that was spent on this campaign. Only expenses not linked to a campaign are listed.</p>
-        {loadError ? (
-          <ERR e={loadError} />
-        ) : (
-          <FormField label="Expense" htmlFor="x-pick" required>
-            <SearchableSelect id="x-pick" required value={pick} onChange={setPick} options={options ?? []} placeholder={options ? "Search expenses…" : "Loading…"} />
-          </FormField>
-        )}
-        <Footer busy={busy} onClose={onClose} error={error} label="Link" />
       </form>
     </Modal>
   );

@@ -9,7 +9,7 @@ import { Badge, CARD, send, useApi } from "./campaign-ui";
 
 interface Row {
   id: string;
-  kind: "TYPE" | "OBJECTIVE";
+  kind: Kind;
   code: string;
   name: string;
   description: string | null;
@@ -18,16 +18,17 @@ interface Row {
   campaigns: number;
 }
 
-const KIND_LABEL = { TYPE: "Campaign types", OBJECTIVE: "Campaign objectives" } as const;
+const KIND_LABEL = { TYPE: "Campaign types", OBJECTIVE: "Campaign objectives", SPEND_CATEGORY: "Budget spend categories" } as const;
+type Kind = keyof typeof KIND_LABEL;
 
-/** Campaign types and objectives (Phase 08): the company's own lists; deactivate, never delete. */
+/** Campaign types, objectives (Phase 08) and budget spend categories (Phase 12): the company's own lists; deactivate, never delete. */
 export function CampaignSettingsClient({ canEdit }: { canEdit: boolean }) {
   const { data, error, reload } = useApi<Row[]>("/api/v1/sales-marketing/campaigns/lookups?includeInactive=true");
-  const [editing, setEditing] = useState<Row | { kind: "TYPE" | "OBJECTIVE" } | null>(null);
+  const [editing, setEditing] = useState<Row | { kind: Kind } | null>(null);
   const [v, setV] = useState({ code: "", name: "", description: "", sortOrder: "" });
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
-  const open = (r: Row | { kind: "TYPE" | "OBJECTIVE" }) => {
+  const open = (r: Row | { kind: Kind }) => {
     setFormError(null);
     setV("id" in r ? { code: r.code, name: r.name, description: r.description ?? "", sortOrder: String(r.sortOrder) } : { code: "", name: "", description: "", sortOrder: "" });
     setEditing(r);
@@ -50,7 +51,7 @@ export function CampaignSettingsClient({ canEdit }: { canEdit: boolean }) {
   if (!data) return <LoadingState />;
   return (
     <div className="grid gap-4 lg:grid-cols-2">
-      {(["TYPE", "OBJECTIVE"] as const).map((kind) => (
+      {(["TYPE", "OBJECTIVE", "SPEND_CATEGORY"] as const).map((kind) => (
         <section key={kind} className={CARD} aria-label={KIND_LABEL[kind]}>
           <div className="flex items-center justify-between">
             <h2 className="font-semibold">{KIND_LABEL[kind]}</h2>

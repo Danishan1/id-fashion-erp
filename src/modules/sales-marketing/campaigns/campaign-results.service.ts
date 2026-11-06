@@ -9,6 +9,7 @@ import { dueParts, isOverdue } from "@/modules/crm/activities/activity-due";
 import { metricTotals } from "@/modules/sales-marketing/performance/performance-actuals";
 import { dbDate, isoDateSchema, optionalText, toDbDate } from "@/modules/sales-marketing/performance/performance-common";
 import { auditCampaign, campaignScopeWhere, canApproveCampaign, getCampaignScope, listCampaignEvents, loadCampaign, recordCampaignEvent } from "./campaign-common";
+import { measureBudgets } from "@/modules/sales-marketing/budgets/budget.service";
 import { CAMPAIGN_STATUSES, MILESTONE_FLAG, SYSTEM_METRICS, SYSTEM_METRIC_KEYS, type CampaignStatusKey, type MetricUnitKey, type SystemMetricKey } from "./campaign-registry";
 
 /**
@@ -183,22 +184,25 @@ export function metricView(m: Prisma.MarketingCampaignMetricGetPayload<{ include
 
 // ── Budget: linked Expenses ─────────────────────────────────────
 
-export async function budgetSummary(companyId: string, c: Pick<MarketingCampaign, "id" | "plannedBudget" | "currencyCode">) {
-  const expenses = await prisma.expense.findMany({
-    where: { companyId, campaignId: c.id },
-    orderBy: { expenseDate: "desc" },
-    select: { id: true, expenseNumber: true, expenseDate: true, description: true, amount: true, taxAmount: true, status: true, supplier: { select: { name: true } } },
-  });
-  const sum = (filter: (s: string) => boolean) => r2(expenses.filter((e) => filter(e.status)).reduce((s, e) => s + Number(e.amount), 0));
-  const actual = sum((s) => (SPENT_EXPENSE_STATUSES as readonly string[]).includes(s));
-  const pending = sum((s) => s === "PENDING_APPROVAL");
+export async function budgetSummary(companyId: string, c: Pick<MarketingCampaign, "id" | "plannedBudget" | "currencyCode" | "approvedRevisionNumber">) {
+  const [expenses, measures] = await Promise.all([
+    prisma.expense.findMany({
+      where: { companyId, campaignId: c.id },
+      orderBy: { expenseDate: "desc" },
+      select: { id: true, expenseNumber: true, expenseDate: true, description: true, amount: true, taxAmount: true, status: true, supplier: { select: { name: true } } },
+    }),
+    // Phase 12: actual also counts posted purchase invoices; purchase orders not yet invoiced are "committed".
+    measureBudgets(companyId, [c]),
+  ]);
+  const m = measures.get(c.id)!;
   const planned = c.plannedBudget === null ? null : r2(Number(c.plannedBudget));
   return {
     currencyCode: c.currencyCode,
     planned,
-    actual,
-    pending,
-    remaining: planned === null ? null : r2(planned - actual),
+    actual: m.actual,
+    committed: m.committed,
+    pending: m.pipeline,
+    remaining: planned === null ? null : r2(planned - m.actual - m.committed),
     expenses: expenses.map((e) => ({
       id: e.id,
       number: e.expenseNumber,
@@ -256,7 +260,7 @@ export async function unlinkExpense(actor: SalesActor, id: string, expenseId: st
   const e = await prisma.expense.findFirst({ where: { id: expenseId, companyId: actor.companyId, campaignId: c.id }, select: { id: true, expenseNumber: true } });
   if (!e) throw new BusinessRuleError("NOT_FOUND", "This expense isn't linked to the campaign.");
   await prisma.$transaction(async (tx) => {
-    await tx.expense.updateMany({ where: { id: e.id, companyId: actor.companyId, campaignId: c.id }, data: { campaignId: null } });
+    await tx.expense.updateMany({ where: { id: e.id, companyId: actor.companyId, campaignId: c.id }, data: { campaignId: null, budgetAllocationId: null } });
     await recordCampaignEvent(tx, actor, c.id, "EXPENSE_UNLINKED", reason, { expense: e.expenseNumber });
     await auditCampaign(tx, actor, e.id, "UPDATE", { campaignId: c.id }, { campaignId: null, reason }, "expenses");
   });

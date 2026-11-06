@@ -10,6 +10,7 @@ import { todayIsoDate, toIsoDate } from "@/lib/date";
 import { round2 } from "@/lib/money";
 import { markEnquiryQuoted, releaseEnquiryQuotation, type SalesActor } from "@/modules/sales-marketing/enquiries/sales-enquiry.service";
 import { getSalesMarketingSettings } from "@/modules/sales-marketing/settings/sales-marketing-settings.service";
+import { holdForAcceptedRevision, releaseForQuotation, reserveForRevision } from "@/modules/sales-marketing/promotions/redemption.service";
 import { approvalReasons } from "./quotation-approval";
 import { DECISION_METHOD_KEYS, OPEN_QUOTATION_STATUSES, SENT_METHOD_KEYS, type QuotationEventType } from "./quotation-registry";
 import { buildDraft, canApproveRevision, getQuotation, loadVisible, recordQuotationEvent, type DraftBody } from "./quotation.service";
@@ -154,6 +155,7 @@ function draftBodyFromRevision(quotation: Quotation, r: RevisionWithLines): Draf
     otherChargesLabel: s(r.otherChargesLabel),
     otherChargesAmount: Number(r.otherChargesAmount),
     otherChargesTaxRateId: s(r.otherChargesTaxRateId),
+    promotionCodes: r.promotionCodes ?? [],
     lines: r.lines.map((l) => ({
       productId: l.lineType === "STYLE" ? s(l.productId) : "",
       sampleRequestId: s(l.sampleRequestId),
@@ -184,7 +186,7 @@ async function revalidateDraft(actor: SalesActor, quotation: Quotation, revision
   if (toIsoDate(revision.validUntil) < todayIsoDate()) {
     throw new BusinessRuleError("VALIDATION_ERROR", "The valid-until date has passed. Edit the draft and set a new date.", { fieldErrors: { validUntil: "In the past." } });
   }
-  const { revision: values, lineRows } = await buildDraft(actor, draftBodyFromRevision(quotation, revision), quotation.buyerEnquiryId, quotation.customerId);
+  const { revision: values, lineRows } = await buildDraft(actor, draftBodyFromRevision(quotation, revision), quotation.buyerEnquiryId, quotation.customerId, { salesChannelId: quotation.salesChannelId, campaignId: quotation.campaignId, quotationRevisionId: revision.id });
   // Phase 03: never let a price change that nobody saw slip into an issued
   // quotation — if a price list or rule changed since the draft was saved,
   // the draft must be saved again (the editor shows the new prices).
@@ -348,6 +350,8 @@ export async function issueQuotation(actor: SalesActor, id: string, raw: unknown
       revisionData: { ...values, ...(recomputed ? { approvalRequired: false, approvalReasons: [] } : {}), issuedAt: new Date(), issuedByUserId: actor.userId, documentSnapshot: snapshot },
     });
     if (quotation.buyerEnquiryId) await markEnquiryQuoted(tx, actor, quotation.buyerEnquiryId, quotation.quotationNumber, revision.revisionNumber);
+    // Promotions used on the issued prices count against their limits from now on (Phase 12).
+    await reserveForRevision(tx, actor, quotation, { id: revision.id, validUntil: revision.validUntil }, recomputed?.lineRows ?? revision.lines);
     await finish(tx, actor, quotation, revision.revisionNumber, "ISSUED", quotation.status, "ISSUED", comment || null, { grandTotal: Number(recomputed?.values.grandTotal ?? revision.grandTotal) });
   });
   return afterAction(actor, id);
@@ -407,6 +411,7 @@ export async function recordAcceptance(actor: SalesActor, id: string, raw: unkno
       customerReference: input.customerReference || null,
       decisionDate: input.decisionDate,
     });
+    await holdForAcceptedRevision(tx, revision.id);
     await notify(tx, actor, quotation, [quotation.ownerUserId], `Quotation ${quotation.quotationNumber} accepted`, `Revision ${revision.revisionNumber} — ready to convert to a Sales Order.`);
   });
   return afterAction(actor, id);
@@ -429,6 +434,7 @@ export async function recordRejection(actor: SalesActor, id: string, raw: unknow
         decisionComment: input.reason,
       },
     });
+    await releaseForQuotation(tx, actor, { quotationRevisionId: revision.id }, `Rejected by the customer: ${input.reason}`);
     await finish(tx, actor, quotation, revision.revisionNumber, "REJECTED", "ISSUED", "REJECTED", input.reason, { decisionDate: input.decisionDate });
     await notify(tx, actor, quotation, [quotation.ownerUserId], `Quotation ${quotation.quotationNumber} rejected by the customer`, input.reason);
   });
@@ -469,6 +475,7 @@ const COPY_FIELDS = [
   "igstTotal",
   "taxTotal",
   "grandTotal",
+  "promotionCodes",
 ] as const;
 
 /**
@@ -492,7 +499,10 @@ export async function reviseQuotation(actor: SalesActor, id: string, raw: unknow
       data: { status: "DRAFT", currentRevisionNumber: next },
     });
     if (q.count === 0) throw new BusinessRuleError("RECORD_VERSION_CONFLICT", "This quotation changed just now. Reload and try again.");
-    if (revision.status === "ISSUED") await tx.quotationRevision.update({ where: { id: revision.id }, data: { status: "SUPERSEDED" } });
+    if (revision.status === "ISSUED") {
+      await tx.quotationRevision.update({ where: { id: revision.id }, data: { status: "SUPERSEDED" } });
+      await releaseForQuotation(tx, actor, { quotationRevisionId: revision.id }, `Revised: ${reason}`);
+    }
     await tx.quotationRevision.create({
       data: {
         ...copied,
@@ -534,6 +544,7 @@ export async function cancelQuotation(actor: SalesActor, id: string, raw: unknow
       quotationData: { cancelledAt: new Date(), cancellationReason: reason },
     });
     if (quotation.buyerEnquiryId) await releaseEnquiryQuotation(tx, actor, quotation.buyerEnquiryId, quotation.quotationNumber, OPEN_QUOTATION_STATUSES);
+    await releaseForQuotation(tx, actor, { quotationId: quotation.id }, `Cancelled: ${reason}`);
     await finish(tx, actor, quotation, revision.revisionNumber, "CANCELLED", quotation.status, "CANCELLED", reason);
   });
   return afterAction(actor, id);

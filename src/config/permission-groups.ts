@@ -55,6 +55,7 @@ const MODULE_LABELS: Record<string, string> = {
   marketing_segments: "Marketing Audience Segments",
   marketing_delivery: "Marketing Channel Delivery",
   marketing_content: "Marketing Content & Assets",
+  marketing_promotions: "Marketing Promotions & Offers",
   payment_requests: "Payment Requests",
   payment_request_settings: "Payment Approval Matrix",
 };

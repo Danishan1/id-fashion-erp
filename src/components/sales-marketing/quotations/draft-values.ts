@@ -78,6 +78,7 @@ export function toDraftValues(src: Record<string, unknown> & { lines: LineLike[]
     otherChargesLabel: s(src.otherChargesLabel),
     otherChargesAmount: src.otherChargesAmount === undefined ? "0" : s(Number(src.otherChargesAmount)),
     otherChargesTaxRateId: s(src.otherChargesTaxRateId),
+    promotionCodes: Array.isArray(src.promotionCodes) ? (src.promotionCodes as string[]).join(", ") : "",
     lines: src.lines.map(toLineDraft),
   };
 }

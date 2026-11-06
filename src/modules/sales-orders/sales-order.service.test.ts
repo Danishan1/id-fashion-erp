@@ -67,6 +67,7 @@ vi.mock("./sales-order.repository", () => ({
 // inspects) since these tests only care about sales-order.service.ts's own
 // pre-existing guards/behavior. sales-order-bom.service.test.ts covers the
 // real reconciliation/snapshot logic in isolation.
+vi.mock("@/modules/sales-marketing/promotions/redemption.service", () => ({ releaseForSalesOrder: vi.fn(async () => 0) }));
 vi.mock("./sales-order-bom.service", () => ({
   buildReconciledItemPlan: vi.fn(),
   snapshotUnsnapshottedLinesInTx: vi.fn(),

@@ -8,7 +8,7 @@
 
 export type CampaignStatusKey = "DRAFT" | "PENDING_APPROVAL" | "APPROVED" | "ACTIVE" | "PAUSED" | "COMPLETED" | "CANCELLED";
 export type CampaignPriorityKey = "LOW" | "NORMAL" | "HIGH";
-export type LookupKindKey = "TYPE" | "OBJECTIVE";
+export type LookupKindKey = "TYPE" | "OBJECTIVE" | "SPEND_CATEGORY";
 export type RevisionStatusKey = "PENDING_APPROVAL" | "APPROVED" | "REJECTED" | "WITHDRAWN";
 
 export const CAMPAIGN_STATUSES: Record<CampaignStatusKey, { label: string; tone: "zinc" | "amber" | "indigo" | "green" | "red"; open: boolean; help: string }> = {
@@ -93,6 +93,16 @@ export const DEFAULT_LOOKUPS: Record<LookupKindKey, { code: string; name: string
     { code: "RETENTION", name: "Customer retention" },
     { code: "AWARENESS", name: "Brand / collection awareness" },
     { code: "EVENT", name: "Event participation" },
+  ],
+  // Phase 12: budget lines are split by these.
+  SPEND_CATEGORY: [
+    { code: "MEDIA", name: "Media / advertising" },
+    { code: "CONTENT", name: "Content & creative" },
+    { code: "EVENTS", name: "Events & exhibitions" },
+    { code: "PRINT", name: "Print & samples" },
+    { code: "MESSAGING", name: "Messaging (email / SMS / WhatsApp)" },
+    { code: "AGENCY", name: "Agency & services" },
+    { code: "OTHER", name: "Other" },
   ],
 };
 
