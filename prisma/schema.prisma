@@ -16790,3 +16790,246 @@ model MarketingBudgetAlert {
   @@index([campaignId, status])
   @@map("marketing_budget_alerts")
 }
+
+// ── Sales & Marketing Phase 13: attribution & ROI ───────────────────────
+// Campaign / user ids are plain uuid columns with foreign keys in SQL (no
+// Prisma back-relations). Touchpoints and conversions are references to the
+// authoritative records (deliveries, leads, enquiries, quotations, Sales
+// Orders) — identifiers only, no copied personal data.
+
+/// An attribution model (header). The rules live in versions; only an approved version is used.
+model MarketingAttributionModel {
+  id                   String    @id @default(uuid()) @db.Uuid
+  companyId            String    @map("company_id") @db.Uuid
+  code                 String
+  name                 String
+  description          String?
+  /// DRAFT (never approved) | ACTIVE | RETIRED
+  status               String    @default("DRAFT")
+  /// The model reports open with (one per company).
+  isDefault            Boolean   @default(false) @map("is_default")
+  currentVersionNumber Int       @default(1) @map("current_version_number")
+  approvedVersionId    String?   @unique @map("approved_version_id") @db.Uuid
+  ownerUserId          String    @map("owner_user_id") @db.Uuid
+  createdByUserId      String    @map("created_by_user_id") @db.Uuid
+  updatedByUserId      String?   @map("updated_by_user_id") @db.Uuid
+  retiredAt            DateTime? @map("retired_at")
+  version              Int       @default(1)
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  versions        MarketingAttributionModelVersion[] @relation("MarketingAttributionModelVersions")
+  approvedVersion MarketingAttributionModelVersion?  @relation("MarketingAttributionModelApproved", fields: [approvedVersionId], references: [id])
+  runs            MarketingAttributionRun[]
+
+  @@unique([companyId, code])
+  @@index([companyId, status])
+  @@map("marketing_attribution_models")
+}
+
+/// The rules of a model. Draft → pending approval → approved (immutable) | rejected; a newer approved version supersedes the older one.
+model MarketingAttributionModelVersion {
+  id                String    @id @default(uuid()) @db.Uuid
+  companyId         String    @map("company_id") @db.Uuid
+  modelId           String    @map("model_id") @db.Uuid
+  versionNumber     Int       @map("version_number")
+  /// DRAFT | PENDING_APPROVAL | APPROVED | SUPERSEDED | REJECTED
+  status            String    @default("DRAFT")
+  /// FIRST_TOUCH | LAST_TOUCH | LINEAR | POSITION_BASED | TIME_DECAY
+  modelType         String    @map("model_type")
+  /// Touchpoints up to this many days before the conversion count (inclusive).
+  windowDays        Int       @map("window_days")
+  /// MESSAGE_SENT | MESSAGE_DELIVERED | CAMPAIGN_RESPONSE
+  touchpointTypes   String[]  @map("touchpoint_types")
+  /// Message channels (EMAIL | SMS | WHATSAPP); empty = all. Campaign responses have no channel.
+  channelTypes      String[]  @default([]) @map("channel_types")
+  /// LEAD_CREATED | ENQUIRY_CREATED | QUOTATION_ACCEPTED | SALES_ORDER_BOOKED
+  conversionTypes   String[]  @map("conversion_types")
+  /// One touch per (campaign, touchpoint type): the earliest for first-touch, otherwise the latest.
+  collapseRepeats   Boolean   @default(true) @map("collapse_repeats")
+  firstTouchPercent Decimal?  @map("first_touch_percent") @db.Decimal(5, 2)
+  lastTouchPercent  Decimal?  @map("last_touch_percent") @db.Decimal(5, 2)
+  halfLifeDays      Decimal?  @map("half_life_days") @db.Decimal(8, 2)
+  changeNote        String?   @map("change_note")
+  createdByUserId   String    @map("created_by_user_id") @db.Uuid
+  updatedByUserId   String?   @map("updated_by_user_id") @db.Uuid
+  submittedByUserId String?   @map("submitted_by_user_id") @db.Uuid
+  submittedAt       DateTime? @map("submitted_at")
+  decidedByUserId   String?   @map("decided_by_user_id") @db.Uuid
+  decidedAt         DateTime? @map("decided_at")
+  decisionComment   String?   @map("decision_comment")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  model      MarketingAttributionModel  @relation("MarketingAttributionModelVersions", fields: [modelId], references: [id], onDelete: Cascade)
+  approvedOf MarketingAttributionModel? @relation("MarketingAttributionModelApproved")
+  runs       MarketingAttributionRun[]
+
+  @@unique([modelId, versionNumber])
+  @@map("marketing_attribution_model_versions")
+}
+
+/// A marketing interaction normalised from an authoritative record: a campaign message sent / delivered to a contact (Phase 10), or a campaign set on a lead, enquiry, quotation or Sales Order.
+model MarketingTouchpoint {
+  id             String   @id @default(uuid()) @db.Uuid
+  companyId      String   @map("company_id") @db.Uuid
+  /// DELIVERY | LEAD | ENQUIRY | QUOTATION | SALES_ORDER
+  sourceType     String   @map("source_type")
+  sourceId       String   @map("source_id") @db.Uuid
+  /// Stable per source record (+ campaign for tags): a re-sync updates, never duplicates.
+  dedupKey       String   @map("dedup_key")
+  /// MESSAGE_SENT | MESSAGE_DELIVERED | CAMPAIGN_RESPONSE
+  touchpointType String   @map("touchpoint_type")
+  campaignId     String   @map("campaign_id") @db.Uuid
+  channelType    String?  @map("channel_type")
+  providerKey    String?  @map("provider_key")
+  /// Typed record ids this touch is tied to (CONTACT:…, CUSTOMER:…, LEAD:…, ENQUIRY:…, QUOTATION:…, ORDER:…).
+  identityKeys   String[] @map("identity_keys")
+  occurredAt     DateTime @map("occurred_at")
+  /// VALID | EXCLUDED
+  status         String   @default("VALID")
+  excludedReason String?  @map("excluded_reason")
+  ingestedAt     DateTime @default(now()) @map("ingested_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  credits MarketingAttributionCredit[]
+
+  @@unique([companyId, dedupKey])
+  @@index([companyId, occurredAt])
+  @@index([campaignId])
+  @@index([companyId, updatedAt])
+  @@map("marketing_touchpoints")
+}
+
+/// A business outcome taken from its authoritative record. One row per (type, record).
+model MarketingConversion {
+  id               String    @id @default(uuid()) @db.Uuid
+  companyId        String    @map("company_id") @db.Uuid
+  /// LEAD_CREATED | ENQUIRY_CREATED | QUOTATION_ACCEPTED | SALES_ORDER_BOOKED
+  conversionType   String    @map("conversion_type")
+  sourceId         String    @map("source_id") @db.Uuid
+  /// The accepted quotation revision (QUOTATION_ACCEPTED).
+  sourceRevisionId String?   @map("source_revision_id") @db.Uuid
+  reference        String
+  occurredAt       DateTime  @map("occurred_at")
+  businessDate     DateTime  @map("business_date") @db.Date
+  identityKeys     String[]  @map("identity_keys")
+  /// ACTIVE | REVERSED (e.g. order cancelled) | REMOVED (source record gone)
+  status           String    @default("ACTIVE")
+  statusReason     String?   @map("status_reason")
+  /// Accepted revision's taxable total (QUOTATION_ACCEPTED), before GST.
+  quotedValue      Decimal?  @map("quoted_value") @db.Decimal(18, 2)
+  /// Sales Order base total, before GST (SALES_ORDER_BOOKED).
+  orderValue       Decimal?  @map("order_value") @db.Decimal(18, 2)
+  /// Σ posted sales invoices of the order, subtotal × exchange rate (SALES_ORDER_BOOKED).
+  invoicedValue    Decimal?  @map("invoiced_value") @db.Decimal(18, 2)
+  currencyCode     String    @default("INR") @map("currency_code") @db.Char(3)
+  ingestedAt       DateTime  @default(now()) @map("ingested_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  results MarketingAttributionResult[]
+
+  @@unique([companyId, conversionType, sourceId])
+  @@index([companyId, occurredAt])
+  @@index([companyId, updatedAt])
+  @@map("marketing_conversions")
+}
+
+/// One calculation of one approved model version over a period. Results are never edited; a recalculation is a new run.
+model MarketingAttributionRun {
+  id                String    @id @default(uuid()) @db.Uuid
+  companyId         String    @map("company_id") @db.Uuid
+  modelId           String    @map("model_id") @db.Uuid
+  modelVersionId    String    @map("model_version_id") @db.Uuid
+  periodFrom        DateTime  @map("period_from") @db.Date
+  periodTo          DateTime  @map("period_to") @db.Date
+  /// QUEUED | RUNNING | COMPLETED | FAILED | PURGED (old results removed by retention)
+  status            String    @default("QUEUED")
+  /// MANUAL | SCHEDULED
+  trigger           String    @default("MANUAL")
+  requestedByUserId String?   @map("requested_by_user_id") @db.Uuid
+  idempotencyKey    String?   @map("idempotency_key")
+  /// Sources were synced up to this moment before calculating.
+  sourcesSyncedAt   DateTime? @map("sources_synced_at")
+  conversions       Int       @default(0)
+  attributed        Int       @default(0)
+  unattributed      Int       @default(0)
+  excluded          Int       @default(0)
+  summary           Json      @default("{}")
+  error             String?
+  queuedAt          DateTime  @default(now()) @map("queued_at")
+  startedAt         DateTime? @map("started_at")
+  finishedAt        DateTime? @map("finished_at")
+  resultsPurgedAt   DateTime? @map("results_purged_at")
+
+  model        MarketingAttributionModel        @relation(fields: [modelId], references: [id])
+  modelVersion MarketingAttributionModelVersion @relation(fields: [modelVersionId], references: [id])
+  results      MarketingAttributionResult[]
+
+  @@unique([companyId, idempotencyKey])
+  @@index([modelVersionId, status, finishedAt])
+  @@index([companyId, status])
+  @@map("marketing_attribution_runs")
+}
+
+/// The outcome of one conversion in one run, with the values used.
+model MarketingAttributionResult {
+  id             String    @id @default(uuid()) @db.Uuid
+  companyId      String    @map("company_id") @db.Uuid
+  runId          String    @map("run_id") @db.Uuid
+  conversionId   String    @map("conversion_id") @db.Uuid
+  /// ATTRIBUTED | UNATTRIBUTED (no eligible touch) | EXCLUDED (reversed / removed)
+  status         String
+  reason         String?
+  touchpointCount Int      @default(0) @map("touchpoint_count")
+  conversionAt   DateTime  @map("conversion_at")
+  windowStart    DateTime  @map("window_start")
+  quotedValue    Decimal?  @map("quoted_value") @db.Decimal(18, 2)
+  orderValue     Decimal?  @map("order_value") @db.Decimal(18, 2)
+  invoicedValue  Decimal?  @map("invoiced_value") @db.Decimal(18, 2)
+
+  run        MarketingAttributionRun      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  conversion MarketingConversion          @relation(fields: [conversionId], references: [id])
+  credits    MarketingAttributionCredit[]
+
+  @@unique([runId, conversionId])
+  @@index([runId, status])
+  @@map("marketing_attribution_results")
+}
+
+/// Credit of one touchpoint for one conversion: weights of a result add up to exactly 1, money to exactly the value.
+model MarketingAttributionCredit {
+  id             String   @id @default(uuid()) @db.Uuid
+  companyId      String   @map("company_id") @db.Uuid
+  runId          String   @map("run_id") @db.Uuid
+  resultId       String   @map("result_id") @db.Uuid
+  touchpointId   String   @map("touchpoint_id") @db.Uuid
+  campaignId     String   @map("campaign_id") @db.Uuid
+  touchpointType String   @map("touchpoint_type")
+  channelType    String?  @map("channel_type")
+  position       Int
+  weight         Decimal  @db.Decimal(12, 10)
+  quotedCredit   Decimal? @map("quoted_credit") @db.Decimal(18, 2)
+  orderCredit    Decimal? @map("order_credit") @db.Decimal(18, 2)
+  invoicedCredit Decimal? @map("invoiced_credit") @db.Decimal(18, 2)
+
+  result     MarketingAttributionResult @relation(fields: [resultId], references: [id], onDelete: Cascade)
+  touchpoint MarketingTouchpoint        @relation(fields: [touchpointId], references: [id])
+
+  @@unique([resultId, touchpointId])
+  @@index([runId, campaignId])
+  @@map("marketing_attribution_credits")
+}
+
+/// How far each source has been read into touchpoints / conversions (incremental sync).
+model MarketingAttributionCheckpoint {
+  companyId  String   @map("company_id") @db.Uuid
+  /// DELIVERY | LEAD | ENQUIRY | QUOTATION | SALES_ORDER | SALES_INVOICE
+  source     String
+  syncedUpTo DateTime @map("synced_up_to")
+  lastSyncAt DateTime @map("last_sync_at")
+  processed  Int      @default(0)
+
+  @@id([companyId, source])
+  @@map("marketing_attribution_checkpoints")
+}

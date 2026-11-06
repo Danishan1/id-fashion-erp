@@ -43,12 +43,13 @@ interface LoadedSpend {
   invoicedByPo: Record<string, number>;
 }
 
-async function loadSpend(db: Db, companyId: string, campaignIds: string[]): Promise<LoadedSpend> {
+/** `period` (Phase 13 ROI): only expenses / invoices dated in it count as actual; commitments stay as of today. */
+async function loadSpend(db: Db, companyId: string, campaignIds: string[], period?: { from: Date; to: Date }): Promise<LoadedSpend> {
   if (!campaignIds.length) return { allocations: [], expenses: [], purchaseOrders: [], invoices: [], invoicedByPo: {} };
   const [allocations, expenses, pos, pis] = await Promise.all([
     db.marketingBudgetAllocation.findMany({ where: { companyId, campaignId: { in: campaignIds } }, include: { category: { select: { name: true } } }, orderBy: { createdAt: "asc" } }),
     db.expense.findMany({
-      where: { companyId, campaignId: { in: campaignIds }, status: { notIn: ["REJECTED", "CANCELLED"] } },
+      where: { companyId, campaignId: { in: campaignIds }, status: { notIn: ["REJECTED", "CANCELLED"] }, ...(period ? { expenseDate: { gte: period.from, lte: period.to } } : {}) },
       select: { id: true, expenseNumber: true, expenseDate: true, description: true, amount: true, status: true, campaignId: true, budgetAllocationId: true },
     }),
     db.purchaseOrder.findMany({
@@ -56,7 +57,7 @@ async function loadSpend(db: Db, companyId: string, campaignIds: string[]): Prom
       select: { id: true, orderNumber: true, orderDate: true, baseTotalAmount: true, status: true, campaignId: true, budgetAllocationId: true, supplier: { select: { name: true } } },
     }),
     db.purchaseInvoice.findMany({
-      where: { companyId, status: { not: "CANCELLED" }, OR: [{ campaignId: { in: campaignIds } }, { campaignId: null, purchaseOrder: { campaignId: { in: campaignIds } } }] },
+      where: { companyId, status: { not: "CANCELLED" }, OR: [{ campaignId: { in: campaignIds } }, { campaignId: null, purchaseOrder: { campaignId: { in: campaignIds } } }], ...(period ? { invoiceDate: { gte: period.from, lte: period.to } } : {}) },
       select: {
         id: true,
         invoiceNumber: true,
@@ -118,8 +119,8 @@ function computeFor(c: Pick<MarketingCampaign, "id" | "plannedBudget" | "approve
 }
 
 /** Budget figures for several campaigns (reports, overview). */
-export async function measureBudgets(companyId: string, campaigns: Pick<MarketingCampaign, "id" | "plannedBudget" | "approvedRevisionNumber">[], db: Db = prisma) {
-  const spend = await loadSpend(db, companyId, campaigns.map((c) => c.id));
+export async function measureBudgets(companyId: string, campaigns: Pick<MarketingCampaign, "id" | "plannedBudget" | "approvedRevisionNumber">[], db: Db = prisma, period?: { from: Date; to: Date }) {
+  const spend = await loadSpend(db, companyId, campaigns.map((c) => c.id), period);
   return new Map(campaigns.map((c) => [c.id, computeFor(c, spend)]));
 }
 

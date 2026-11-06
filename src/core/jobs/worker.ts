@@ -12,6 +12,7 @@ import { startForecastJobsWorker } from "@/modules/sales-marketing/forecast/fore
 import { startSegmentJobsWorker } from "@/modules/sales-marketing/segments/segment-jobs.worker";
 import { startDeliveryJobsWorker } from "@/modules/sales-marketing/delivery/delivery-jobs.worker";
 import { startPromotionJobsWorker } from "@/modules/sales-marketing/promotions/promotion-jobs.worker";
+import { startAttributionJobsWorker } from "@/modules/sales-marketing/attribution/attribution-jobs.worker";
 
 /**
  * Standalone process for the Bulk Master Data Import background queue —
@@ -84,12 +85,15 @@ const deliveryWorker = startDeliveryJobsWorker();
 // Sales & Marketing Phase 12: promotion reservation expiry, campaign budget alerts.
 const promotionWorker = startPromotionJobsWorker();
 
+// Sales & Marketing Phase 13: attribution source sync, calculations, nightly recalculation.
+const attributionWorker = startAttributionJobsWorker();
+
 process.on("SIGTERM", async () => {
-  await Promise.all([worker.close(), crmWorker.close(), bulkWorker.close(), platformWorker.close(), attendanceWorker.close(), forecastWorker.close(), segmentWorker.close(), deliveryWorker.close(), promotionWorker.close()]);
+  await Promise.all([worker.close(), crmWorker.close(), bulkWorker.close(), platformWorker.close(), attendanceWorker.close(), forecastWorker.close(), segmentWorker.close(), deliveryWorker.close(), promotionWorker.close(), attributionWorker.close()]);
   process.exit(0);
 });
 process.on("SIGINT", async () => {
-  await Promise.all([worker.close(), crmWorker.close(), bulkWorker.close(), platformWorker.close(), attendanceWorker.close(), forecastWorker.close(), segmentWorker.close(), deliveryWorker.close(), promotionWorker.close()]);
+  await Promise.all([worker.close(), crmWorker.close(), bulkWorker.close(), platformWorker.close(), attendanceWorker.close(), forecastWorker.close(), segmentWorker.close(), deliveryWorker.close(), promotionWorker.close(), attributionWorker.close()]);
   process.exit(0);
 });
 

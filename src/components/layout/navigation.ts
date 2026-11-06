@@ -112,7 +112,7 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     label: "Sales & Marketing",
     href: "/sales-marketing",
-    modules: ["sales_marketing", "sales_quotations", "sales_marketing_settings", "sales_pricing", "sales_performance", "sales_commissions", "marketing_campaigns", "marketing_segments", "marketing_delivery", "marketing_content", "marketing_promotions"],
+    modules: ["sales_marketing", "sales_quotations", "sales_marketing_settings", "sales_pricing", "sales_performance", "sales_commissions", "marketing_campaigns", "marketing_segments", "marketing_delivery", "marketing_content", "marketing_promotions", "marketing_attribution"],
     children: [
       { label: "Dashboard", href: "/sales-marketing", modules: ["sales_marketing"] },
       { label: "Enquiries", href: "/sales-marketing/enquiries", modules: ["sales_marketing"] },
@@ -134,6 +134,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Content Library", href: "/sales-marketing/content", modules: ["marketing_content"] },
       { label: "Promotions", href: "/sales-marketing/promotions", modules: ["marketing_promotions"] },
       { label: "Campaign Budgets", href: "/sales-marketing/budgets", modules: ["marketing_campaigns"] },
+      { label: "Attribution & ROI", href: "/sales-marketing/attribution", modules: ["marketing_attribution"] },
       { label: "Delivery Runs", href: "/sales-marketing/delivery", modules: ["marketing_delivery"] },
       { label: "Channel Connections", href: "/sales-marketing/delivery/connections", modules: ["sales_marketing_settings"] },
       { label: "Settings", href: "/sales-marketing/settings", modules: ["sales_marketing_settings"] },
