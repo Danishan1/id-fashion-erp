@@ -108,5 +108,6 @@ export const DEFAULT_ACTIVITY_OPTION_VALUES: Record<ActivityOptionListKey, strin
 };
 
 /** Where an activity can be created / shown (CRM record types). Conversations since Phase 11 (task from a conversation). */
-export const ACTIVITY_PARENT_TYPES = ["LEAD", "CONTACT", "COMPANY", "OPPORTUNITY", "CONVERSATION"] as const;
+/** CAMPAIGN (Sales & Marketing Phase 08): campaign activities and milestones are CRM activities. */
+export const ACTIVITY_PARENT_TYPES = ["LEAD", "CONTACT", "COMPANY", "OPPORTUNITY", "CONVERSATION", "CAMPAIGN", "ENQUIRY", "QUOTATION"] as const;
 export type ActivityParentType = (typeof ACTIVITY_PARENT_TYPES)[number];

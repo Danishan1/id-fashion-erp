@@ -2,6 +2,7 @@ import { Worker, type Job } from "bullmq";
 import { createRedisConnection } from "@/core/jobs/queue";
 import { processBulkJob, recoverBulkJobs } from "./bulk-engine";
 import { BULK_ACTION_QUEUE_NAME, enqueueBulkJob, getBulkActionQueue } from "./bulk-queue";
+import { runDueBulkSchedules } from "./bulk-schedules.service";
 
 /**
  * Phase 14 — bulk job processing inside the shared worker process
@@ -16,6 +17,9 @@ export async function handleBulkJob(job: Job) {
       return { status: await processBulkJob(String(job.data.bulkJobId)) };
     case "bulk.recover":
       return recoverBulkJobs(new Date(), enqueueBulkJob);
+    // Phase 14 (S&M): saved schedules that are due start their bulk job.
+    case "bulk.schedules":
+      return runDueBulkSchedules(new Date());
     default:
       throw new Error(`Unknown bulk job "${job.name}"`);
   }
@@ -31,11 +35,18 @@ export function startBulkActionWorker() {
       const rv = job.returnvalue as { resumed?: string[]; expiredFiles?: number } | undefined;
       if (!rv?.resumed?.length && !rv?.expiredFiles) return;
     }
+    if (job.name === "bulk.schedules") {
+      const rv = job.returnvalue as { started?: string[]; skipped?: string[]; failed?: string[] } | undefined;
+      if (!rv?.started?.length && !rv?.skipped?.length && !rv?.failed?.length) return;
+    }
     console.log(JSON.stringify({ level: "info", message: "Bulk action job completed", jobName: job.name, bulkJobId: job.data?.bulkJobId, result: job.returnvalue }));
   });
   getBulkActionQueue()
     .upsertJobScheduler("bulk-recover", { every: 60_000 }, { name: "bulk.recover", data: {}, opts: { attempts: 1, removeOnComplete: { count: 50 }, removeOnFail: { age: 24 * 3600 } } })
     .catch((e: Error) => console.error(JSON.stringify({ level: "error", message: "Could not schedule bulk job recovery", error: e.message })));
+  getBulkActionQueue()
+    .upsertJobScheduler("bulk-schedules", { every: 60_000 }, { name: "bulk.schedules", data: {}, opts: { attempts: 1, removeOnComplete: { count: 50 }, removeOnFail: { age: 24 * 3600 } } })
+    .catch((e: Error) => console.error(JSON.stringify({ level: "error", message: "Could not start the bulk schedule tick", error: e.message })));
   console.log(JSON.stringify({ level: "info", message: `Bulk action worker started, listening on queue "${BULK_ACTION_QUEUE_NAME}"` }));
   return worker;
 }

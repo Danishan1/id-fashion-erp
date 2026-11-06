@@ -82,7 +82,7 @@ describe.skipIf(!DB_URL)("CRM pipelines & stages (database integration)", async 
     expect(detail.stages.map((s) => s.name)).toEqual(["Enquiry", "Sampling", "Costing", "Order"]);
     expect(detail.stages.filter((s) => s.isDefault).map((s) => s.name)).toEqual(["Enquiry"]);
     expect(detail.requirementOptions.map((o) => o.key)).toEqual(expect.arrayContaining(["company", "contact", "amount", "expectedCloseDate", "requirement", "erp:SALES_ORDER"]));
-    expect(detail.unavailableRequirements[0].key).toBe("quotation");
+    expect(detail.unavailableRequirements).toEqual([]);
     await expectCode(svc.createPipeline(manager, { name: `  ${p.name.toUpperCase()} ` }), "VALIDATION_ERROR");
     await expectCode(svc.createPipeline(manager, { name: name("Dup stages"), stages: [{ name: "A" }, { name: "a " }] }), "VALIDATION_ERROR");
     expect(await prisma.auditLog.count({ where: { tableName: "crm_pipelines", recordId: p.id, action: "CREATE" } })).toBe(1);

@@ -108,7 +108,7 @@ export async function getErpReferencesForCustomer(actor: CrmActor, customerId: s
       : null,
     sections: keys.map((k, i) => ({ key: k, label: SECTION_META[k].label, allowed: Boolean(allowed[i]), total: loaded[i]?.total ?? 0, rows: loaded[i]?.rows ?? [], page: query.page, pageSize: query.pageSize })),
     notAvailable: [
-      { key: "quotations", label: "Quotations", reason: "The ERP has no quotation module yet." },
+      { key: "quotations", label: "Quotations", reason: "Quotations aren't listed here yet — see Sales & Marketing → Quotations, or link them on an opportunity." },
       { key: "tickets", label: "Support tickets", reason: "The ERP has no support / ticket module yet." },
     ],
   };

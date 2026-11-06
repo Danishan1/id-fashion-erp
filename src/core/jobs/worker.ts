@@ -3,11 +3,17 @@ import { Worker, type Job } from "bullmq";
 import { createRedisConnection, BULK_IMPORT_QUEUE_NAME } from "./queue";
 import { processBulkImportJob } from "@/modules/import/bulk-import.service";
 import type { BulkImportActorContext } from "@/modules/import/bulk-import.service";
-import type { BulkImportMasterType } from "@/modules/import/import.schema";
+import type { BulkImportType } from "@/modules/import/import.schema";
 import { startCrmIngestWorker } from "@/modules/crm/imports/crm-import.worker";
 import { startPlatformJobsWorker } from "@/modules/platform/platform-jobs.worker";
 import { startBulkActionWorker } from "@/modules/bulk-actions/bulk-actions.worker";
 import { startAttendanceJobsWorker } from "@/modules/hrms/attendance-jobs.worker";
+import { startForecastJobsWorker } from "@/modules/sales-marketing/forecast/forecast-jobs.worker";
+import { startSegmentJobsWorker } from "@/modules/sales-marketing/segments/segment-jobs.worker";
+import { startDeliveryJobsWorker } from "@/modules/sales-marketing/delivery/delivery-jobs.worker";
+import { startPromotionJobsWorker } from "@/modules/sales-marketing/promotions/promotion-jobs.worker";
+import { startAttributionJobsWorker } from "@/modules/sales-marketing/attribution/attribution-jobs.worker";
+import { startSmWorkflowWorker } from "@/modules/sales-marketing/workflows/sm-workflow-jobs.worker";
 
 /**
  * Standalone process for the Bulk Master Data Import background queue —
@@ -23,7 +29,7 @@ import { startAttendanceJobsWorker } from "@/modules/hrms/attendance-jobs.worker
  */
 interface BulkImportJobData {
   batchId: string;
-  masterType: BulkImportMasterType;
+  masterType: BulkImportType;
   actor: BulkImportActorContext;
   rows: Record<string, string>[];
 }
@@ -68,12 +74,30 @@ const platformWorker = startPlatformJobsWorker();
 // Attendance: daily-ish monthly leave credit.
 const attendanceWorker = startAttendanceJobsWorker();
 
+// Sales & Marketing Phase 06: automatic start-of-period forecast snapshots.
+const forecastWorker = startForecastJobsWorker();
+
+// Sales & Marketing Phase 09: segment evaluations, nightly refresh, recovery.
+const segmentWorker = startSegmentJobsWorker();
+
+// Sales & Marketing Phase 10: campaign delivery runs, provider events, recovery.
+const deliveryWorker = startDeliveryJobsWorker();
+
+// Sales & Marketing Phase 12: promotion reservation expiry, campaign budget alerts.
+const promotionWorker = startPromotionJobsWorker();
+
+// Sales & Marketing Phase 13: attribution source sync, calculations, nightly recalculation.
+const attributionWorker = startAttributionJobsWorker();
+
+// Sales & Marketing Phase 15: workflow orchestration tick (events → instances → due steps).
+const smWorkflowWorker = startSmWorkflowWorker();
+
 process.on("SIGTERM", async () => {
-  await Promise.all([worker.close(), crmWorker.close(), bulkWorker.close(), platformWorker.close(), attendanceWorker.close()]);
+  await Promise.all([worker.close(), crmWorker.close(), bulkWorker.close(), platformWorker.close(), attendanceWorker.close(), forecastWorker.close(), segmentWorker.close(), deliveryWorker.close(), promotionWorker.close(), attributionWorker.close(), smWorkflowWorker.close()]);
   process.exit(0);
 });
 process.on("SIGINT", async () => {
-  await Promise.all([worker.close(), crmWorker.close(), bulkWorker.close(), platformWorker.close(), attendanceWorker.close()]);
+  await Promise.all([worker.close(), crmWorker.close(), bulkWorker.close(), platformWorker.close(), attendanceWorker.close(), forecastWorker.close(), segmentWorker.close(), deliveryWorker.close(), promotionWorker.close(), attributionWorker.close(), smWorkflowWorker.close()]);
   process.exit(0);
 });
 

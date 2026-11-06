@@ -70,7 +70,7 @@ async function ensureControlAccount(
   companyId: string,
   code: string,
   name: string,
-  accountType: "ASSET" | "LIABILITY"
+  accountType: "ASSET" | "LIABILITY" | "EXPENSE"
 ) {
   return tx.chartOfAccount.upsert({
     where: { companyId_code: { companyId, code } },
@@ -251,6 +251,25 @@ const paySalary: Handler = async (ctx, numbers) => {
   return { journalId };
 };
 
+/**
+ * Sales commission (Sales & Marketing Phase 07, 2026-11-04): Dr Sales Commission
+ * (expense) / Cr Cash-Bank, when the approved statement's request is paid.
+ */
+const paySalesCommission: Handler = async (ctx, numbers) => {
+  const expense = await ensureControlAccount(ctx.tx, ctx.actor.companyId, "SALES-COMM", "Sales Commission", "EXPENSE");
+  const journalId = await postAutoJournalInTx(
+    ctx,
+    numbers.journalNumber,
+    `Sales commission ${ctx.request.requestNumber} — ${ctx.request.payToName}`,
+    { module: "PAYMENT_REQUEST", recordId: ctx.request.id },
+    [
+      { accountId: expense.id, debitAmount: ctx.amount, creditAmount: 0, description: `Commission — ${ctx.request.payToName}` },
+      { accountId: ctx.moneyAccountId, debitAmount: 0, creditAmount: ctx.amount, description: `Payment ${ctx.request.requestNumber}` },
+    ]
+  );
+  return { journalId };
+};
+
 /** Which document number a type's payout needs besides the journal number. */
 const PAYOUT_HANDLERS: Partial<Record<PaymentRequestTypeKey, { handler: Handler; documentType?: "PAYMENT" | "INTERNAL_TRANSFER" }>> = {
   SUPPLIER_ON_ACCOUNT: { handler: payToSupplierOnAccount, documentType: "PAYMENT" },
@@ -258,6 +277,7 @@ const PAYOUT_HANDLERS: Partial<Record<PaymentRequestTypeKey, { handler: Handler;
   INVESTMENT: { handler: payInvestment },
   SALARY_ADVANCE: { handler: paySalaryAdvance },
   SALARY: { handler: paySalary },
+  SALES_COMMISSION: { handler: paySalesCommission },
 };
 
 /**

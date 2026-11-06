@@ -11,6 +11,7 @@ export interface ReportCategoryMeta {
 export const REPORT_CATEGORIES_META: ReportCategoryMeta[] = [
   { key: "dashboard", label: "Executive Dashboard", description: "Company-wide KPI snapshot across every module." },
   { key: "mis", label: "Management MIS", description: "Daily management information summary." },
+  { key: "sales-marketing", label: "Sales & Marketing", description: "Enquiry and quotation registers, quotation → order conversion, target attainment, sales credit, forecast pipeline and accuracy." },
   { key: "sales-orders", label: "Sales & Orders", description: "Order register, sales register, customer-wise sales, pending & aging orders." },
   { key: "purchase", label: "Purchase", description: "Purchase order register, pending POs, supplier-wise purchase, monthly summary." },
   { key: "suppliers", label: "Suppliers", description: "Supplier register and outstanding (AP aging)." },

@@ -21,3 +21,17 @@ export function assertCaptureRateLimit(bucket: string, limitPerMinute: number, n
     throw new BusinessRuleError("RATE_LIMITED", `Too many requests — at most ${limitPerMinute} per minute. Try again shortly.`);
   }
 }
+
+/**
+ * Phase 16 (S&M API): same fixed window, but reports the remaining allowance
+ * and the reset time so the API can send X-RateLimit-* / Retry-After headers.
+ */
+export function checkRateLimit(bucket: string, limitPerMinute: number, now = Date.now()): { allowed: boolean; remaining: number; resetAt: number } {
+  let w = windows.get(bucket);
+  if (!w || now - w.start >= WINDOW_MS) {
+    w = { start: now, count: 0 };
+    windows.set(bucket, w);
+  }
+  w.count += 1;
+  return { allowed: w.count <= limitPerMinute, remaining: Math.max(0, limitPerMinute - w.count), resetAt: w.start + WINDOW_MS };
+}

@@ -99,7 +99,18 @@ export async function getBuyerEnquiryById(companyId: string, id: string) {
   return enquiry;
 }
 
-export async function createBuyerEnquiry(actor: ActorContext, input: BuyerEnquiryInput) {
+/**
+ * Sales & Marketing fields set at creation when the enquiry is captured from
+ * Sales & Marketing → Enquiries (S1, 2026-10-28). Already validated by
+ * sales-enquiry.service.ts; Merchandising's own create leaves them unset.
+ */
+export type BuyerEnquirySalesCreateData = Pick<
+  Prisma.BuyerEnquiryUncheckedCreateInput,
+  "subject" | "priority" | "ownerUserId" | "nextFollowUpDate" | "crmCompanyId" | "crmContactId"
+>;
+
+/** Every reference / content check of a create, without writing (also used by the Phase 14 enquiry import's validation). */
+export async function validateBuyerEnquiryInput(actor: ActorContext, input: BuyerEnquiryInput) {
   // A real Customer or at least a prospect name is required — an enquiry with
   // neither would be an anonymous, unreferenceable record. This is a plain
   // "not both empty" check, not a promotion mechanism: a prospect stays a
@@ -135,6 +146,12 @@ export async function createBuyerEnquiry(actor: ActorContext, input: BuyerEnquir
     }
   }
 
+  return customer;
+}
+
+export async function createBuyerEnquiry(actor: ActorContext, input: BuyerEnquiryInput, sales?: BuyerEnquirySalesCreateData) {
+  await validateBuyerEnquiryInput(actor, input);
+
   const enquiryNumber = await generateDocumentNumber({
     companyId: actor.companyId,
     branchId: actor.branchId ?? null,
@@ -157,6 +174,7 @@ export async function createBuyerEnquiry(actor: ActorContext, input: BuyerEnquir
     remarks: input.remarks || null,
     requestedByUserId: actor.userId,
     status: "OPEN",
+    ...(sales ?? {}),
     lines: {
       create: input.lines.map((line) => ({
         productId: line.productId || null,
@@ -179,7 +197,7 @@ export async function createBuyerEnquiry(actor: ActorContext, input: BuyerEnquir
     tableName: "buyer_enquiries",
     recordId: enquiry.id,
     action: "CREATE",
-    newValues: { enquiryNumber: enquiry.enquiryNumber, lineCount: enquiry.lines.length },
+    newValues: { enquiryNumber: enquiry.enquiryNumber, lineCount: enquiry.lines.length, ...(sales ? { sales } : {}) },
   });
 
   return enquiry;

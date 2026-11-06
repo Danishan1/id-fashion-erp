@@ -16,6 +16,8 @@ import { CompanyRepository, SalesOrderRepository } from "./sales-order.repositor
 import { buildReconciledItemPlan, snapshotUnsnapshottedLinesInTx } from "./sales-order-bom.service";
 import { releaseActiveReservationsForSalesOrderInTx } from "@/modules/finished-goods-inventory/finished-goods-reservation.service";
 import { SalesOrderStatus, type Prisma } from "@prisma/client";
+import { creditAfterCustomerChange, resolveDefaultChannel, resolveDefaultSalesCredit } from "@/modules/sales-marketing/performance/sales-credit.service";
+import { releaseForSalesOrder } from "@/modules/sales-marketing/promotions/redemption.service";
 
 interface ActorContext {
   companyId: string;
@@ -237,7 +239,13 @@ async function assertCustomerAndBuyer(companyId: string, customerId: string, buy
   return customer;
 }
 
-export async function createSalesOrder(actor: ActorContext, input: SalesOrderInput) {
+/**
+ * `origin.sourceQuotationRevisionId` is set only by Sales & Marketing's
+ * quotation conversion (S4, 2026-10-29) — never from the public order API.
+ * The column is unique, so a second conversion of the same revision fails
+ * with a unique violation instead of creating a second order.
+ */
+export async function createSalesOrder(actor: ActorContext, input: SalesOrderInput, origin: { sourceQuotationRevisionId?: string } = {}) {
   await assertCustomerAndBuyer(actor.companyId, input.customerId, input.buyerId);
 
   await assertItemsAreStyles(actor.companyId, input.items, { rejectInactive: true });
@@ -273,6 +281,16 @@ export async function createSalesOrder(actor: ActorContext, input: SalesOrderInp
     return orderSum + item.unitPrice * itemQty;
   }, 0);
 
+  // Sales credit (Sales & Marketing Phase 05): stored on the order so later
+  // owner / territory changes never rewrite history (PHASE_05_PERFORMANCE §3).
+  const credit = await resolveDefaultSalesCredit(prisma, actor.companyId, {
+    customerId: input.customerId,
+    orderDate: input.orderDate,
+    sourceQuotationRevisionId: origin.sourceQuotationRevisionId ?? null,
+    creatorUserId: actor.userId,
+  });
+  const channel = await resolveDefaultChannel(prisma, actor.companyId, origin.sourceQuotationRevisionId);
+
   // Bare header first — createHeader() has no items yet, so
   // buildReconciledItemPlan() below (called against this real order id with
   // zero existing SalesOrderLines) correctly treats every submitted item as
@@ -288,6 +306,7 @@ export async function createSalesOrder(actor: ActorContext, input: SalesOrderInp
     requiredShipDate: input.requiredShipDate ? new Date(input.requiredShipDate) : null,
     customerPoNumber: input.customerPoNumber || null,
     originatingOpportunityId: input.originatingOpportunityId || null,
+    sourceQuotationRevisionId: origin.sourceQuotationRevisionId ?? null,
     status: "DRAFT",
     currencyCode,
     exchangeRate: 1,
@@ -295,6 +314,10 @@ export async function createSalesOrder(actor: ActorContext, input: SalesOrderInp
     totalAmount,
     baseTotalAmount: totalAmount,
     requestedByUserId: actor.userId,
+    salesRepUserId: credit.salesRepUserId,
+    salesTerritoryId: credit.salesTerritoryId,
+    salesCreditSource: credit.salesCreditSource,
+    ...channel,
   });
 
   // A brand-new order always starts DRAFT — isConfirmed: false, so no line
@@ -426,10 +449,17 @@ export async function updateSalesOrder(actor: ActorContext, id: string, input: U
     }))
   );
 
+  // Sales credit follows a changed customer unless it was set by hand (PHASE_05 §3).
+  const credit =
+    existing.customerId !== input.customerId
+      ? await creditAfterCustomerChange(prisma, actor.companyId, existing, { customerId: input.customerId, orderDate: input.orderDate })
+      : null;
+
   const updated = await SalesOrderRepository.replaceItems(
     actor.companyId,
     id,
     {
+      ...(credit ?? {}),
       customerId: input.customerId,
       buyerId: input.buyerId || null,
       orderDate: new Date(input.orderDate),
@@ -572,6 +602,8 @@ export async function transitionSalesOrderStatus(actor: ActorContext, id: string
 
       // Release eligible active FinishedGoodsReservation records
       await releaseActiveReservationsForSalesOrderInTx(tx, id);
+      // Promotion uses taken by this order go back to their promotions' limits (Sales & Marketing Phase 12).
+      await releaseForSalesOrder(tx, actor, id, `Sales Order ${before.orderNumber} cancelled.`);
     });
   } else {
     // Conditional on status still being `before.status` at write time — closes

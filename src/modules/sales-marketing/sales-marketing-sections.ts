@@ -1,0 +1,57 @@
+/**
+ * Sales & Marketing module map (Phase 01, 2026-10-28). Client-safe — no
+ * Prisma. Lists every functional area of the module and the roadmap phase that
+ * builds it, so the dashboard can show what exists and what is still planned.
+ *
+ * A section only gets a sidebar link and a route once its phase is built:
+ * flip `status` to "AVAILABLE", set `href`, and add the leaf to
+ * src/components/layout/navigation.ts in the same change.
+ */
+
+export type SalesMarketingArea = "SALES" | "MARKETING" | "ANALYTICS" | "PLATFORM";
+export type SalesMarketingSectionStatus = "AVAILABLE" | "PLANNED";
+
+export interface SalesMarketingSection {
+  key: string;
+  label: string;
+  area: SalesMarketingArea;
+  /** Roadmap phase that builds this section (docs/sales-marketing/ROADMAP). */
+  phase: number;
+  description: string;
+  status: SalesMarketingSectionStatus;
+  /** Set only when status is AVAILABLE. */
+  href?: string;
+}
+
+export const SALES_MARKETING_AREAS: { key: SalesMarketingArea; label: string }[] = [
+  { key: "SALES", label: "Sales Management" },
+  { key: "MARKETING", label: "Marketing Management" },
+  { key: "ANALYTICS", label: "Sales & Marketing Analytics" },
+  { key: "PLATFORM", label: "Integrations & Settings" },
+];
+
+export const SALES_MARKETING_SECTIONS: readonly SalesMarketingSection[] = [
+  { key: "enquiries", label: "Sales Enquiries", area: "SALES", phase: 2, status: "AVAILABLE", href: "/sales-marketing/enquiries", description: "Capture and qualify incoming sales enquiries." },
+  { key: "quotations", label: "Quotations & Proposals", area: "SALES", phase: 2, status: "AVAILABLE", href: "/sales-marketing/quotations", description: "Prepare, revise and send quotations to customers." },
+  { key: "pricing", label: "Pricing & Price Lists", area: "SALES", phase: 3, status: "AVAILABLE", href: "/sales-marketing/pricing", description: "Default and customer price lists with quantity breaks, versions and approval." },
+  { key: "discounts", label: "Discounts & Approvals", area: "SALES", phase: 3, status: "AVAILABLE", href: "/sales-marketing/pricing/discounts", description: "Discount rules and approval limits." },
+  { key: "sales-orders", label: "Sales Order Integration", area: "SALES", phase: 4, status: "AVAILABLE", href: "/sales-marketing/quotations", description: "Turn accepted quotations into ERP Sales Orders (Convert on an accepted quotation)." },
+  { key: "targets", label: "Sales Targets", area: "SALES", phase: 5, status: "AVAILABLE", href: "/sales-marketing/targets", description: "Approved targets per rep, team, territory and period, with live attainment." },
+  { key: "territories", label: "Sales Territories", area: "SALES", phase: 5, status: "AVAILABLE", href: "/sales-marketing/territories", description: "Regions, rep assignments and customer assignment." },
+  { key: "team-performance", label: "Sales Team Performance", area: "SALES", phase: 5, status: "AVAILABLE", href: "/sales-marketing/performance", description: "Rep, team and territory results against targets, with drill-down." },
+  { key: "forecasting", label: "Sales Forecasting", area: "SALES", phase: 6, status: "AVAILABLE", href: "/sales-marketing/forecast", description: "Booked + weighted pipeline and trend vs target, snapshots with accuracy, what-if scenarios." },
+  { key: "channels", label: "Sales Channels", area: "SALES", phase: 7, status: "AVAILABLE", href: "/sales-marketing/channels", description: "Channel master set on enquiries, quotations and Sales Orders, with sales by channel." },
+  { key: "commissions", label: "Commissions & Incentives", area: "SALES", phase: 7, status: "AVAILABLE", href: "/sales-marketing/commissions", description: "Approved commission plans for reps and sales agents, target incentives, monthly statements paid through Payment Requests." },
+  { key: "campaigns", label: "Campaigns & Calendar", area: "MARKETING", phase: 8, status: "AVAILABLE", href: "/sales-marketing/campaigns", description: "Plan, approve and run campaigns with milestones, success metrics, budget vs linked expenses and a calendar." },
+  { key: "segments", label: "Audience Segmentation", area: "MARKETING", phase: 9, status: "AVAILABLE", href: "/sales-marketing/segments", description: "Dynamic and static audiences over CRM contacts, companies, leads and customers, with snapshots and consent checks." },
+  { key: "marketing-channels", label: "Marketing Channels", area: "MARKETING", phase: 10, status: "AVAILABLE", href: "/sales-marketing/delivery", description: "Send campaign messages by email (SMTP, Brevo), SMS (MSG91) and WhatsApp Cloud API, with consent checks, delivery tracking and unsubscribes." },
+  { key: "assets", label: "Assets & Templates", area: "MARKETING", phase: 11, status: "AVAILABLE", href: "/sales-marketing/content", description: "Versioned asset library, marketing approval of message templates, campaign content with email attachments." },
+  { key: "promotions", label: "Promotions, Offers & Budgets", area: "MARKETING", phase: 12, status: "AVAILABLE", href: "/sales-marketing/promotions", description: "Approved line-discount promotions (automatic or by code) with usage limits, and campaign budget lines against linked expenses, purchase orders and invoices." },
+  { key: "attribution", label: "Campaign Attribution & ROI", area: "MARKETING", phase: 13, status: "AVAILABLE", href: "/sales-marketing/attribution", description: "Approved first / last / linear / position / time-decay models share credit for leads, enquiries, accepted quotes and orders between campaign touches; attributed revenue against actual spend." },
+  { key: "bulk-operations", label: "Bulk Operations", area: "PLATFORM", phase: 14, status: "AVAILABLE", href: "/sales-marketing/bulk-jobs", description: "Background bulk actions on enquiries, quotations, campaigns, promotions and attribution models — dry runs, exports, recalculation, saved schedules — plus enquiry import from CSV / Excel." },
+  { key: "workflows", label: "Workflows", area: "PLATFORM", phase: 15, status: "AVAILABLE", href: "/sales-marketing/workflows", description: "Quotation follow-up, quotation-to-order, campaign readiness, budget exceptions and processing follow-up — tasks, reminders and escalations through the existing approvals; people still approve, convert and launch." },
+  { key: "reports", label: "Analytics & Reports", area: "ANALYTICS", phase: 17, status: "AVAILABLE", href: "/sales-marketing/analytics", description: "Governed metrics and standard dashboards (executive, sales, marketing, operations), a report builder with drill-down and comparisons, saved and shared reports, and scheduled per-recipient delivery." },
+  { key: "ai-insights", label: "AI-Assisted Insights", area: "ANALYTICS", phase: 18, status: "PLANNED", description: "AI help for sales and marketing decisions." },
+  { key: "integrations", label: "Integrations & Webhooks", area: "PLATFORM", phase: 16, status: "AVAILABLE", href: "/sales-marketing/integrations", description: "Scoped API keys for a versioned S&M API, signed outgoing webhooks for S&M events, enquiry intake from other systems with conflict review, and one registry with the health of every integration." },
+  { key: "settings", label: "Settings", area: "PLATFORM", phase: 2, status: "AVAILABLE", href: "/sales-marketing/settings", description: "Module configuration, added with the first features that need it." },
+];

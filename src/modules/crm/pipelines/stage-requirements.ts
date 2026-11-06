@@ -1,4 +1,4 @@
-import { ERP_DOC_TYPES, ERP_DOC_TYPE_KEYS, QUOTATION_NOT_AVAILABLE, type ErpDocType } from "../opportunities/opportunity-registry";
+import { ERP_DOC_TYPES, ERP_DOC_TYPE_KEYS, type ErpDocType } from "../opportunities/opportunity-registry";
 
 /**
  * Client-safe registry of what a stage (or a single transition) can require
@@ -10,8 +10,8 @@ import { ERP_DOC_TYPES, ERP_DOC_TYPE_KEYS, QUOTATION_NOT_AVAILABLE, type ErpDocT
  *   ERP links  "erp:any", "erp:SALES_ORDER", … (from ERP_DOC_TYPES)
  *   custom     "custom:<field key>" (active OPPORTUNITY custom fields)
  *
- * A quotation requirement appears as unavailable until the ERP has a
- * quotation module; add a QUOTATION ERP doc type and it becomes selectable.
+ * Quotations (Sales & Marketing) are an ERP doc type, so "erp:QUOTATION" is
+ * selectable like the others. Nothing is unavailable any more.
  */
 
 export interface RequirementSnapshot {
@@ -47,7 +47,7 @@ export const ERP_ANY_REQUIREMENT = "erp:any";
 export const CUSTOM_PREFIX = "custom:";
 export const ERP_PREFIX = "erp:";
 
-export const UNAVAILABLE_REQUIREMENTS = [{ key: "quotation", label: "Quotation", reason: QUOTATION_NOT_AVAILABLE }] as const;
+export const UNAVAILABLE_REQUIREMENTS: readonly { key: string; label: string; reason: string }[] = [];
 
 export interface RequirementOption {
   key: string;

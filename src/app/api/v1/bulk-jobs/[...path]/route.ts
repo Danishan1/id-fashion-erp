@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { buildListMeta, parseListQuery } from "@/lib/list-query";
 import { parseBulkItemFilters } from "@/modules/bulk-actions/bulk-job.schema";
-import { buildBulkErrorReport, cancelBulkJob, downloadBulkExport, getBulkJob, listBulkJobItems, retryBulkJob } from "@/modules/bulk-actions/bulk-jobs.service";
+import { buildBulkErrorReport, cancelBulkJob, downloadBulkExport, getBulkJob, listBulkJobItems, retryBulkJob, runBulkJobForReal } from "@/modules/bulk-actions/bulk-jobs.service";
 import { bulkRoute, readJsonBody } from "@/modules/bulk-actions/bulk-route";
 
 /**
@@ -14,6 +14,8 @@ import { bulkRoute, readJsonBody } from "@/modules/bulk-actions/bulk-route";
  *   GET  /{id}/download   the export file (requester only, until it expires)
  *   POST /{id}/cancel     stop records that haven't started (nothing is rolled back)
  *   POST /{id}/retry      { idempotencyKey? } → a new job for the failed records
+ *   POST /{id}/run-for-real { idempotencyKey?, confirmCount? } → after a dry run, the real job
+ *                         on the records that would succeed (Phase 14, S&M)
  */
 type Params = { path: string[] };
 
@@ -67,6 +69,10 @@ export const POST = bulkRoute<Params>(async ({ req, params, actor }) => {
   if (sub === "cancel") return NextResponse.json({ data: await cancelBulkJob(actor, id) });
   if (sub === "retry") {
     const job = await retryBulkJob(actor, id, await readJsonBody(req));
+    return NextResponse.json({ data: job }, { status: job.duplicate ? 200 : 202 });
+  }
+  if (sub === "run-for-real") {
+    const job = await runBulkJobForReal(actor, id, await readJsonBody(req));
     return NextResponse.json({ data: job }, { status: job.duplicate ? 200 : 202 });
   }
   notFound();

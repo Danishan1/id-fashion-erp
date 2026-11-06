@@ -1,17 +1,5 @@
-import { z } from "zod";
-
-// The old synchronous CRM/Marketing CSV importer's own type set. LEAD/DEAL
-// were removed with the legacy CRM (2026-10-09, CRM Replacement) --
-// CAMPAIGN_DAILY_METRIC is Marketing's own and was restored (Marketing was
-// explicitly kept, see CLAUDE.md's CRM Replacement section).
-export const IMPORT_BATCH_TYPES = ["CAMPAIGN_DAILY_METRIC"] as const;
-export type ImportBatchTypeValue = (typeof IMPORT_BATCH_TYPES)[number];
-
-// Super Admin -> Bulk Master Data Import portal (2026-09-04) -- a distinct
-// set from IMPORT_BATCH_TYPES above (the original synchronous CRM/Marketing
-// import), since these run through the async Redis/BullMQ pipeline instead.
-// Kept as a separate const rather than folded into IMPORT_BATCH_TYPES so the
-// two pipelines' own UIs/routes can each iterate just their own set.
+// Super Admin -> Bulk Master Data Import portal (2026-09-04) -- these run
+// through the async Redis/BullMQ pipeline.
 export const BULK_IMPORT_MASTER_TYPES = [
   "CUSTOMER",
   "SUPPLIER",
@@ -521,31 +509,75 @@ export const BULK_IMPORT_SAMPLE_ROWS: Record<BulkImportMasterType, Record<string
   },
 };
 
-// The old synchronous importer's own column spec + run schema (restored
-// 2026-10-09, CRM Replacement -- Marketing's CAMPAIGN_DAILY_METRIC CSV
-// import, LEAD/DEAL dropped with the legacy CRM).
-export const IMPORT_COLUMNS: Record<ImportBatchTypeValue, ImportColumnSpec[]> = {
-  CAMPAIGN_DAILY_METRIC: [
-    { key: "campaignNumber", label: "Campaign # (e.g. CAM-2026-00001)", required: false },
-    { key: "campaignName", label: "Campaign Name (used only if Campaign # is blank)", required: false },
-    { key: "metricDate", label: "Metric Date (YYYY-MM-DD)", required: true },
-    { key: "spend", label: "Spend", required: false },
-    { key: "impressions", label: "Impressions", required: false },
-    { key: "clicks", label: "Clicks", required: false },
-    { key: "notes", label: "Notes", required: false },
+
+// ---------------------------------------------------------------------------
+// Phase 14 (Sales & Marketing, 2026-11-06): enquiry CSV / Excel import.
+// Same pipeline as the masters above (server-side parse → per-row dry-run
+// validation preview → queued commit → per-row isolation → batch history),
+// but reached from Sales & Marketing → Enquiries with sales_marketing.create,
+// not from the Admin portal, and each row is created through the S&M enquiry
+// service (createSalesEnquiry) — owner eligibility, CRM links, customer /
+// buyer / style / size checks and the enquiry's own numbering all apply.
+// One row = one enquiry with one line (more lines can be added afterwards).
+// ---------------------------------------------------------------------------
+export const SALES_IMPORT_TYPES = ["BUYER_ENQUIRY"] as const;
+export type SalesImportType = (typeof SALES_IMPORT_TYPES)[number];
+export type BulkImportType = BulkImportMasterType | SalesImportType;
+
+export const SALES_IMPORT_COLUMNS: Record<SalesImportType, ImportColumnSpec[]> = {
+  BUYER_ENQUIRY: [
+    { key: "enquiryDate", label: "Enquiry Date (YYYY-MM-DD)", required: true },
+    { key: "customerCode", label: "Customer Code (blank for a prospect)", required: false },
+    { key: "buyerName", label: "Buyer (of that customer)", required: false },
+    { key: "prospectName", label: "Prospect Name (when no customer)", required: false },
+    { key: "prospectContactPerson", label: "Prospect Contact Person", required: false },
+    { key: "prospectEmail", label: "Prospect Email", required: false },
+    { key: "prospectPhone", label: "Prospect Phone", required: false },
+    { key: "prospectCountry", label: "Prospect Country", required: false },
+    { key: "source", label: "Source (EMAIL / PHONE / TRADE_SHOW / REFERRAL / WEBSITE / OTHER)", required: false },
+    { key: "subject", label: "Subject", required: false },
+    { key: "priority", label: "Priority (LOW / NORMAL / HIGH / URGENT)", required: false },
+    { key: "ownerEmail", label: "Owner Email (blank = you)", required: false },
+    { key: "nextFollowUpDate", label: "Next Follow-up (YYYY-MM-DD)", required: false },
+    { key: "styleCode", label: "Style Code (existing style)", required: false },
+    { key: "styleName", label: "Style / Item (free text)", required: false },
+    { key: "description", label: "Description", required: false },
+    { key: "colorRemarks", label: "Colour", required: false },
+    { key: "sizeCode", label: "Size Code", required: false },
+    { key: "targetQuantity", label: "Target Quantity", required: false },
+    { key: "targetUnitPrice", label: "Target Unit Price", required: false },
+    { key: "targetDeliveryDate", label: "Target Delivery (YYYY-MM-DD)", required: false },
+    { key: "remarks", label: "Remarks", required: false },
   ],
 };
 
-// Deliberately no separate per-row Zod schema here -- import.service.ts
-// validates each row by feeding it straight into the exact same
-// recordDailyMetricSchema the manual UI form already uses, so a CSV-imported
-// record can never diverge from a manually-created one's validation rules.
-export const runImportSchema = z.object({
-  importType: z.enum(IMPORT_BATCH_TYPES),
-  fileName: z.string().min(1).max(255),
-  // Already column-mapped client-side into canonical keys -- every value is
-  // still a raw string (as read from the CSV cell); per-row Zod coercion
-  // happens server-side, never trusted from the client.
-  rows: z.array(z.record(z.string(), z.string())).min(1, "The file has no data rows.").max(5000, "A single import is capped at 5000 rows."),
-});
-export type RunImportInput = z.infer<typeof runImportSchema>;
+export const SALES_IMPORT_SAMPLE_ROWS: Record<SalesImportType, Record<string, string>> = {
+  BUYER_ENQUIRY: {
+    enquiryDate: "2026-11-02",
+    customerCode: "",
+    buyerName: "",
+    prospectName: "Blue Harbour Retail",
+    prospectContactPerson: "Asha Menon",
+    prospectEmail: "asha@blueharbour.example",
+    prospectPhone: "+91 98450 00000",
+    prospectCountry: "India",
+    source: "TRADE_SHOW",
+    subject: "Summer linen shirts",
+    priority: "HIGH",
+    ownerEmail: "",
+    nextFollowUpDate: "2026-11-10",
+    styleCode: "",
+    styleName: "Linen camp-collar shirt",
+    description: "100% linen, garment washed",
+    colorRemarks: "Sand, Olive",
+    sizeCode: "",
+    targetQuantity: "1200",
+    targetUnitPrice: "540",
+    targetDeliveryDate: "2027-02-15",
+    remarks: "Met at the Bengaluru trade fair",
+  },
+};
+
+export function importColumnsFor(type: BulkImportType): ImportColumnSpec[] {
+  return (SALES_IMPORT_TYPES as readonly string[]).includes(type) ? SALES_IMPORT_COLUMNS[type as SalesImportType] : BULK_IMPORT_COLUMNS[type as BulkImportMasterType];
+}

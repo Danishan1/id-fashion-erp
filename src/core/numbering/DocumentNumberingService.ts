@@ -5,6 +5,7 @@ const PREFIX_BY_DOCUMENT_TYPE: Record<DocumentType, string> = {
   SAMPLE_REQUEST: "SAM",
   BUYER_ENQUIRY: "ENQ",
   SALES_ORDER: "ORD",
+  QUOTATION: "QUO",
   PRODUCTION_ORDER: "PROD",
   SALES_INVOICE: "INV",
   PURCHASE_INVOICE: "PINV",
@@ -37,7 +38,6 @@ const PREFIX_BY_DOCUMENT_TYPE: Record<DocumentType, string> = {
   SKU: "SKU",
   CRM_LEAD: "LEAD",
   CRM_OPPORTUNITY: "OPP",
-  CAMPAIGN: "CAMP",
   FORWARDER: "TRN",
   // Finished Goods Inventory module (2026-10-13, FGI-004).
   FG_RECEIPT: "FGR",

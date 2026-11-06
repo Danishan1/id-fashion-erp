@@ -76,6 +76,8 @@ describe.skipIf(!DB_URL)("Bulk action engine (database integration)", async () =
     viewAllUsers.add(a.id);
     // Rep is not a CRM admin (no crm_settings.edit): sees only own bulk jobs.
     denied.add(`${r.id}:crm_settings.edit`);
+    // …nor a Sales & Marketing admin (S&M Phase 14 registers its record types with that admin permission).
+    denied.add(`${r.id}:sales_marketing_settings.edit`);
   });
 
   afterAll(async () => {

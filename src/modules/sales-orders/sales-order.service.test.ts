@@ -20,6 +20,12 @@ vi.mock("@/core/db/client", () => {
     },
   };
 });
+// Sales credit (Sales & Marketing Phase 05) has its own real-DB tests; here it just returns the creator.
+vi.mock("@/modules/sales-marketing/performance/sales-credit.service", () => ({
+  resolveDefaultSalesCredit: vi.fn(async (_db: unknown, _companyId: string, input: { creatorUserId: string }) => ({ salesRepUserId: input.creatorUserId, salesTerritoryId: null, salesCreditSource: "CREATOR" })),
+  resolveDefaultChannel: vi.fn(async () => ({ salesChannelId: null, salesAgentId: null, campaignId: null })),
+  creditAfterCustomerChange: vi.fn(async () => null),
+}));
 vi.mock("@/modules/finished-goods-inventory/finished-goods-reservation.service", () => ({
   releaseActiveReservationsForSalesOrderInTx: vi.fn().mockResolvedValue(0),
 }));
@@ -61,6 +67,7 @@ vi.mock("./sales-order.repository", () => ({
 // inspects) since these tests only care about sales-order.service.ts's own
 // pre-existing guards/behavior. sales-order-bom.service.test.ts covers the
 // real reconciliation/snapshot logic in isolation.
+vi.mock("@/modules/sales-marketing/promotions/redemption.service", () => ({ releaseForSalesOrder: vi.fn(async () => 0) }));
 vi.mock("./sales-order-bom.service", () => ({
   buildReconciledItemPlan: vi.fn(),
   snapshotUnsnapshottedLinesInTx: vi.fn(),
@@ -151,6 +158,8 @@ describe("createSalesOrder", () => {
     vi.mocked(CustomerRepository.findByIdWithBuyers).mockResolvedValue({ id: "cust-1", name: "Zenith", buyers: [{ id: "buyer-own" }] } as never);
     await createSalesOrder(actor, { customerId: "cust-1", buyerId: "buyer-own", orderDate: "2026-08-24", requiredShipDate: "", items: [oneItem()] });
     expect(SalesOrderRepository.createHeader).toHaveBeenCalledWith(expect.objectContaining({ buyerId: "buyer-own" }));
+    // The sales credit worked out for the order is stored on its header.
+    expect(SalesOrderRepository.createHeader).toHaveBeenCalledWith(expect.objectContaining({ salesRepUserId: actor.userId, salesTerritoryId: null, salesCreditSource: "CREATOR" }));
   });
 
   it("rejects a line item whose product is not a Style — the P0 fix, closing the gap every sibling module already guards", async () => {

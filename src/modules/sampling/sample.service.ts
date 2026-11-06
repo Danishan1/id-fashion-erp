@@ -648,8 +648,7 @@ export async function transitionSampleStatus(actor: ActorContext, id: string, ta
   // (includes CUSTOMER directly); the new CrmActivity's own CrmEntityType
   // enum is scoped to CRM-internal entities only, so this attaches to the
   // customer's linked CrmCompany when one exists, and is silently skipped
-  // otherwise (same documented tradeoff as customer-segments.service.ts's
-  // generateReengagementFollowups()). Goes through the real createActivity()
+  // otherwise. Goes through the real createActivity()
   // service (not a raw Prisma write) so this gets the same audit log /
   // crm_events / assignee-notification handling every other CRM activity
   // write does — never a second, invisible write path into this table.

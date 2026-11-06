@@ -25,6 +25,7 @@ export function registerAction<P>(def: BulkActionDefinition<P>): void {
   if (actions.has(def.key)) throw new Error(`Bulk action "${def.key}" is already registered.`);
   if (!entities.has(def.entityType)) throw new Error(`Bulk action "${def.key}": entity "${def.entityType}" is not registered.`);
   if (!def.unavailableReason && !def.executeItem && !def.executeBatch) throw new Error(`Bulk action "${def.key}" needs executeItem / executeBatch (or an unavailableReason).`);
+  if (def.validateItem && !def.executeItem) throw new Error(`Bulk action "${def.key}": validateItem needs executeItem.`);
   if (def.maxItems < 1) throw new Error(`Bulk action "${def.key}": maxItems must be positive.`);
   actions.set(def.key, def as unknown as BulkActionDefinition<never>);
 }
@@ -76,6 +77,10 @@ export interface BulkActionCapability {
   retrySafe: boolean;
   maxItems: number;
   fields: BulkParamField[];
+  /** Phase 14 (S&M): a per-record dry run is offered. */
+  dryRun: boolean;
+  dryRunUnavailableReason: string | null;
+  schedulable: boolean;
 }
 
 /**
@@ -103,6 +108,9 @@ export async function getAvailableActions(actor: BulkActor, entityType: string):
       retrySafe: def.retrySafe,
       maxItems: def.maxItems,
       fields: av.available && def.fields ? await def.fields(actor) : [],
+      dryRun: Boolean(def.validateItem),
+      dryRunUnavailableReason: def.validateItem ? null : (def.dryRunUnavailableReason ?? "This action can't be tried out first."),
+      schedulable: Boolean(def.schedulable),
     });
   }
   return out;

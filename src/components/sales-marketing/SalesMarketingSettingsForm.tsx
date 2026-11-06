@@ -1,0 +1,127 @@
+"use client";
+
+import { useState, type FormEvent } from "react";
+import { Button } from "@/components/ui/Button";
+import { FormField, textInputClass } from "@/components/ui/FormField";
+import { getApiErrorMessage } from "@/lib/api-client";
+import { formatDateTime } from "@/lib/date-format";
+
+interface Settings {
+  quotationApprovalMaxDiscountPercent: number;
+  quotationApprovalMaxTotal: number;
+  quotationDefaultValidityDays: number;
+  quotationDefaultTerms: string | null;
+  pricingMaxRuleDiscountPercent?: number | null;
+  forecastProbabilityApproved?: number;
+  forecastProbabilityIssued?: number;
+  forecastProbabilityAccepted?: number;
+  forecastTrendLookback?: number;
+  forecastStaleDays?: number;
+  campaignApprovalRequired?: boolean;
+  budgetWarnPercent?: number;
+  updatedAt: string | null;
+}
+
+export function SalesMarketingSettingsForm({ initial, canEdit }: { initial: Settings; canEdit: boolean }) {
+  const [v, setV] = useState({
+    quotationApprovalMaxDiscountPercent: String(initial.quotationApprovalMaxDiscountPercent),
+    quotationApprovalMaxTotal: String(initial.quotationApprovalMaxTotal),
+    quotationDefaultValidityDays: String(initial.quotationDefaultValidityDays),
+    quotationDefaultTerms: initial.quotationDefaultTerms ?? "",
+    pricingMaxRuleDiscountPercent: initial.pricingMaxRuleDiscountPercent === null || initial.pricingMaxRuleDiscountPercent === undefined ? "" : String(initial.pricingMaxRuleDiscountPercent),
+    forecastProbabilityApproved: String(initial.forecastProbabilityApproved ?? 30),
+    forecastProbabilityIssued: String(initial.forecastProbabilityIssued ?? 50),
+    forecastProbabilityAccepted: String(initial.forecastProbabilityAccepted ?? 90),
+    forecastTrendLookback: String(initial.forecastTrendLookback ?? 3),
+    forecastStaleDays: String(initial.forecastStaleDays ?? 60),
+    campaignApprovalRequired: initial.campaignApprovalRequired ?? true,
+    budgetWarnPercent: String(initial.budgetWarnPercent ?? 80),
+  });
+  const [updatedAt, setUpdatedAt] = useState(initial.updatedAt);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const save = async (e: FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    setMessage(null);
+    const res = await fetch("/api/v1/sales-marketing/settings", { method: "PUT", headers: { "Content-Type": "application/json", "x-toast": "off" }, body: JSON.stringify(v) });
+    setSaving(false);
+    if (!res.ok) return setMessage({ ok: false, text: await getApiErrorMessage(res) });
+    setUpdatedAt((await res.json()).data.updatedAt);
+    setMessage({ ok: true, text: "Saved. New limits apply to quotations submitted or issued from now on." });
+  };
+
+  return (
+    <form onSubmit={save} className="max-w-2xl space-y-4 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+      <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Quotation approval</h2>
+      <p className="text-sm text-zinc-600 dark:text-zinc-300">
+        A quotation needs approval before it is issued when any line discount is above the first limit or its grand total is above the second. The approver can&apos;t be
+        the person who prepared or submitted it.
+      </p>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <FormField label="Max line discount without approval (%)" htmlFor="maxDiscount" required>
+          <input id="maxDiscount" type="number" min={0} max={100} step="0.01" required disabled={!canEdit} value={v.quotationApprovalMaxDiscountPercent} onChange={(e) => setV({ ...v, quotationApprovalMaxDiscountPercent: e.target.value })} className={textInputClass()} />
+        </FormField>
+        <FormField label="Max grand total without approval (₹)" htmlFor="maxTotal" required>
+          <input id="maxTotal" type="number" min={0} step="0.01" required disabled={!canEdit} value={v.quotationApprovalMaxTotal} onChange={(e) => setV({ ...v, quotationApprovalMaxTotal: e.target.value })} className={textInputClass()} />
+        </FormField>
+      </div>
+      <h2 className="pt-2 text-sm font-semibold text-zinc-900 dark:text-zinc-50">New quotations</h2>
+      <FormField label="Default validity (days)" htmlFor="validity" required>
+        <input id="validity" type="number" min={1} max={365} required disabled={!canEdit} value={v.quotationDefaultValidityDays} onChange={(e) => setV({ ...v, quotationDefaultValidityDays: e.target.value })} className={`${textInputClass()} max-w-[10rem]`} />
+      </FormField>
+      <FormField label="Default terms & conditions" htmlFor="terms">
+        <textarea id="terms" rows={5} maxLength={10000} disabled={!canEdit} value={v.quotationDefaultTerms} onChange={(e) => setV({ ...v, quotationDefaultTerms: e.target.value })} className={textInputClass()} />
+      </FormField>
+      <h2 className="pt-2 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Pricing</h2>
+      <FormField label="Max automatic (discount-rule) discount per line, % of list price — blank = no cap" htmlFor="ruleCap">
+        <input id="ruleCap" type="number" min={0} max={100} step="0.01" disabled={!canEdit} value={v.pricingMaxRuleDiscountPercent} onChange={(e) => setV({ ...v, pricingMaxRuleDiscountPercent: e.target.value })} className={`${textInputClass()} max-w-[10rem]`} />
+      </FormField>
+      <h2 className="pt-2 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Forecast</h2>
+      <p className="text-sm text-zinc-600 dark:text-zinc-300">
+        Chance (%) that an open quotation becomes an order, used when it has no linked CRM opportunity with its own probability. These are defaults you choose, not measured rates —
+        the forecast page says so.
+      </p>
+      <div className="grid gap-4 sm:grid-cols-3">
+        {(
+          [
+            ["forecastProbabilityApproved", "Approved, not issued (%)"],
+            ["forecastProbabilityIssued", "Issued, awaiting decision (%)"],
+            ["forecastProbabilityAccepted", "Accepted, not yet ordered (%)"],
+          ] as const
+        ).map(([key, label]) => (
+          <FormField key={key} label={label} htmlFor={key} required>
+            <input id={key} type="number" min={0} max={100} step={1} required disabled={!canEdit} value={v[key]} onChange={(e) => setV({ ...v, [key]: e.target.value })} className={textInputClass()} />
+          </FormField>
+        ))}
+        <FormField label="Trend: periods averaged" htmlFor="trendLookback" required>
+          <input id="trendLookback" type="number" min={1} max={24} step={1} required disabled={!canEdit} value={v.forecastTrendLookback} onChange={(e) => setV({ ...v, forecastTrendLookback: e.target.value })} className={textInputClass()} />
+        </FormField>
+        <FormField label="Flag opportunities not updated for (days)" htmlFor="staleDays" required>
+          <input id="staleDays" type="number" min={1} max={3650} step={1} required disabled={!canEdit} value={v.forecastStaleDays} onChange={(e) => setV({ ...v, forecastStaleDays: e.target.value })} className={textInputClass()} />
+        </FormField>
+      </div>
+      <h2 className="pt-2 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Campaigns</h2>
+      <label className="flex items-start gap-2 text-sm">
+        <input type="checkbox" className="mt-1" disabled={!canEdit} checked={v.campaignApprovalRequired} onChange={(e) => setV({ ...v, campaignApprovalRequired: e.target.checked })} />
+        <span>
+          Campaign plans need approval
+          <span className="block text-xs text-zinc-500">Someone other than the preparer approves a campaign&apos;s plan (and later changes to its dates or budget) before it can start. Off: submitting approves at once, recorded as automatic.</span>
+        </span>
+      </label>
+      <FormField label="Warn when a campaign budget is this % used (50–99)" htmlFor="budgetWarn" required>
+        <input id="budgetWarn" type="number" min={50} max={99} step={1} required disabled={!canEdit} value={v.budgetWarnPercent} onChange={(e) => setV({ ...v, budgetWarnPercent: e.target.value })} className={textInputClass()} />
+      </FormField>
+      {message && <p className={`text-sm ${message.ok ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>{message.text}</p>}
+      <div className="flex items-center gap-3">
+        {canEdit && (
+          <Button type="submit" isLoading={saving} loadingLabel="Saving…">
+            Save settings
+          </Button>
+        )}
+        <span className="text-xs text-zinc-500">{updatedAt ? `Last changed ${formatDateTime(updatedAt)}` : "Using the defaults (10% / ₹5,00,000 / 30 days)."}</span>
+      </div>
+    </form>
+  );
+}

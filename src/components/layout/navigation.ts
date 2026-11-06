@@ -106,15 +106,45 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Settings", href: "/crm/settings", modules: ["crm_settings"] },
     ],
   },
-  // Marketing (kept, unchanged shape, when the legacy CRM was replaced by
-  // the new CRM above — see CLAUDE.md's CRM Replacement section).
+  // Sales & Marketing (2026-10-28, docs/sales-marketing/) — replaced the old
+  // standalone "Marketing" group. Each phase adds its own leaf here when its
+  // screens exist; never link unbuilt pages.
   {
-    label: "Marketing",
-    href: "/marketing",
-    modules: ["marketing"],
+    label: "Sales & Marketing",
+    href: "/sales-marketing",
+    modules: ["sales_marketing", "sales_quotations", "sales_marketing_settings", "sales_pricing", "sales_performance", "sales_commissions", "marketing_campaigns", "marketing_segments", "marketing_delivery", "marketing_content", "marketing_promotions", "marketing_attribution", "sales_workflows", "sales_integrations", "sales_analytics"],
     children: [
-      { label: "Campaigns", href: "/campaigns", modules: ["marketing"] },
-      { label: "Import History", href: "/imports", modules: ["marketing"] },
+      { label: "Dashboard", href: "/sales-marketing", modules: ["sales_marketing"] },
+      { label: "Enquiries", href: "/sales-marketing/enquiries", modules: ["sales_marketing"] },
+      { label: "Quotations", href: "/sales-marketing/quotations", modules: ["sales_quotations"] },
+      { label: "Price Lists", href: "/sales-marketing/pricing", modules: ["sales_pricing"] },
+      { label: "Discount Rules", href: "/sales-marketing/pricing/discounts", modules: ["sales_pricing"] },
+      { label: "Pricing Preview", href: "/sales-marketing/pricing/preview", modules: ["sales_pricing"] },
+      { label: "Team Performance", href: "/sales-marketing/performance", modules: ["sales_performance"] },
+      { label: "Forecast", href: "/sales-marketing/forecast", modules: ["sales_performance"] },
+      { label: "Sales Targets", href: "/sales-marketing/targets", modules: ["sales_performance"] },
+      { label: "Territories", href: "/sales-marketing/territories", modules: ["sales_performance"] },
+      { label: "Commission Statements", href: "/sales-marketing/commissions", modules: ["sales_commissions"] },
+      { label: "Commission Plans", href: "/sales-marketing/commissions/plans", modules: ["sales_commissions"] },
+      { label: "Incentive Plans", href: "/sales-marketing/commissions/incentives", modules: ["sales_commissions"] },
+      { label: "Sales Channels", href: "/sales-marketing/channels", modules: ["sales_marketing_settings"] },
+      { label: "Campaigns", href: "/sales-marketing/campaigns", modules: ["marketing_campaigns"] },
+      { label: "Campaign Calendar", href: "/sales-marketing/campaigns/calendar", modules: ["marketing_campaigns"] },
+      { label: "Audience Segments", href: "/sales-marketing/segments", modules: ["marketing_segments"] },
+      { label: "Content Library", href: "/sales-marketing/content", modules: ["marketing_content"] },
+      { label: "Promotions", href: "/sales-marketing/promotions", modules: ["marketing_promotions"] },
+      { label: "Campaign Budgets", href: "/sales-marketing/budgets", modules: ["marketing_campaigns"] },
+      { label: "Attribution & ROI", href: "/sales-marketing/attribution", modules: ["marketing_attribution"] },
+      { label: "Delivery Runs", href: "/sales-marketing/delivery", modules: ["marketing_delivery"] },
+      // Phase 15: S&M workflow definitions and their running instances.
+      { label: "Workflows", href: "/sales-marketing/workflows", modules: ["sales_workflows"] },
+      { label: "Integrations", href: "/sales-marketing/integrations", modules: ["sales_integrations"] },
+      // Phase 17: governed reports, dashboards, saved reports and scheduled delivery.
+      { label: "Analytics", href: "/sales-marketing/analytics", modules: ["sales_analytics"] },
+      // Phase 14: background bulk jobs + saved schedules for S&M records (the jobs a user sees depend on the record types they can view).
+      { label: "Bulk Jobs", href: "/sales-marketing/bulk-jobs", modules: ["sales_marketing", "sales_quotations", "marketing_campaigns", "marketing_promotions", "marketing_attribution"] },
+      { label: "Channel Connections", href: "/sales-marketing/delivery/connections", modules: ["sales_marketing_settings"] },
+      { label: "Settings", href: "/sales-marketing/settings", modules: ["sales_marketing_settings"] },
     ],
   },
   {

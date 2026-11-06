@@ -1,0 +1,102 @@
+import { notFound } from "next/navigation";
+import { auth } from "@/core/auth/auth";
+import { PermissionService } from "@/core/rbac/PermissionService";
+import type { SalesActor } from "./enquiries/sales-enquiry.service";
+
+export interface SalesMarketingPagePermissions {
+  create: boolean;
+  edit: boolean;
+  viewAll: boolean;
+  crmView: boolean;
+  crmEdit: boolean;
+  /** Merchandising's Buyer Enquiry screen (line review, Sample conversion). */
+  merchandisingView: boolean;
+  /** Sales & Marketing itself (dashboard, enquiries). */
+  view: boolean;
+  quotations: { view: boolean; create: boolean; edit: boolean; cancel: boolean; approve: boolean; reject: boolean; print: boolean };
+  settings: { view: boolean; edit: boolean };
+  /** The Sales Orders module (S4: convert an accepted quotation, open its order). */
+  salesOrders: { view: boolean; create: boolean };
+  /** Phase 03 pricing (price lists, discount rules, preview). */
+  pricing: { view: boolean; create: boolean; edit: boolean; approve: boolean; reject: boolean };
+  /** Phase 05 targets, territories, team performance. */
+  performance: { view: boolean; viewAll: boolean; create: boolean; edit: boolean; approve: boolean; reject: boolean; export: boolean };
+  /** Phase 07 commissions & incentives. */
+  commissions: { view: boolean; viewAll: boolean; create: boolean; edit: boolean; approve: boolean; reject: boolean; export: boolean };
+  /** Phase 08 marketing campaigns. */
+  campaigns: { view: boolean; viewAll: boolean; create: boolean; edit: boolean; approve: boolean; reject: boolean; cancel: boolean; export: boolean };
+  /** Phase 09 audience segments. */
+  segments: { view: boolean; create: boolean; edit: boolean };
+}
+
+/**
+ * Server-component helper for Sales & Marketing pages: the actor (same shape
+ * the API routes build) plus permission flags that only drive the UI — every
+ * action is enforced again by its route.
+ */
+export async function getSalesMarketingPageContext(): Promise<{ actor: SalesActor; permissions: SalesMarketingPagePermissions }> {
+  const session = await auth();
+  if (!session?.user?.id) notFound();
+  const userId = session.user.id;
+  const [view, create, edit, viewAll, crmView, crmEdit, merchandisingView, qView, qCreate, qEdit, qCancel, qApprove, qReject, qPrint, sView, sEdit, soView, soCreate, pView, pCreate, pEdit, pApprove, pReject, fView, fViewAll, fCreate, fEdit, fApprove, fReject, fExport, cView, cViewAll, cCreate, cEdit, cApprove, cReject, cExport, mView, mViewAll, mCreate, mEdit, mApprove, mReject, mCancel, mExport, gView, gCreate, gEdit] = await Promise.all([
+    PermissionService.can(userId, "sales_marketing", "view"),
+    PermissionService.can(userId, "sales_marketing", "create"),
+    PermissionService.can(userId, "sales_marketing", "edit"),
+    PermissionService.can(userId, "sales_marketing", "view_all"),
+    PermissionService.can(userId, "crm", "view"),
+    PermissionService.can(userId, "crm", "edit"),
+    PermissionService.can(userId, "buyer_enquiries", "view"),
+    PermissionService.can(userId, "sales_quotations", "view"),
+    PermissionService.can(userId, "sales_quotations", "create"),
+    PermissionService.can(userId, "sales_quotations", "edit"),
+    PermissionService.can(userId, "sales_quotations", "cancel"),
+    PermissionService.can(userId, "sales_quotations", "approve"),
+    PermissionService.can(userId, "sales_quotations", "reject"),
+    PermissionService.can(userId, "sales_quotations", "print"),
+    PermissionService.can(userId, "sales_marketing_settings", "view"),
+    PermissionService.can(userId, "sales_marketing_settings", "edit"),
+    PermissionService.can(userId, "sales_orders", "view"),
+    PermissionService.can(userId, "sales_orders", "create"),
+    PermissionService.can(userId, "sales_pricing", "view"),
+    PermissionService.can(userId, "sales_pricing", "create"),
+    PermissionService.can(userId, "sales_pricing", "edit"),
+    PermissionService.can(userId, "sales_pricing", "approve"),
+    PermissionService.can(userId, "sales_pricing", "reject"),
+    PermissionService.can(userId, "sales_performance", "view"),
+    PermissionService.can(userId, "sales_performance", "view_all"),
+    PermissionService.can(userId, "sales_performance", "create"),
+    PermissionService.can(userId, "sales_performance", "edit"),
+    PermissionService.can(userId, "sales_performance", "approve"),
+    PermissionService.can(userId, "sales_performance", "reject"),
+    PermissionService.can(userId, "sales_performance", "export"),
+    PermissionService.can(userId, "sales_commissions", "view"),
+    PermissionService.can(userId, "sales_commissions", "view_all"),
+    PermissionService.can(userId, "sales_commissions", "create"),
+    PermissionService.can(userId, "sales_commissions", "edit"),
+    PermissionService.can(userId, "sales_commissions", "approve"),
+    PermissionService.can(userId, "sales_commissions", "reject"),
+    PermissionService.can(userId, "sales_commissions", "export"),
+    ...(["view", "view_all", "create", "edit", "approve", "reject", "cancel", "export"] as const).map((a) => PermissionService.can(userId, "marketing_campaigns", a)),
+    ...(["view", "create", "edit"] as const).map((a) => PermissionService.can(userId, "marketing_segments", a)),
+  ]);
+  return {
+    actor: { companyId: session.user.companyId, userId, branchId: session.user.defaultBranchId ?? null },
+    permissions: {
+      view,
+      create,
+      edit,
+      viewAll,
+      crmView,
+      crmEdit,
+      merchandisingView,
+      quotations: { view: qView, create: qCreate, edit: qEdit, cancel: qCancel, approve: qApprove, reject: qReject, print: qPrint },
+      settings: { view: sView, edit: sEdit },
+      salesOrders: { view: soView, create: soCreate },
+      pricing: { view: pView, create: pCreate, edit: pEdit, approve: pApprove, reject: pReject },
+      performance: { view: fView, viewAll: fViewAll, create: fCreate, edit: fEdit, approve: fApprove, reject: fReject, export: fExport },
+      commissions: { view: cView, viewAll: cViewAll, create: cCreate, edit: cEdit, approve: cApprove, reject: cReject, export: cExport },
+      campaigns: { view: mView, viewAll: mViewAll, create: mCreate, edit: mEdit, approve: mApprove, reject: mReject, cancel: mCancel, export: mExport },
+      segments: { view: gView, create: gCreate, edit: gEdit },
+    },
+  };
+}

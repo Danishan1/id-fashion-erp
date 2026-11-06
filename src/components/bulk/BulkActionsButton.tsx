@@ -6,7 +6,19 @@ import { crmRequest } from "@/components/crm/crm-api";
 import { Button, buttonClasses } from "@/components/ui/Button";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { Modal } from "@/components/ui/Modal";
-import { BULK_CAPABILITIES_API, BULK_JOBS_API, BULK_JOBS_PAGE, BULK_PREVIEW_API, type BulkActionCapabilityDto, type BulkCapabilitiesDto, type BulkJobDto, type BulkParamFieldDto, type BulkPreviewDto } from "./bulk-ui-types";
+import {
+  BULK_CAPABILITIES_API,
+  BULK_JOBS_API,
+  BULK_JOBS_PAGE,
+  BULK_PREVIEW_API,
+  BULK_SCHEDULES_API,
+  type BulkActionCapabilityDto,
+  type BulkCapabilitiesDto,
+  type BulkJobDto,
+  type BulkParamFieldDto,
+  type BulkPreviewDto,
+  type BulkScheduleDto,
+} from "./bulk-ui-types";
 
 /**
  * Phase 14 — the reusable entry point to the Bulk Action Engine for any list
@@ -15,6 +27,11 @@ import { BULK_CAPABILITIES_API, BULK_JOBS_API, BULK_JOBS_PAGE, BULK_PREVIEW_API,
  * settings, review the count and summary, confirm, and the job runs in the
  * background. Everything shown (actions, reasons, fields, options) comes from
  * the capabilities API, so a new registered action appears here with no UI work.
+ *
+ * Sales & Marketing Phase 14 adds, when the action offers them: "Dry run first"
+ * (every record checked, nothing changed — then "Run for real" from the job
+ * page) and "Save as a schedule" (over the current filters; daily / weekly /
+ * monthly, India time). `jobsPath` / `schedulesPath` are the module's pages.
  */
 export function BulkActionsButton({
   entityType,
@@ -23,6 +40,8 @@ export function BulkActionsButton({
   onSubmitted,
   label = "Bulk actions",
   size = "sm",
+  jobsPath,
+  schedulesPath,
 }: {
   entityType: string;
   selectedIds: string[];
@@ -31,6 +50,8 @@ export function BulkActionsButton({
   onSubmitted?: (job: BulkJobDto) => void;
   label?: string;
   size?: "sm" | "xs";
+  jobsPath?: string;
+  schedulesPath?: string;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -38,12 +59,14 @@ export function BulkActionsButton({
       <Button size={size} variant="secondary" onClick={() => setOpen(true)}>
         {label}
       </Button>
-      {open && <BulkActionDialog entityType={entityType} selectedIds={selectedIds} filterQuery={filterQuery} onClose={() => setOpen(false)} onSubmitted={onSubmitted} />}
+      {open && <BulkActionDialog entityType={entityType} selectedIds={selectedIds} filterQuery={filterQuery} onClose={() => setOpen(false)} onSubmitted={onSubmitted} jobsPath={jobsPath} schedulesPath={schedulesPath} />}
     </>
   );
 }
 
 type Scope = "IDS" | "FILTER";
+type RunMode = "now" | "dry" | "schedule";
+const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 type Values = Record<string, unknown>;
 
 function newKey() {
@@ -56,12 +79,16 @@ export function BulkActionDialog({
   filterQuery,
   onClose,
   onSubmitted,
+  jobsPath = BULK_JOBS_PAGE,
+  schedulesPath,
 }: {
   entityType: string;
   selectedIds: string[];
   filterQuery: string;
   onClose: () => void;
   onSubmitted?: (job: BulkJobDto) => void;
+  jobsPath?: string;
+  schedulesPath?: string;
 }) {
   const [caps, setCaps] = useState<BulkCapabilitiesDto | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -75,6 +102,9 @@ export function BulkActionDialog({
   const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [submitted, setSubmitted] = useState<BulkJobDto | null>(null);
+  const [mode, setMode] = useState<RunMode>("now");
+  const [sched, setSched] = useState({ name: "", frequency: "DAILY", timeOfDay: "07:00", dayOfWeek: "1", dayOfMonth: "1" });
+  const [savedSchedule, setSavedSchedule] = useState<BulkScheduleDto | null>(null);
   // One key per dialog: a double click or a network retry can't create two jobs.
   const idempotencyKey = useRef(newKey());
 
@@ -134,6 +164,37 @@ export function BulkActionDialog({
     setPreview(r.data);
     setConfirmText("");
     setConfirmed(false);
+    setMode("now");
+    setSched((s) => ({ ...s, name: s.name || `${r.data.actionLabel} — ${caps?.entity.pluralLabel ?? "records"}` }));
+  };
+
+  const saveSchedule = async () => {
+    if (!action) return;
+    setBusy(true);
+    setFormError(null);
+    setFieldErrors({});
+    const r = await crmRequest<BulkScheduleDto>(BULK_SCHEDULES_API, {
+      method: "POST",
+      body: {
+        name: sched.name,
+        entityType,
+        actionKey: action.key,
+        filterQuery,
+        params: params(),
+        frequency: sched.frequency,
+        timeOfDay: sched.timeOfDay,
+        ...(sched.frequency === "WEEKLY" ? { dayOfWeek: Number(sched.dayOfWeek) } : {}),
+        ...(sched.frequency === "MONTHLY" ? { dayOfMonth: Number(sched.dayOfMonth) } : {}),
+      },
+      toast: "off",
+    });
+    setBusy(false);
+    if (!r.ok) {
+      setFormError(r.error.message);
+      setFieldErrors(r.error.fieldErrors);
+      return;
+    }
+    setSavedSchedule(r.data);
   };
 
   const submit = async () => {
@@ -142,7 +203,14 @@ export function BulkActionDialog({
     setFormError(null);
     const r = await crmRequest<BulkJobDto>(BULK_JOBS_API, {
       method: "POST",
-      body: { entityType, actionKey: action.key, selection, params: params(), idempotencyKey: idempotencyKey.current, ...(preview.confirmation === "type_count" ? { confirmCount: Number(confirmText) } : {}) },
+      body: {
+        entityType,
+        actionKey: action.key,
+        selection,
+        params: params(),
+        idempotencyKey: `${idempotencyKey.current}${mode === "dry" ? ":dry" : ""}`,
+        ...(mode === "dry" ? { dryRun: true } : preview.confirmation === "type_count" ? { confirmCount: Number(confirmText) } : {}),
+      },
       toast: "off",
     });
     setBusy(false);
@@ -154,18 +222,28 @@ export function BulkActionDialog({
     onSubmitted?.(r.data);
   };
 
-  const canStart = preview && preview.count > 0 && (preview.confirmation === "none" || (preview.confirmation === "confirm" && confirmed) || (preview.confirmation === "type_count" && Number(confirmText) === preview.count));
+  const canStart =
+    preview &&
+    preview.count > 0 &&
+    (mode === "dry" || preview.confirmation === "none" || (preview.confirmation === "confirm" && confirmed) || (preview.confirmation === "type_count" && Number(confirmText) === preview.count));
+  const canSchedule = Boolean(action?.schedulable && scope === "FILTER");
 
   return (
-    <Modal open onClose={onClose} title={submitted ? "Bulk job started" : preview ? `Review: ${preview.actionLabel}` : "Bulk action"} maxWidthClass="max-w-xl">
+    <Modal open onClose={onClose} title={savedSchedule ? "Schedule saved" : submitted ? (submitted.dryRun ? "Dry run started" : "Bulk job started") : preview ? `Review: ${preview.actionLabel}` : "Bulk action"} maxWidthClass="max-w-xl">
       {loadError && <p className="text-sm text-red-600 dark:text-red-400">{loadError}</p>}
       {!caps && !loadError && <p className="text-sm text-zinc-500">Loading actions…</p>}
 
       {submitted && (
         <div className="space-y-3 text-sm">
-          <p>
-            <strong>{submitted.actionLabel}</strong> will run on {submitted.totalCount} {plural} in the background. You can leave this page; you&apos;ll get a notification when it finishes.
-          </p>
+          {submitted.dryRun ? (
+            <p>
+              <strong>{submitted.actionLabel}</strong> will be checked on {submitted.totalCount} {plural} — nothing is changed. When it finishes, open it to see what would succeed, be skipped or fail, and run it for real from there.
+            </p>
+          ) : (
+            <p>
+              <strong>{submitted.actionLabel}</strong> will run on {submitted.totalCount} {plural} in the background. You can leave this page; you&apos;ll get a notification when it finishes.
+            </p>
+          )}
           {submitted.duplicate && <p className="text-amber-700 dark:text-amber-300">This request was already submitted — showing the existing job.</p>}
           {submitted.queued === false && <p className="text-amber-700 dark:text-amber-300">The background worker isn&apos;t reachable right now. The job is saved and will start automatically when it is.</p>}
           {submitted.warnings?.map((w) => (
@@ -177,14 +255,32 @@ export function BulkActionDialog({
             <Button variant="secondary" onClick={onClose}>
               Close
             </Button>
-            <Link href={`${BULK_JOBS_PAGE}/${submitted.id}`} className={buttonClasses("primary", "sm")}>
+            <Link href={`${jobsPath}/${submitted.id}`} className={buttonClasses("primary", "sm")}>
               View progress
             </Link>
           </div>
         </div>
       )}
 
-      {caps && !submitted && !preview && (
+      {savedSchedule && (
+        <div className="space-y-3 text-sm">
+          <p>
+            <strong>{savedSchedule.name}</strong> — {savedSchedule.when}. Each run is a normal bulk job over the {plural} matching these filters at that time, started as you.
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={onClose}>
+              Close
+            </Button>
+            {schedulesPath && (
+              <Link href={schedulesPath} className={buttonClasses("primary", "sm")}>
+                View schedules
+              </Link>
+            )}
+          </div>
+        </div>
+      )}
+
+      {caps && !submitted && !savedSchedule && !preview && (
         <div className="space-y-4">
           <fieldset className="space-y-1">
             <legend className="mb-1 text-sm font-medium">Records</legend>
@@ -220,6 +316,7 @@ export function BulkActionDialog({
             </select>
           </FormField>
           {action && <p className="-mt-2 text-xs text-zinc-500">{action.description}</p>}
+          {action && action.dryRun === false && action.dryRunUnavailableReason && action.kind !== "export" && <p className="-mt-2 text-xs text-zinc-400">{action.dryRunUnavailableReason}</p>}
 
           {action?.fields.map((f) => <ParamField key={f.key} field={f} values={values} setValues={setValues} error={fieldErrors[f.key] ?? fieldErrors[`params.${f.key}`]} />)}
 
@@ -248,11 +345,69 @@ export function BulkActionDialog({
         </div>
       )}
 
-      {preview && !submitted && (
+      {preview && !submitted && !savedSchedule && (
         <div className="space-y-3 text-sm">
           <p>
-            <strong>{preview.count.toLocaleString()}</strong> {plural} will be processed{preview.summary ? <>: {preview.summary}</> : null}.
+            <strong>{preview.count.toLocaleString()}</strong> {plural} {mode === "dry" ? "will be checked" : mode === "schedule" ? "match the filters today" : "will be processed"}
+            {preview.summary ? <>: {preview.summary}</> : null}.
           </p>
+          {(action?.dryRun || canSchedule) && (
+            <fieldset className="space-y-1 rounded-md border border-zinc-200 p-2 dark:border-zinc-700">
+              <legend className="px-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">How</legend>
+              <label className="flex items-center gap-2">
+                <input type="radio" name="bulk-mode" checked={mode === "now"} onChange={() => setMode("now")} />
+                Run now
+              </label>
+              {action?.dryRun && (
+                <label className="flex items-center gap-2">
+                  <input type="radio" name="bulk-mode" checked={mode === "dry"} onChange={() => setMode("dry")} />
+                  Dry run first — check every record, change nothing
+                </label>
+              )}
+              {canSchedule && (
+                <label className="flex items-center gap-2">
+                  <input type="radio" name="bulk-mode" checked={mode === "schedule"} onChange={() => setMode("schedule")} />
+                  Save as a schedule (repeats over these filters)
+                </label>
+              )}
+            </fieldset>
+          )}
+          {mode === "schedule" && (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="col-span-2">
+                <FormField label="Schedule name" htmlFor="bulk-sched-name" required error={fieldErrors.name}>
+                  <input id="bulk-sched-name" value={sched.name} maxLength={120} onChange={(e) => setSched({ ...sched, name: e.target.value })} className={textInputClass(Boolean(fieldErrors.name))} />
+                </FormField>
+              </div>
+              <FormField label="Repeats" htmlFor="bulk-sched-freq" required>
+                <select id="bulk-sched-freq" value={sched.frequency} onChange={(e) => setSched({ ...sched, frequency: e.target.value })} className={textInputClass()}>
+                  <option value="DAILY">Daily</option>
+                  <option value="WEEKLY">Weekly</option>
+                  <option value="MONTHLY">Monthly</option>
+                </select>
+              </FormField>
+              <FormField label="Time (India)" htmlFor="bulk-sched-time" required error={fieldErrors.timeOfDay}>
+                <input id="bulk-sched-time" type="time" value={sched.timeOfDay} onChange={(e) => setSched({ ...sched, timeOfDay: e.target.value })} className={textInputClass(Boolean(fieldErrors.timeOfDay))} />
+              </FormField>
+              {sched.frequency === "WEEKLY" && (
+                <FormField label="Day" htmlFor="bulk-sched-dow" required>
+                  <select id="bulk-sched-dow" value={sched.dayOfWeek} onChange={(e) => setSched({ ...sched, dayOfWeek: e.target.value })} className={textInputClass()}>
+                    {DAYS.map((d, i) => (
+                      <option key={d} value={String(i + 1)}>
+                        {d}
+                      </option>
+                    ))}
+                  </select>
+                </FormField>
+              )}
+              {sched.frequency === "MONTHLY" && (
+                <FormField label="Day of month (1–28)" htmlFor="bulk-sched-dom" required error={fieldErrors.dayOfMonth}>
+                  <input id="bulk-sched-dom" type="number" min={1} max={28} value={sched.dayOfMonth} onChange={(e) => setSched({ ...sched, dayOfMonth: e.target.value })} className={textInputClass(Boolean(fieldErrors.dayOfMonth))} />
+                </FormField>
+              )}
+              <p className="col-span-2 text-xs text-zinc-500">The records are found again at every run. A run is skipped while the previous one is still going; after 3 failed runs in a row the schedule pauses itself and you are notified.</p>
+            </div>
+          )}
           {preview.count === 0 && <p className="text-red-600 dark:text-red-400">There is nothing to process.</p>}
           {preview.sample.length > 0 && (
             <p className="text-xs text-zinc-500">
@@ -266,13 +421,13 @@ export function BulkActionDialog({
             </p>
           ))}
           <p className="text-xs text-zinc-500">Each record is checked and changed separately: records that can&apos;t be changed are skipped or reported with the reason; the others still go through. Cancelling stops the remaining records but doesn&apos;t undo finished ones.</p>
-          {preview.confirmation === "confirm" && (
+          {mode === "now" && preview.confirmation === "confirm" && (
             <label className="flex items-center gap-2">
               <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />
               Yes, apply this to {preview.count.toLocaleString()} {plural}.
             </label>
           )}
-          {preview.confirmation === "type_count" && (
+          {mode === "now" && preview.confirmation === "type_count" && (
             <FormField label={`Type ${preview.count} to confirm`} htmlFor="bulk-confirm-count" required>
               <input id="bulk-confirm-count" inputMode="numeric" value={confirmText} onChange={(e) => setConfirmText(e.target.value)} className={textInputClass()} autoComplete="off" />
             </FormField>
@@ -282,9 +437,15 @@ export function BulkActionDialog({
             <Button variant="secondary" onClick={() => setPreview(null)} disabled={busy}>
               Back
             </Button>
-            <Button variant={preview.destructive ? "danger" : "primary"} onClick={submit} disabled={!canStart || busy}>
-              {busy ? "Starting…" : `Start on ${preview.count.toLocaleString()} ${plural}`}
-            </Button>
+            {mode === "schedule" ? (
+              <Button onClick={saveSchedule} disabled={busy || sched.name.trim().length < 3}>
+                {busy ? "Saving…" : "Save schedule"}
+              </Button>
+            ) : (
+              <Button variant={preview.destructive && mode === "now" ? "danger" : "primary"} onClick={submit} disabled={!canStart || busy}>
+                {busy ? "Starting…" : mode === "dry" ? `Dry run on ${preview.count.toLocaleString()} ${plural}` : `Start on ${preview.count.toLocaleString()} ${plural}`}
+              </Button>
+            )}
           </div>
         </div>
       )}

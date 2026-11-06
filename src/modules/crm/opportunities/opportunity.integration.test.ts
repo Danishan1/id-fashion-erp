@@ -263,7 +263,7 @@ describe.skipIf(!DB_URL)("CRM opportunities (database integration)", async () =>
     const listed = await erp.listOpportunityErpDocuments(manager, o.id);
     const orders = listed.sections.find((s) => s.type === "SALES_ORDER")!;
     expect(orders.rows.map((r) => r.doc?.amount).sort()).toEqual(["11500", "12000"]);
-    expect(listed.notAvailable.map((n) => n.key)).toEqual(["QUOTATION"]);
+    expect(listed.notAvailable).toEqual([]);
     // The estimated value is never overwritten by ERP amounts; the ERP rows are untouched.
     expect(Number((await raw(o.id)).amount)).toBe(10000);
     expect((await prisma.salesOrder.findUniqueOrThrow({ where: { id: so1.id } })).updatedAt.getTime()).toBe(so1.updatedAt.getTime());

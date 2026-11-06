@@ -17,7 +17,7 @@ function formatValue(value: number, type: "currency" | "number" | "percent"): st
 // *yesterday* in DATE-column terms, over-counting the previous day's rows.
 // Deriving the boundary from the UTC calendar date instead (matching the
 // existing `toIsoDate()`/`toISOString().slice(0,10)` convention already used
-// client-side in this app, e.g. marketing/channel-performance/page.tsx) keeps
+// client-side in this app) keeps
 // "today" aligned with how every date-only column is actually stored.
 function startOfDay(d: Date): Date {
   return new Date(d.toISOString().slice(0, 10));

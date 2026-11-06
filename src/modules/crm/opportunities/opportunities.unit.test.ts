@@ -45,7 +45,7 @@ describe("opportunity schema", () => {
     expect(changeOpportunityStatusSchema.safeParse({ status: "WON", reason: "Price" }).success).toBe(true);
     expect(changeOpportunityStatusSchema.safeParse({ status: "CLOSED" }).success).toBe(false);
     expect(linkErpDocumentSchema.safeParse({ docType: "SALES_ORDER", docId: A }).success).toBe(true);
-    expect(linkErpDocumentSchema.safeParse({ docType: "QUOTATION", docId: A }).success).toBe(false);
+    expect(linkErpDocumentSchema.safeParse({ docType: "INVOICE", docId: A }).success).toBe(false);
     expect(bulkOpportunitySchema.safeParse({ action: "stage", ids: [A], stageId: B }).success).toBe(true);
     expect(bulkOpportunitySchema.safeParse({ action: "delete", ids: [A] }).success).toBe(false);
     // Phase 08 bulk field update: only safe fields, at least one of them.
@@ -140,7 +140,7 @@ describe("status and stage rules", () => {
     const p = DEFAULT_PIPELINE.stages.map((s) => s.probability);
     expect(p).toEqual([...p].sort((a, b) => a - b));
     expect(p.every((v) => v >= 0 && v <= 100)).toBe(true);
-    expect(ERP_DOC_TYPE_KEYS).not.toContain("QUOTATION");
+    expect(ERP_DOC_TYPE_KEYS).toContain("QUOTATION"); // Sales & Marketing quotations (2026-10-29)
   });
 
   it("builds search text from number, name and linked ERP document numbers", () => {

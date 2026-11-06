@@ -64,7 +64,8 @@ import {
 } from "@/modules/production-config/production-config.service";
 import { parseCsv } from "@/lib/csv";
 import { parseXlsxBuffer } from "@/lib/xlsx-read";
-import { BULK_IMPORT_COLUMNS, type BulkImportMasterType, type ImportColumnSpec } from "./import.schema";
+import { importBuyerEnquiryRow } from "@/modules/sales-marketing/bulk/enquiry-import";
+import { importColumnsFor, type BulkImportMasterType, type BulkImportType, type ImportColumnSpec, type SalesImportType } from "./import.schema";
 import { ImportBatchRepository } from "./import.repository";
 import { messageFromError, undefinedIfBlank } from "./import.service";
 
@@ -74,7 +75,7 @@ export interface BulkImportActorContext {
   branchId?: string | null;
 }
 
-interface BulkImportRowResult {
+export interface BulkImportRowResult {
   recordId: string;
   tableName: string;
 }
@@ -85,7 +86,7 @@ interface BulkImportRowFailure {
   reason: string;
 }
 
-interface RowContext {
+export interface RowContext {
   importBatchId: string;
   /** When true: resolve/validate everything a real commit would, including
    * the master's own duplicate-code check, but never call the real create
@@ -122,7 +123,7 @@ interface RowContext {
   dryRunRegistry?: Map<string, Set<string>>;
 }
 
-type BulkImportRowHandler = (actor: BulkImportActorContext, raw: Record<string, string>, ctx: RowContext) => Promise<BulkImportRowResult>;
+export type BulkImportRowHandler = (actor: BulkImportActorContext, raw: Record<string, string>, ctx: RowContext) => Promise<BulkImportRowResult>;
 
 const DRY_RUN_PLACEHOLDER_ID = "00000000-0000-0000-0000-000000000000";
 
@@ -1032,6 +1033,15 @@ const importEmployeeRow: BulkImportRowHandler = async (actor, raw, ctx) => {
   return { recordId: employee.id, tableName: "employees" };
 };
 
+/** Phase 14 (S&M): importers reached only through Sales & Marketing routes. */
+const SALES_IMPORTERS: Record<SalesImportType, BulkImportRowHandler> = {
+  BUYER_ENQUIRY: importBuyerEnquiryRow,
+};
+
+function importerFor(type: BulkImportType): BulkImportRowHandler {
+  return type in SALES_IMPORTERS ? SALES_IMPORTERS[type as SalesImportType] : BULK_IMPORTERS[type as BulkImportMasterType];
+}
+
 const BULK_IMPORTERS: Record<BulkImportMasterType, BulkImportRowHandler> = {
   CUSTOMER: importCustomerRow,
   SUPPLIER: importSupplierRow,
@@ -1167,9 +1177,9 @@ export function resolveUploadedFileMimeType(fileName: string, browserMimeType: s
 export async function parseUploadedFile(
   buffer: Buffer,
   mimeType: string,
-  masterType: BulkImportMasterType
+  masterType: BulkImportType
 ): Promise<{ rows: Record<string, string>[]; totalRows: number }> {
-  const columns = BULK_IMPORT_COLUMNS[masterType];
+  const columns = importColumnsFor(masterType);
   let headerRow: string[];
   let dataRows: string[][];
 
@@ -1218,11 +1228,11 @@ export interface BulkImportValidationResult {
  */
 export async function validateBulkImportRows(
   actor: BulkImportActorContext,
-  masterType: BulkImportMasterType,
+  masterType: BulkImportType,
   rows: Record<string, string>[]
 ): Promise<BulkImportValidationResult> {
   const errors: { rowNumber: number; reason: string }[] = [];
-  const importRow = BULK_IMPORTERS[masterType];
+  const importRow = importerFor(masterType);
   // One registry per validation pass, threaded through every row so a
   // self-referencing-parent row (Chart of Account/Category/Employee) can see
   // what an earlier row in this SAME file would create — see RowContext's
@@ -1242,7 +1252,7 @@ export async function validateBulkImportRows(
 
 export async function commitBulkImport(
   actor: BulkImportActorContext,
-  masterType: BulkImportMasterType,
+  masterType: BulkImportType,
   fileName: string,
   fileBuffer: Buffer,
   fileMimeType: string,
@@ -1291,14 +1301,14 @@ export async function commitBulkImport(
  */
 export async function processBulkImportJob(
   batchId: string,
-  masterType: BulkImportMasterType,
+  masterType: BulkImportType,
   actor: BulkImportActorContext,
   rows: Record<string, string>[],
   onProgress: (processed: number, total: number) => Promise<void>
 ): Promise<void> {
   await ImportBatchRepository.setStatus(batchId, "PROCESSING");
 
-  const importRow = BULK_IMPORTERS[masterType];
+  const importRow = importerFor(masterType);
   const failedRows: BulkImportRowFailure[] = [];
   let importedCount = 0;
 

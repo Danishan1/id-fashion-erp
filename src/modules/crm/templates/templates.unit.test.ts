@@ -23,10 +23,10 @@ describe("template parser", () => {
     expect(p.issues.every((i) => i.severity === "error" && i.source === "template")).toBe(true);
   });
 
-  it("explains quotation variables (no ERP quotation module)", () => {
+  it("explains quotation variables (no template entity for quotations yet)", () => {
     const [i] = parseTemplateText("Total {{quotation.total}}").issues;
     expect(i.code).toBe("UNKNOWN_VARIABLE");
-    expect(i.message).toContain("no quotation module");
+    expect(i.message).toContain("available in templates yet");
   });
 
   it("rejects fallbacks with braces or that are too long", () => {

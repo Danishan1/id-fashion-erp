@@ -7,6 +7,7 @@ import { CrmContactRepository } from "./contacts/crm-contact.repository";
 import { conversationScopeWhere } from "./conversations/conversation-access";
 import type { CrmActor } from "./core/crm-actor";
 import { crmOwnerWhere, getCrmRecordScope, isCrmScopeUser } from "./core/crm-visibility";
+import { canSeeCampaign } from "@/modules/sales-marketing/campaigns/campaign-common";
 
 /**
  * "Can this user see this CRM record?" for any entity type — used by the
@@ -30,6 +31,20 @@ export async function assertCrmEntityAccess(actor: CrmActor, entityType: CrmEnti
     ]);
     if (!workflow || !canView) throw new BusinessRuleError("NOT_FOUND", "Record not found.", { entityType, entityId });
     return;
+  }
+  // Sales & Marketing Phase 08: a campaign follows campaign visibility (owner / team / view_all).
+  if (entityType === "CAMPAIGN") {
+    if (!(await canSeeCampaign({ companyId: actor.companyId, userId: actor.userId }, entityId))) throw new BusinessRuleError("NOT_FOUND", "Record not found.", { entityType, entityId });
+    return;
+  }
+  // Sales & Marketing Phase 15: an enquiry / quotation follows its own module's visibility (owner / team / view_all, branches).
+  if (entityType === "ENQUIRY") {
+    const { assertSalesEnquiryVisible } = await import("@/modules/sales-marketing/enquiries/sales-enquiry.service");
+    return assertSalesEnquiryVisible({ companyId: actor.companyId, userId: actor.userId }, entityId);
+  }
+  if (entityType === "QUOTATION") {
+    const { assertQuotationVisible } = await import("@/modules/sales-marketing/quotations/quotation.service");
+    return assertQuotationVisible({ companyId: actor.companyId, userId: actor.userId }, entityId);
   }
   const scope = await getCrmRecordScope(actor);
   if (entityType === "CONVERSATION") {

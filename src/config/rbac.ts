@@ -15,7 +15,67 @@ export const MODULES = [
   // rules) — split from "crm" so a salesperson who can edit leads cannot
   // also redefine the pipeline vocabulary everyone else uses (2026-10-01).
   "crm_settings",
-  "marketing",
+  // Sales & Marketing module (2026-10-28, docs/sales-marketing/) — replaces
+  // the old standalone "marketing" module (removed the same day). One module
+  // for Phase 01 (the module shell + dashboard); later phases add their own
+  // modules (enquiries, quotations, pricing, campaigns, ...) when built.
+  "sales_marketing",
+  // Sales & Marketing → Quotations (Release 1 / S2, 2026-10-28). Own module so
+  // roles can see enquiries without prices (or the reverse), and so Management
+  // can approve quotations (S3) without editing them.
+  "sales_quotations",
+  // Sales & Marketing settings (S3): quotation approval limits, defaults.
+  // Same grants as crm_settings.
+  "sales_marketing_settings",
+  // Sales & Marketing → Pricing (Phase 03, 2026-10-29): price lists, discount
+  // rules, pricing preview. approve = approve price list versions / rules.
+  "sales_pricing",
+  // Sales & Marketing → Targets, territories, team performance (Phase 05,
+  // 2026-11-03). edit = territories, assignments, order sales credit;
+  // approve/reject = target revisions; view_all = everyone's figures.
+  "sales_performance",
+  // Sales & Marketing → Commissions & incentives (Phase 07, 2026-11-04).
+  // view = own statements; view_all = everyone's; create = calculate statements /
+  // adjustments; edit = plans, assignments, incentive plans; approve/reject =
+  // plan versions, incentive plans, statements.
+  "sales_commissions",
+  // Sales & Marketing → Campaigns (Phase 08, 2026-11-04). view = own (owner /
+  // creator / owner in the viewer's CRM team); view_all; create; edit (incl.
+  // activate / pause / complete); approve / reject plans and revisions; cancel.
+  "marketing_campaigns",
+  // Sales & Marketing → Audience Segments (Phase 09, 2026-11-05). view = own
+  // (owner / creator / owner in the viewer's CRM team); view_all; create; edit
+  // (definition, members, refresh, snapshots, activate / pause); delete = archive.
+  "marketing_segments",
+  "marketing_delivery",
+  // Sales & Marketing → Content Library (Phase 11, 2026-11-05): assets, marketing
+  // review of CRM template versions, campaign content. approve / reject decide
+  // reviews (never one's own version); delete = archive.
+  "marketing_content",
+  // Sales & Marketing → Promotions (Phase 12, 2026-11-06): versioned offers applied
+  // through the Phase 03 pricing engine. approve / reject decide versions (never
+  // one's own); delete = archive. Campaign budgets use marketing_campaigns.
+  "marketing_promotions",
+  // Sales & Marketing → Attribution & ROI (Phase 13, 2026-11-06): attribution
+  // models (a version is approved by someone other than its author), runs and
+  // the attribution / ROI reports. edit = recalculate.
+  "marketing_attribution",
+  // Sales & Marketing → Workflows (Phase 15, 2026-11-06): S&M workflow definitions
+  // and their running instances. view = monitor; edit = configure / activate /
+  // start; approve = operator actions (retry, cancel, resolve exceptions).
+  // Approvals of quotations, campaigns etc. stay in their own modules.
+  "sales_workflows",
+  // Sales & Marketing → Integrations (Phase 16, 2026-11-06): the integration
+  // registry, S&M API keys, S&M outgoing webhook subscriptions, enquiry-intake
+  // sync and its conflicts. view = status, logs, conflicts; edit = configure,
+  // keys, subscriptions, enable / disable, connection checks; approve =
+  // resolve conflicts, replay deliveries, revoke credentials.
+  "sales_integrations",
+  // Sales & Marketing → Analytics (Phase 17, 2026-11-06): governed reports,
+  // dashboards, saved reports and scheduled delivery. view = run reports and
+  // dashboards; create = save reports; edit = share and schedule; export =
+  // CSV / Excel. Every metric still needs its source module's permission.
+  "sales_analytics",
   // HRMS is split into one module per screen (2026-10-27) so a role can be
   // given each attendance/leave screen separately. "hrms_attendance" is My
   // Attendance (punch + own records); "hrms_leave" is Leave Requests.
@@ -215,15 +275,26 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     masters_finance: ["view"],
     crm: ["view", "view_all", "export"],
     crm_settings: ["view", "edit"],
-    // Approve/reject added deliberately for the Campaign approval workflow —
-    // MANAGEMENT is the checkpoint (mirrors their identical approve/reject
-    // shape on `sampling` just below), MERCHANDISER (the creator) stays
-    // view/create/edit/export/print only, same self-approval-guard reasoning
-    // as every other final approval checkpoint in this project.
-    marketing: ["view", "approve", "reject", "export"],
+    // Same grants as crm (decided 2026-10-28: Sales & Marketing goes to the
+    // roles that already work the CRM).
+    sales_marketing: ["view", "view_all", "export"],
+    sales_quotations: ["view", "view_all", "approve", "reject", "export", "print", "override"],
+    sales_marketing_settings: ["view", "edit"],
+    sales_pricing: ["view", "approve", "reject", "export"],
+    sales_performance: ["view", "view_all", "create", "edit", "approve", "reject", "export"],
+    sales_commissions: ["view", "view_all", "create", "edit", "approve", "reject", "export"],
+    marketing_campaigns: ["view", "view_all", "create", "edit", "approve", "reject", "cancel", "export"],
+    marketing_segments: ["view", "view_all", "create", "edit", "delete", "export"],
+    marketing_delivery: ["view", "view_all", "create", "edit", "cancel", "export"],
+    marketing_content: ["view", "create", "edit", "delete", "approve", "reject", "export"],
+    marketing_promotions: ["view", "create", "edit", "delete", "approve", "reject", "export"],
+    marketing_attribution: ["view", "create", "edit", "approve", "reject", "export"],
+    sales_workflows: ["view", "edit", "approve"],
+    sales_integrations: ["view", "edit", "approve"],
+    sales_analytics: ["view", "create", "edit", "export"],
     // No dedicated HR role exists yet in this system — MANAGEMENT owns
     // attendance/leave for now (same "closest existing manager role" default
-    // used for crm/marketing above), including leave approval.
+    // used for crm above), including leave approval.
     // Approve/reject added for the Attendance Correction Request workflow —
     // same "MANAGEMENT is the checkpoint" shape as hrms_leave just below.
     // "override" = admin time corrections (attendance module port, 2026-10-23).
@@ -310,7 +381,18 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     payment_requests: ["view", "create"],
     masters_core: ["view", "create", "edit"],
     crm: ["view", "create", "edit", "export", "print"],
-    marketing: ["view", "create", "edit", "export", "print"],
+    sales_marketing: ["view", "create", "edit", "export", "print"],
+    sales_quotations: ["view", "create", "edit", "cancel", "export", "print", "override"],
+    sales_pricing: ["view", "create", "edit", "export"],
+    sales_performance: ["view", "export"],
+    sales_commissions: ["view", "export"],
+    marketing_campaigns: ["view", "create", "edit", "export"],
+    marketing_segments: ["view", "create", "edit", "export"],
+    marketing_delivery: ["view", "create", "edit", "cancel"],
+    marketing_content: ["view", "create", "edit"],
+    marketing_promotions: ["view", "create", "edit"],
+    marketing_attribution: ["view", "export"],
+    sales_analytics: ["view", "create", "export"],
     sampling: ["view", "create", "edit", "export", "print"],
     buyer_enquiries: ["view", "create", "edit", "reject", "export", "print"],
     sales_orders: ["view", "create", "edit", "cancel", "export", "print"],

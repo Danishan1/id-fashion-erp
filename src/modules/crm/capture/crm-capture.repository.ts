@@ -6,6 +6,7 @@ export const API_KEY_SELECT = {
   name: true,
   prefix: true,
   scopes: true,
+  purpose: true,
   defaultSourceId: true,
   defaultOwnerUserId: true,
   duplicatePolicy: true,
@@ -56,9 +57,9 @@ export const EVENT_SELECT = {
 } satisfies Prisma.CrmIngestEventSelect;
 
 export const CrmCaptureRepository = {
-  listApiKeys: (companyId: string) => prisma.crmApiKey.findMany({ where: { companyId }, select: API_KEY_SELECT, orderBy: { createdAt: "desc" } }),
+  listApiKeys: (companyId: string) => prisma.crmApiKey.findMany({ where: { companyId, purpose: "CRM_CAPTURE" }, select: API_KEY_SELECT, orderBy: { createdAt: "desc" } }),
   createApiKey: (data: Prisma.CrmApiKeyUncheckedCreateInput) => prisma.crmApiKey.create({ data, select: API_KEY_SELECT }),
-  findApiKey: (companyId: string, id: string) => prisma.crmApiKey.findFirst({ where: { companyId, id }, select: API_KEY_SELECT }),
+  findApiKey: (companyId: string, id: string) => prisma.crmApiKey.findFirst({ where: { companyId, id, purpose: "CRM_CAPTURE" }, select: API_KEY_SELECT }),
   findApiKeyByPrefix: (prefix: string) => prisma.crmApiKey.findUnique({ where: { prefix }, select: { ...API_KEY_SELECT, companyId: true, keyHash: true, createdByUserId: true, createdBy: { select: { id: true, fullName: true, status: true } } } }),
   updateApiKey: (id: string, data: Prisma.CrmApiKeyUncheckedUpdateInput) => prisma.crmApiKey.update({ where: { id }, data, select: API_KEY_SELECT }),
 

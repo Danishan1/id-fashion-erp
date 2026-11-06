@@ -56,12 +56,13 @@ describe("stage probability", () => {
 
 describe("stage requirements registry", () => {
   const custom = [{ key: "fabric", label: "Fabric", isActive: true }];
-  it("offers built-in fields, ERP documents and custom fields — never a quotation", () => {
+  it("offers built-in fields, ERP documents (incl. quotations, 2026-10-29) and custom fields", () => {
     const keys = req.requirementOptions(custom).map((o) => o.key);
     expect(keys).toEqual(expect.arrayContaining(["company", "contact", "amount", "expectedCloseDate", "requirement", "erp:any", "erp:SALES_ORDER", "custom:fabric"]));
-    expect(keys).not.toContain("quotation");
-    expect(req.UNAVAILABLE_REQUIREMENTS[0].key).toBe("quotation");
-    expect(req.isKnownRequirement("erp:QUOTATION", ["fabric"])).toBe(false);
+    expect(keys).toContain("erp:QUOTATION");
+    expect(req.UNAVAILABLE_REQUIREMENTS).toEqual([]);
+    expect(req.isKnownRequirement("erp:QUOTATION", ["fabric"])).toBe(true);
+    expect(req.isKnownRequirement("erp:INVOICE", ["fabric"])).toBe(false);
     expect(req.isKnownRequirement("custom:other", ["fabric"])).toBe(false);
     expect(req.isKnownRequirement("custom:fabric", ["fabric"])).toBe(true);
   });

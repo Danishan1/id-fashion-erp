@@ -146,6 +146,34 @@ export function recordInfo(recs: RecordsInfo, ref: Ref) {
           }
         : null;
     }
+    case "CAMPAIGN": {
+      const r = recs.campaigns.find((x) => x.id === ref.entityId);
+      // A cancelled campaign takes no new activities (completed ones may still get wrap-up tasks).
+      return r ? { label: `Campaign ${r.code} — ${r.name}`, archived: r.status === "CANCELLED", merged: false, also: [] as Ref[] } : null;
+    }
+    // Sales & Marketing Phase 15: a task on an enquiry / quotation also shows on its CRM company and contact.
+    case "ENQUIRY": {
+      const r = recs.enquiries.find((x) => x.id === ref.entityId);
+      return r
+        ? {
+            label: `Enquiry ${r.enquiryNumber}${r.subject ? ` — ${r.subject}` : ""}`,
+            archived: r.status === "CANCELLED",
+            merged: false,
+            also: [r.crmCompanyId && { entityType: "COMPANY" as const, entityId: r.crmCompanyId }, r.crmContactId && { entityType: "CONTACT" as const, entityId: r.crmContactId }].filter(Boolean) as Ref[],
+          }
+        : null;
+    }
+    case "QUOTATION": {
+      const r = recs.quotations.find((x) => x.id === ref.entityId);
+      return r
+        ? {
+            label: `Quotation ${r.quotationNumber}`,
+            archived: r.status === "CANCELLED",
+            merged: false,
+            also: [r.crmCompanyId && { entityType: "COMPANY" as const, entityId: r.crmCompanyId }, r.crmContactId && { entityType: "CONTACT" as const, entityId: r.crmContactId }].filter(Boolean) as Ref[],
+          }
+        : null;
+    }
     default:
       return null;
   }

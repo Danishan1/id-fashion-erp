@@ -83,20 +83,46 @@ async function finish(job: ClaimedJob, token: string, status: BulkJobStatus, ext
   const entity = getEntity(job.entityType);
   const handler = getHandler(job.entityType, job.actionKey);
   const what = `${handler?.label ?? job.actionKey} — ${entity?.pluralLabel.toLowerCase() ?? job.entityType}`;
+  const noun = job.dryRun ? "Dry run" : job.scheduleId ? "Scheduled bulk job" : "Bulk job";
   const title =
     status === "COMPLETED"
-      ? `Bulk job finished: ${what}`
+      ? `${noun} finished: ${what}`
       : status === "COMPLETED_WITH_ERRORS"
-        ? `Bulk job finished with errors: ${what}`
+        ? `${noun} finished with errors: ${what}`
         : status === "CANCELLED"
-          ? `Bulk job cancelled: ${what}`
-          : `Bulk job failed: ${what}`;
+          ? `${noun} cancelled: ${what}`
+          : `${noun} failed: ${what}`;
   const body =
     status === "FAILED" && extra.errorMessage
       ? String(extra.errorMessage)
-      : `${counts.succeededCount} succeeded, ${counts.skippedCount} skipped, ${counts.failedCount} failed${counts.cancelled ? `, ${counts.cancelled} not processed` : ""}.`;
+      : job.dryRun
+        ? `Nothing was changed. ${counts.succeededCount} would succeed, ${counts.skippedCount} would be skipped, ${counts.failedCount} would fail${counts.cancelled ? `, ${counts.cancelled} not checked` : ""}.`
+        : `${counts.succeededCount} succeeded, ${counts.skippedCount} skipped, ${counts.failedCount} failed${counts.cancelled ? `, ${counts.cancelled} not processed` : ""}.`;
+  if (job.scheduleId) await recordScheduleOutcome(job.scheduleId, job.id, status, String(extra.errorMessage ?? body)).catch(() => undefined);
   await createNotification({ companyId: job.companyId, userId: job.requestedByUserId, title: title.slice(0, 200), body }).catch(() => undefined);
   return status;
+}
+
+/**
+ * A scheduled job finished: remember the outcome on its schedule. Failures
+ * count up (the schedule pauses itself after SCHEDULE_MAX_FAILURES in a row);
+ * any success resets the count.
+ */
+export const SCHEDULE_MAX_FAILURES = 3;
+async function recordScheduleOutcome(scheduleId: string, jobId: string, status: BulkJobStatus, message: string) {
+  const failed = status === "FAILED";
+  const s = await prisma.bulkJobSchedule.findUnique({ where: { id: scheduleId }, select: { id: true, companyId: true, ownerUserId: true, name: true, consecutiveFailures: true, status: true, lastJobId: true } });
+  if (!s || (s.lastJobId && s.lastJobId !== jobId)) return;
+  const failures = failed ? s.consecutiveFailures + 1 : 0;
+  const pause = failed && failures >= SCHEDULE_MAX_FAILURES && s.status === "ACTIVE";
+  await prisma.bulkJobSchedule.update({
+    where: { id: s.id },
+    data: { lastOutcome: status, lastMessage: message.slice(0, 500), consecutiveFailures: failures, ...(pause ? { status: "PAUSED", nextRunAt: null } : {}) },
+  });
+  if (pause) {
+    await writeAuditLog({ companyId: s.companyId, userId: s.ownerUserId, tableName: "bulk_job_schedules", recordId: s.id, action: "UPDATE", newValues: { status: "PAUSED", reason: `${failures} failed runs in a row` } });
+    await createNotification({ companyId: s.companyId, userId: s.ownerUserId, title: `Schedule paused: ${s.name}`.slice(0, 200), body: `It failed ${failures} times in a row. Fix the cause and resume it. Last error: ${message}`.slice(0, 1000) }).catch(() => undefined);
+  }
 }
 
 async function cancelRemaining(jobId: string, message: string) {
@@ -145,7 +171,8 @@ export async function processBulkJob(jobId: string, opts: ProcessOptions = {}): 
     await cancelRemaining(job.id, "Cancelled before this record was processed.");
     return finish(job, token, "CANCELLED");
   }
-  if (!handler || !entity || (!handler.executeItem && !handler.executeBatch)) {
+  const dry = job.dryRun;
+  if (!handler || !entity || (!handler.executeItem && !handler.executeBatch) || (dry && !handler.validateItem)) {
     await cancelRemaining(job.id, "Not processed: the job failed.");
     return finish(job, token, "FAILED", { errorCode: "BULK_ACTION_UNKNOWN", errorMessage: "This bulk action is no longer available." });
   }
@@ -173,8 +200,8 @@ export async function processBulkJob(jobId: string, opts: ProcessOptions = {}): 
     return fail(err.code, `The job's settings are no longer valid: ${err.message}`);
   }
 
-  // Items left PROCESSING by a crashed run: re-run if safe, otherwise report as unknown.
-  if (handler.retrySafe) {
+  // Items left PROCESSING by a crashed run: re-run if safe (a dry run always is), otherwise report as unknown.
+  if (handler.retrySafe || dry) {
     await prisma.bulkJobItem.updateMany({ where: { jobId: job.id, status: "PROCESSING" }, data: { status: "PENDING" } });
   } else {
     await prisma.bulkJobItem.updateMany({
@@ -209,7 +236,7 @@ export async function processBulkJob(jobId: string, opts: ProcessOptions = {}): 
     const batch = await prisma.bulkJobItem.findMany({ where: { jobId: job.id, status: "PENDING" }, orderBy: { sequence: "asc" }, take: batchSize });
     if (batch.length === 0) break;
 
-    if (handler.executeBatch) {
+    if (handler.executeBatch && !dry) {
       const ids = batch.map((b) => b.id);
       await prisma.bulkJobItem.updateMany({ where: { id: { in: ids }, status: "PENDING" }, data: { status: "PROCESSING", attempts: { increment: 1 } } });
       let outcomes: Map<string, BulkItemOutcome | Error>;
@@ -231,12 +258,14 @@ export async function processBulkJob(jobId: string, opts: ProcessOptions = {}): 
       const started = await prisma.bulkJobItem.updateMany({ where: { id: item.id, status: "PENDING" }, data: { status: "PROCESSING", attempts: { increment: 1 } } });
       if (started.count === 0) continue;
       try {
-        const outcome = await inJobContext(() => handler.executeItem!({
+        const run = dry ? handler.validateItem! : handler.executeItem!;
+        const outcome = await inJobContext(() => run({
           actor,
           job: ctxJob,
           item: { id: item.id, entityId: item.entityId, sequence: item.sequence, attempt: item.attempts + 1 },
           params,
           idempotencyKey: `bulk:${rootJobId}:${item.entityId}`,
+          keepAlive: () => renew(job.id, token),
         }));
         await recordOutcome(job.id, item.id, outcome);
       } catch (e) {
@@ -251,7 +280,7 @@ export async function processBulkJob(jobId: string, opts: ProcessOptions = {}): 
   // ── Finalize (e.g. write the export file) ──
   job = await prisma.bulkJob.findUniqueOrThrow({ where: { id: job.id } });
   let result: Record<string, unknown> | null = null;
-  if (handler.finalize) {
+  if (handler.finalize && !dry) {
     try {
       result = await inJobContext(() => handler.finalize!({ actor, job: { ...ctxJob, createdAt: job.createdAt }, params }));
     } catch (e) {

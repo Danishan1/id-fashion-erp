@@ -104,18 +104,27 @@ interface StoredFile {
  * implementation for an S3-compatible client later without touching callers —
  * they only depend on this module's exported functions.
  */
+export interface SaveFileOptions {
+  /** A caller's own allow-list (e.g. marketing assets); defaults to ALLOWED_MIME_TYPES. */
+  allowedMimeTypes?: ReadonlySet<string>;
+  /** Lower size limit for this caller; never above MAX_FILE_SIZE_BYTES. */
+  maxBytes?: number;
+}
+
 export async function saveFile(
   buffer: Buffer,
   originalFileName: string,
-  declaredMimeType: string
+  declaredMimeType: string,
+  options: SaveFileOptions = {}
 ): Promise<StoredFile> {
   const mimeType = normalizeMimeType(declaredMimeType);
-  if (!ALLOWED_MIME_TYPES.has(mimeType)) {
+  if (!(options.allowedMimeTypes ?? ALLOWED_MIME_TYPES).has(mimeType)) {
     throw new UnsupportedFileTypeError(`File type "${mimeType}" is not allowed.`);
   }
-  if (buffer.byteLength > MAX_FILE_SIZE_BYTES) {
+  const maxBytes = Math.min(options.maxBytes ?? MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_BYTES);
+  if (buffer.byteLength > maxBytes) {
     throw new FileTooLargeError(
-      `File exceeds the maximum allowed size of ${MAX_FILE_SIZE_BYTES / (1024 * 1024)}MB.`
+      `File exceeds the maximum allowed size of ${Math.round((maxBytes / (1024 * 1024)) * 10) / 10}MB.`
     );
   }
 

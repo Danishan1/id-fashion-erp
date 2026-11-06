@@ -4,6 +4,7 @@ export const BULK_JOBS_API = "/api/v1/bulk-jobs";
 export const BULK_CAPABILITIES_API = "/api/v1/bulk-actions/capabilities";
 export const BULK_PREVIEW_API = "/api/v1/bulk-actions/preview";
 export const BULK_JOBS_PAGE = "/crm/bulk-jobs";
+export const BULK_SCHEDULES_API = "/api/v1/bulk-schedules";
 
 export type BulkParamFieldDto =
   | { key: string; label: string; type: "user"; required?: boolean; allowNone?: boolean; noneLabel?: string; help?: string; options: { value: string; label: string }[] }
@@ -26,6 +27,10 @@ export interface BulkActionCapabilityDto {
   retrySafe: boolean;
   maxItems: number;
   fields: BulkParamFieldDto[];
+  /** Phase 14 (S&M): per-record dry run offered. */
+  dryRun?: boolean;
+  dryRunUnavailableReason?: string | null;
+  schedulable?: boolean;
 }
 
 export interface BulkCapabilitiesDto {
@@ -70,6 +75,9 @@ export interface BulkJobDto {
   requestedBy: { id: string; name: string | null };
   isMine: boolean;
   retryOfJobId: string | null;
+  dryRun?: boolean;
+  dryRunOfJobId?: string | null;
+  scheduleId?: string | null;
   canCancel: boolean;
   canRetry: boolean;
   download: { fileName: string; mimeType: string; sizeBytes: number; rowCount: number; expiresAt: string; expired: boolean; available: boolean } | null;
@@ -88,6 +96,42 @@ export interface BulkJobDetailDto extends BulkJobDto {
   retries: { id: string; status: BulkJobStatusKey; statusLabel: string; createdAt: string }[];
   itemCounts: Partial<Record<"PENDING" | "PROCESSING" | "SUCCEEDED" | "FAILED" | "SKIPPED" | "CANCELLED", number>>;
   action: { destructive: boolean; retrySafe: boolean; description: string } | null;
+  realRun?: { id: string; status: BulkJobStatusKey; statusLabel: string; createdAt: string } | null;
+  canRunForReal?: boolean;
+  wouldSucceedCount?: number | null;
+  confirmation?: "none" | "confirm" | "type_count";
+  schedule?: { id: string; name: string } | null;
+}
+
+export interface BulkScheduleDto {
+  id: string;
+  name: string;
+  entityType: string;
+  entityLabel: string;
+  listHref: string | null;
+  actionKey: string;
+  actionLabel: string;
+  available: boolean;
+  filterQuery: string;
+  params: Record<string, unknown>;
+  summary: string | null;
+  frequency: "DAILY" | "WEEKLY" | "MONTHLY";
+  timeOfDay: string;
+  dayOfWeek: number | null;
+  dayOfMonth: number | null;
+  timezone: string;
+  when: string;
+  status: "ACTIVE" | "PAUSED";
+  nextRunAt: string | null;
+  lastRunAt: string | null;
+  lastJobId: string | null;
+  lastJobStatus: { status: BulkJobStatusKey; label: string; tone: BulkJobDto["statusTone"] } | null;
+  lastOutcome: string | null;
+  lastMessage: string | null;
+  consecutiveFailures: number;
+  owner: { id: string; name: string | null };
+  version: number;
+  createdAt: string;
 }
 
 export interface BulkJobItemDto {

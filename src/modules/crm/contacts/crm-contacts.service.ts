@@ -3,7 +3,7 @@ import { prisma } from "@/core/db/client";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { PermissionService } from "@/core/rbac/PermissionService";
 import type { CrmActor } from "../core/crm-actor";
-import { runCrmMutation, type CrmMutationContext } from "../core/crm-mutation";
+import { crmSystemActor, runCrmMutation, type CrmMutationContext } from "../core/crm-mutation";
 import { crmOwnerWhere, getCrmRecordScope, type CrmRecordScope } from "../core/crm-visibility";
 import { findOrCreateCrmCompanyForCustomer, getCrmCompanyForActor } from "../companies/crm-companies.service";
 import { listCustomFields, validateCustomFieldValues } from "../custom-fields/crm-custom-fields.service";
@@ -13,7 +13,7 @@ import type { EntityTagChange } from "../tags/crm-tag.schema";
 import { assertContactDuplicatesAllowed, contactDuplicateKeys, findContactDuplicates, type ContactDuplicateResult } from "./contact-duplicates";
 import { buildContactOrderBy, buildContactWhere } from "./contact-filters";
 import { channelValueKey, contactDerivedFields, contactMatchKeys } from "./contact-keys";
-import { CONTACT_CHANNEL_TYPES, type ContactChannelType } from "./contact-registry";
+import { CONTACT_CHANNEL_TYPES, CONTACTABILITY_SEVERITY, type ContactChannelType } from "./contact-registry";
 import {
   assignContactSchema,
   bulkContactSchema,
@@ -685,6 +685,37 @@ export async function setContactability(actor: CrmActor, id: string, raw: unknow
     });
     return row;
   });
+}
+
+/**
+ * Records a restriction that came from outside a user's hands (an
+ * unsubscribe link, a provider bounce / complaint callback). Follows
+ * merges and only ever makes a channel stricter (CONTACTABILITY_SEVERITY):
+ * it can never re-allow contact or soften a stronger status. Returns false
+ * when nothing changed.
+ */
+export async function recordSystemContactRestriction(companyId: string, contactId: string, channel: "EMAIL" | "SMS" | "WHATSAPP" | "PHONE", status: "UNSUBSCRIBED" | "BOUNCED" | "DO_NOT_CONTACT", reason: string): Promise<boolean> {
+  const found = await prisma.crmContact.findFirst({ where: { id: contactId, companyId }, select: { id: true, mergedIntoId: true } });
+  if (!found) return false;
+  const targetId = found.mergedIntoId ?? found.id;
+  const consents = await CrmContactRepository.consents(targetId);
+  const current = consents.find((c) => c.channel === channel) ?? null;
+  const all = consents.find((c) => c.channel === "ALL") ?? null;
+  const strongest = Math.max(CONTACTABILITY_SEVERITY[(current?.status ?? "ALLOWED") as keyof typeof CONTACTABILITY_SEVERITY], all ? CONTACTABILITY_SEVERITY[all.status as keyof typeof CONTACTABILITY_SEVERITY] : 0);
+  if (strongest >= CONTACTABILITY_SEVERITY[status]) return false;
+  const actor = crmSystemActor(companyId);
+  await runCrmMutation(actor, async (ctx) => {
+    const row = await CrmContactRepository.upsertConsent(companyId, targetId, channel, { status, reason: reason.slice(0, 500), source: "SYSTEM", changedAt: new Date(), changedByUserId: null }, ctx.tx);
+    await ctx.audit({ tableName: "crm_contact_consents", recordId: row.id, action: current ? "UPDATE" : "CREATE", oldValues: current, newValues: row });
+    ctx.emit({
+      entityType: "CONTACT",
+      entityId: targetId,
+      eventType: "contact.contactability_changed",
+      summary: `${channel}: ${statusWords(current?.status ?? "ALLOWED")} → ${statusWords(status)}`,
+      payload: { channel, from: current?.status ?? "ALLOWED", to: status, reason: reason.slice(0, 500), source: "SYSTEM" },
+    });
+  });
+  return true;
 }
 
 /** Server-side check for later phases (campaigns, sequences, inbox): may we contact this person on this channel? Follows merges. */

@@ -13,6 +13,8 @@ import { CRM_EVENT_TYPES, type CrmEventType } from "../core/crm-event-types";
  */
 
 export const WEBHOOK_USER_AGENT = "FashionERP-CRM-Webhooks/1";
+/** Phase 16: S&M-scoped subscriptions (same engine, same signature). */
+export const SM_WEBHOOK_USER_AGENT = "FashionERP-SM-Webhooks/1";
 export const WEBHOOK_SIGNATURE_HEADER = "X-CRM-Signature";
 /** Back-off after attempt n (1-based) fails with a retryable error; after the last, the delivery is FAILED. */
 export const WEBHOOK_RETRY_DELAYS_MS = [60_000, 5 * 60_000, 30 * 60_000, 2 * 3_600_000, 6 * 3_600_000];

@@ -1,12 +1,21 @@
 import type { ReportDescriptor } from "@/core/reports/report-types";
 import type { ReportCategory } from "@/core/reports/permissions";
 
+export interface ReportViewer {
+  userId: string;
+}
+
 export interface ReportConfig {
   category: ReportCategory;
   key: string;
   title: string;
   /** Called identically by the JSON view route and every export route — the single source of truth for a report's data. */
-  buildDescriptor: (companyId: string, generatedByName: string, filters: Record<string, string>) => Promise<ReportDescriptor>;
+  /**
+   * `viewer` (S&M S6, 2026-11-02) lets a report apply the viewer's own record
+   * visibility (e.g. quotations: own / team vs view_all). Existing reports
+   * ignore it.
+   */
+  buildDescriptor: (companyId: string, generatedByName: string, filters: Record<string, string>, viewer: ReportViewer) => Promise<ReportDescriptor>;
   pdfOrientation?: "portrait" | "landscape";
 }
 

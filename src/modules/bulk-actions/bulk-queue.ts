@@ -14,7 +14,7 @@ import { createRedisConnection, databaseScopedQueueName } from "@/core/jobs/queu
  */
 export const BULK_ACTION_QUEUE_NAME = process.env.BULK_ACTION_QUEUE_NAME || databaseScopedQueueName("bulk-actions");
 
-export type BulkQueueJob = { name: "bulk.process"; data: { bulkJobId: string } } | { name: "bulk.recover"; data: Record<string, never> };
+export type BulkQueueJob = { name: "bulk.process"; data: { bulkJobId: string } } | { name: "bulk.recover"; data: Record<string, never> } | { name: "bulk.schedules"; data: Record<string, never> };
 
 let queue: Queue | null = null;
 

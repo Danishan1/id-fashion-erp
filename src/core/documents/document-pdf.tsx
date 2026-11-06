@@ -62,6 +62,8 @@ export interface DocumentColumn {
   key: string;
   label: string;
   align?: "left" | "right" | "center";
+  /** Optional share of the row, e.g. "30%". Columns without one split what is left equally. */
+  width?: string;
 }
 
 export interface BusinessDocumentDescriptor {
@@ -79,6 +81,8 @@ export interface BusinessDocumentDescriptor {
   rows: Record<string, string>[];
   totalsLines: { label: string; value: string; final?: boolean }[];
   footerNote?: string;
+  /** Optional titled text blocks after the totals (e.g. terms, notes). Blank ones are skipped. */
+  sections?: { title: string; body: string }[];
   generatedAt: string;
   generatedByName: string;
 }
@@ -88,7 +92,11 @@ function columnWidth(count: number): string {
 }
 
 function BusinessDocumentPdfBody({ descriptor }: { descriptor: BusinessDocumentDescriptor }) {
-  const width = columnWidth(descriptor.columns.length);
+  const fixed = descriptor.columns.filter((c) => c.width);
+  const usedPercent = fixed.reduce((sum, c) => sum + parseFloat(c.width!), 0);
+  const free = descriptor.columns.length - fixed.length;
+  const defaultWidth = fixed.length === 0 ? columnWidth(descriptor.columns.length) : `${((100 - usedPercent) / Math.max(free, 1)).toFixed(4)}%`;
+  const widthOf = (col: DocumentColumn) => col.width ?? defaultWidth;
 
   return (
     <Document>
@@ -138,7 +146,7 @@ function BusinessDocumentPdfBody({ descriptor }: { descriptor: BusinessDocumentD
         <View style={styles.table}>
           <View style={styles.row} fixed>
             {descriptor.columns.map((col) => (
-              <Text key={col.key} style={[styles.headerRowCell, { width, textAlign: col.align ?? "left" }]}>
+              <Text key={col.key} style={[styles.headerRowCell, { width: widthOf(col), textAlign: col.align ?? "left" }]}>
                 {col.label}
               </Text>
             ))}
@@ -146,7 +154,7 @@ function BusinessDocumentPdfBody({ descriptor }: { descriptor: BusinessDocumentD
           {descriptor.rows.map((row, index) => (
             <View style={styles.row} key={index} wrap={false}>
               {descriptor.columns.map((col) => (
-                <Text key={col.key} style={[styles.cell, { width, textAlign: col.align ?? "left" }]}>
+                <Text key={col.key} style={[styles.cell, { width: widthOf(col), textAlign: col.align ?? "left" }]}>
                   {row[col.key] ?? ""}
                 </Text>
               ))}
@@ -162,6 +170,15 @@ function BusinessDocumentPdfBody({ descriptor }: { descriptor: BusinessDocumentD
             </View>
           ))}
         </View>
+
+        {(descriptor.sections ?? [])
+          .filter((section) => section.body.trim())
+          .map((section, i) => (
+            <View key={i} style={{ marginTop: 10 }} wrap={false}>
+              <Text style={styles.partyLabel}>{section.title}</Text>
+              <Text style={{ fontSize: 7.5, color: "#333", marginTop: 2 }}>{section.body}</Text>
+            </View>
+          ))}
 
         {descriptor.footerNote ? <Text style={styles.footerNote}>{descriptor.footerNote}</Text> : null}
 

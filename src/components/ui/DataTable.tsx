@@ -110,6 +110,8 @@ interface DataTableProps<T> {
   hideSearch?: boolean;
   /** Extra controls rendered in the toolbar row, after the search box. */
   toolbar?: ReactNode;
+  /** Told whenever the built-in search text changes (e.g. so a bulk action can use "all matching the search"). */
+  onSearchChange?: (search: string) => void;
   /**
    * Adds a leading checkbox column for bulk actions. The header checkbox
    * selects / clears the rows on the current page. Selection is owned by the
@@ -155,6 +157,7 @@ export function DataTable<T extends { id: string }>({
   extraParams,
   hideSearch = false,
   toolbar,
+  onSearchChange,
   selection,
   initialSort,
   onSortChange,
@@ -313,6 +316,7 @@ export function DataTable<T extends { id: string }>({
             onChange={(e) => {
               setSearch(e.target.value);
               setPage(1);
+              onSearchChange?.(e.target.value);
             }}
             className="w-full max-w-sm rounded-md border border-zinc-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-800"
           />

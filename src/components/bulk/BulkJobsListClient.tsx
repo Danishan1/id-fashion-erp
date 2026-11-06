@@ -28,35 +28,54 @@ export function BulkProgress({ job }: { job: Pick<BulkJobDto, "progress" | "proc
   );
 }
 
-/** Phase 14 — bulk jobs: the user's own, plus every job of record types they administer. Refreshes while jobs run. */
-export function BulkJobsListClient() {
+export interface BulkRecordTypeOption {
+  value: string;
+  label: string;
+}
+
+const CRM_TYPES: BulkRecordTypeOption[] = [
+  { value: "LEAD", label: "Leads" },
+  { value: "CONTACT", label: "Contacts" },
+  { value: "COMPANY", label: "Companies" },
+  { value: "OPPORTUNITY", label: "Opportunities" },
+];
+
+/**
+ * Phase 14 — bulk jobs: the user's own, plus every job of record types they
+ * administer. Refreshes while jobs run. Each module's jobs page passes its own
+ * record types (CRM by default; Sales & Marketing passes its five) and the
+ * path of its job detail page.
+ */
+export function BulkJobsListClient({ recordTypes = CRM_TYPES, basePath = BULK_JOBS_PAGE, scheduleId }: { recordTypes?: BulkRecordTypeOption[]; basePath?: string; scheduleId?: string } = {}) {
   const [refreshKey, setRefreshKey] = useState(0);
+  const scope = `entityTypes=${recordTypes.map((t) => t.value).join(",")}${scheduleId ? `&scheduleId=${scheduleId}` : ""}`;
 
   // Every 5 s: a 1-row check for running jobs; the table reloads only while something runs.
   useEffect(() => {
     let wasActive = false;
     const t = setInterval(async () => {
       if (document.hidden) return;
-      const r = await fetch(`${BULK_JOBS_API}?statuses=${ACTIVE_STATUSES.join(",")}&pageSize=1`).catch(() => null);
+      const r = await fetch(`${BULK_JOBS_API}?statuses=${ACTIVE_STATUSES.join(",")}&pageSize=1&${scope}`).catch(() => null);
       const body = r?.ok ? await r.json().catch(() => null) : null;
       const active = (body?.meta?.totalCount ?? 0) > 0;
       if (active || wasActive) setRefreshKey((k) => k + 1);
       wasActive = active;
     }, 5000);
     return () => clearInterval(t);
-  }, []);
+  }, [scope]);
 
   return (
     <CrmTable<BulkJobDto>
-      fetchUrl={BULK_JOBS_API}
+      fetchUrl={`${BULK_JOBS_API}?${scope}`}
+      syncWithUrl={!scheduleId}
       refreshKey={refreshKey}
       searchPlaceholder="Search job summary…"
       filters={[
         { type: "select", key: "statuses", label: "Status", options: STATUS_OPTIONS },
-        { type: "select", key: "entityType", label: "Record type", options: [{ value: "LEAD", label: "Leads" }, { value: "CONTACT", label: "Contacts" }, { value: "COMPANY", label: "Companies" }, { value: "OPPORTUNITY", label: "Opportunities" }] },
+        { type: "select", key: "entityType", label: "Record type", options: recordTypes },
         { type: "select", key: "mine", label: "Started by", options: [{ value: "true", label: "Me" }], anyLabel: "Anyone I can see" },
       ]}
-      rowHref={(j) => `${BULK_JOBS_PAGE}/${j.id}`}
+      rowHref={(j) => `${basePath}/${j.id}`}
       columns={[
         {
           key: "action",
@@ -65,6 +84,8 @@ export function BulkJobsListClient() {
             <div>
               <div className="font-medium">
                 {j.actionLabel} · {j.entityLabel}
+                {j.dryRun && <span className="ml-2 rounded bg-sky-100 px-1.5 py-0.5 text-[11px] font-medium text-sky-800 dark:bg-sky-500/15 dark:text-sky-300">Dry run</span>}
+                {j.scheduleId && <span className="ml-2 rounded bg-violet-100 px-1.5 py-0.5 text-[11px] font-medium text-violet-800 dark:bg-violet-500/15 dark:text-violet-300">Scheduled</span>}
               </div>
               {j.summary && <div className="max-w-md truncate text-xs text-zinc-500">{j.summary}</div>}
             </div>
